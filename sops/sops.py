@@ -877,13 +877,13 @@ class GeneralizedJacobiOperator():
     """
     The base class for primary operators acting on finite row vectors of Generalized Jacobi polynomials.
 
-    <n,rho,a,b,c,z| = [P(0,rho,a,b,c,z),P(1,rho,a,b,c,z),...,P(n-1,rho,a,b,c,z)]
+    <n,ρ,a,b,c,z| = [P(0,ρ,a,b,c,z),P(1,ρ,a,b,c,z),...,P(n-1,ρ,a,b,c,z)]
 
-    P(k,rho,a,b,c,z) = <n,rho,a,b,c,z|k> if k < n else 0.
+    P(k,ρ,a,b,c,z) = <n,ρ,a,b,c,z|k> if k < n else 0.
 
     Each oparator takes the form:
 
-    L(rho,a,b,c,z,d/dz) <n,rho,a,b,c,z| = <n+dn,rho,a+da,b+db,c,z| R(n,rho,a,b,c)
+    L(ρ,a,b,c,z,d/dz) <n,ρ,a,b,c,z| = <n+dn,ρ,a+da,b+db,c,z| R(n,ρ,a,b,c)
 
     The Left action is a z-differential operator.
     The Right action is a matrix with n+dn rows and n columns.
@@ -891,31 +891,32 @@ class GeneralizedJacobiOperator():
     The Right action is encoded with an "infinite_csr" sparse matrix object.
     The parameter increments are encoded with a GeneralizedJacobiCodomain object.
 
-     L(rho,a,b,c,z,d/dz)  ......................  dn, da, db, dc
-    ------------------------------------------------------------
-     A(+1) = 1      ............................   0, +1,  0,  0
-     A(-1) = 1-z    ............................  +1, -1,  0,  0
+     L(ρ,a,b,c,z,d/dz)  ................................  dn, da, db, dc
+    --------------------------------------------------------------------
+     A(+1) = 1      ....................................   0, +1,  0,  0
+     A(-1) = 1-z    ....................................  +1, -1,  0,  0
 
-     B(+1) = 1      ............................   0,  0, +1,  0
-     B(-1) = 1+z    ............................  +1,  0, -1,  0
+     B(+1) = 1      ....................................   0,  0, +1,  0
+     B(-1) = 1+z    ....................................  +1,  0, -1,  0
 
-     C(+1) = 1      ............................   0,  0,  0, +1
-     C(-1) = rho(z) ............................   d,  0,  0, -1
+     C(+1) = 1      ....................................   0,  0,  0, +1
+     C(-1) = ρ(z)   ....................................   d,  0,  0, -1
 
-     D(+1) = d/dz  .............................  -1, +1, +1, +1
-     D(-1) = Adjoint[D(+1)] .................... d+1, -1, -1, -1
+     D(+1) = d/dz  .....................................  -1, +1, +1, +1
+     D(-1) = ρ(z)*[(1+z)*a - (1-z)*b - (1-z**2)*d/dz]
+                - c*ρ'(z)*(1-z**2) ..................... d+1, -1, -1, -1
 
-     E(+1) = a - (1-z)*d/dz ....................   0, -1, +1, +1
-     E(-1) = Adjoint[E(+1)] ....................   d, +1, -1, -1
+     E(+1) = a - (1-z)*d/dz ............................   0, -1, +1, +1
+     E(-1) = ρ(z)*[b+(1+z)*d/dz] + c*ρ'(z)*(1+z) .......   d, +1, -1, -1
 
-     F(+1) = b + (1+z)*d/dz ....................   0, +1, -1, +1
-     F(-1) = Adjoint[F(+1)] ....................   d, -1, +1, -1
+     F(+1) = b + (1+z)*d/dz ............................   0, +1, -1, +1
+     F(-1) = ρ(z)*[a-(1-z)*d/dz] - c*ρ'(z)*(1-z) .......   d, -1, +1, -1
 
-     G(+1) = (1+z)*a - (1-z)*b - (1-z**2)*d/dz .  +1, +1, +1, -1
-     G(-1) = Adjoint[G(+1)] .................... d-1, -1, -1, +1
+     G(+1) = (1+z)*a - (1-z)*b - (1-z**2)*d/dz .........  +1, +1, +1, -1
+     G(-1) = ρ(z)*d/dz + c*ρ'(z) ....................... d-1, -1, -1, +1
 
      Each -1 operator is the adjoint of the coresponding +1 operator and
-     d is the polynomial degree of rho.
+     d is the polynomial degree of ρ.
 
     Attributes
     ----------
@@ -929,7 +930,7 @@ class GeneralizedJacobiOperator():
     -------
     __call__(p): p=-1,1
         returns Operator object depending on p.
-        Operator.function is an infinite_csr matrix constructor for n,rho,a,b,c.
+        Operator.function is an infinite_csr matrix constructor for n,ρ,a,b,c.
         Operator.codomain is a GeneralizedJacobiCodomain object.
 
     staticmethods
