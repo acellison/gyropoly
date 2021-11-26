@@ -8,6 +8,13 @@ from scipy.sparse.linalg import spsolve_triangular
 
 from dedalus_sphere.operators import Operator, Codomain, infinite_csr
 
+__all__ = ['stieltjes', 'modified_chebyshev', 'jacobi_operator', 'mass',
+    'polynomials', 'quadrature', 'clenshaw_summation',
+    'embedding_operator', 'embedding_operator_adjoint',
+    'differential_operator', 'differential_operator_adjoint',
+    'operator', 'operators', 'GeneralizedJacobiOperator', 'GeneralizedJacobiCodomain',
+    ]
+
 
 def _make_rho_config(rho, a, b, c):
     if a <= -1 or b <= -1:
@@ -474,11 +481,12 @@ def quadrature(n, rho, a, b, c, dtype='float64', internal='float128', **kwargs):
     return zj[indices].astype(dtype), wj[indices].astype(dtype)
 
 
-def clenshaw_summation(f, Z, z, init=None, dtype='float64', internal='float128'):
+def clenshaw_summation(f, Z, z, mass, dtype='float64', internal='float128'):
     """
     Clenshaw summation algorithm to sum a finite polynomial series.
     The algorithm uses the three-term recurrence coefficients to
-    efficiently sum the series
+    efficiently sum the series.  Assumes the recurrence coefficients
+    yield the unit-normalized polynomials.
 
     Parameters
     ----------
@@ -489,6 +497,8 @@ def clenshaw_summation(f, Z, z, init=None, dtype='float64', internal='float128')
         Three-term recurrence coefficients for the polynomial series
     z : float or array_like
         Locations to evaluate the polynomial series
+    mass : float
+        Integral of the weight function to normalize the recurrence
     dtype: data-type, optional
         Desired data-type for the output
     internal: data-type, optional
@@ -500,9 +510,7 @@ def clenshaw_summation(f, Z, z, init=None, dtype='float64', internal='float128')
     of each column of f coefficients at locations z
 
     """
-    if init is None:
-        init = 1.
-
+    init = np.sqrt(mass, dtype=internal)
     an, bn = Z.diagonal(0), np.append(init, Z.diagonal(1))
     an, bn = [c.astype(internal) for c in [an, bn]]
     n = len(an)-1
@@ -715,8 +723,8 @@ def differential_operator(kind, n, rho, a, b, c, dtype='float64', internal='floa
     Q = polynomials(n+m, rho, a+da, b+db, c+dc, z, dtype=internal, **kwargs)
 
     Z = jacobi.operator('Z', dtype=internal)(*op.codomain(n, a, b))
-    init = np.sqrt(jacobi.mass(*op.codomain(n, a, b)[1:]), dtype=internal)
-    f = clenshaw_summation(op(n, a, b) @ projPJ, Z, z, init=init, dtype=internal)
+    mass = jacobi.mass(*op.codomain(n, a, b)[1:])
+    f = clenshaw_summation(op(n, a, b) @ projPJ, Z, z, mass, dtype=internal)
 
     bands = np.zeros((len(offsets), n), dtype=dtype)
     for i,k in enumerate(offsets):
@@ -797,8 +805,8 @@ def differential_operator_adjoint(kind, n, rho, a, b, c, dtype='float64', intern
 
     def evaluate_on_grid(op):
         Z = jacobi.operator('Z', dtype=internal)(*op.codomain(n, a, b))
-        init = np.sqrt(jacobi.mass(*op.codomain(n, a, b)[1:]), dtype=internal)
-        return clenshaw_summation(op(n, a, b) @ projPJ, Z, z, init=init, dtype=internal)
+        mass = jacobi.mass(*op.codomain(n, a, b)[1:])
+        return clenshaw_summation(op(n, a, b) @ projPJ, Z, z, mass, dtype=internal)
 
     f1, f2 = [evaluate_on_grid(op) for op in [op1, op2]]
     z = z[np.newaxis,:]
@@ -949,10 +957,10 @@ class GeneralizedJacobiOperator():
         self.dtype      = dtype
         self.internal   = internal
         self.kwargs     = kwargs
-   
+
     def __call__(self,p):
         return Operator(*self.__function(p))
-    
+
     def __A(self,p):
         op = partial(self._dispatch, 'A', p)
         dn = 1 if p == -1 else 0
@@ -962,7 +970,7 @@ class GeneralizedJacobiOperator():
         op = partial(self._dispatch, 'B', p)
         dn = 1 if p == -1 else 0
         return op, GeneralizedJacobiCodomain(dn,0,p,0)
-        
+
     def __C(self,p):
         op = partial(self._dispatch, 'C', p)
         dn = self.degree if p == -1 else 0
@@ -982,7 +990,7 @@ class GeneralizedJacobiOperator():
         op = partial(self._dispatch, 'F', p)
         dn = self.degree if p == -1 else 0
         return op, GeneralizedJacobiCodomain(dn,p,-p,p)
-    
+
     def __G(self,p):
         op = partial(self._dispatch, 'G', p)
         dn = self.degree-1 if p == -1 else 1
@@ -1021,31 +1029,31 @@ class GeneralizedJacobiCodomain(Codomain):
     def __init__(self,dn=0,da=0,db=0,dc=0,Output=None):
         if Output == None: Output = GeneralizedJacobiCodomain
         Codomain.__init__(self,*(dn,da,db,dc),Output=Output)
-    
+
     def __len__(self):
         return 3
-    
+
     def __str__(self):
         s = f'(n->n+{self[0]},a->a+{self[1]},b->b+{self[2]},c->c+{self[3]})'
         return s.replace('+0','').replace('+-','-')
-        
+
     def __add__(self,other):
         return self.Output(*self(*other[:4],evaluate=False))
-    
+
     def __call__(self,*args,evaluate=True):
         n,a,b,c = args[:4]
         n, a, b, c = self[0] + n, self[1] + a, self[2] + b, self[3] + c
         if evaluate and (a <= -1 or b <= -1):
             raise ValueError('invalid Jacobi parameter.')
         return n,a,b,c
-    
+
     def __neg__(self):
         a,b,c = -self[1],-self[2],-self[3]
         return self.Output(-self[0],a,b,c)
 
     def __eq__(self,other):
         return self[1:] == other[1:]
-    
+
     def __or__(self,other):
         if self != other:
             raise TypeError('operators have incompatible codomains.')

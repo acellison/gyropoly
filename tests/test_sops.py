@@ -185,20 +185,20 @@ def test_clenshaw_summation():
 
     # Check the Clenshaw returns the correct polynomial for Id coeffs
     coeffs = np.eye(n)
-    f = sops.clenshaw_summation(coeffs, Z, z, np.sqrt(mass))
+    f = sops.clenshaw_summation(coeffs, Z, z, mass)
     error = (f-P).T
     assert np.max(abs(error)) < tol
 
     # Single vector of random coefficients
     coeffs = np.random.random(n)/np.arange(1,n+1)
-    f = sops.clenshaw_summation(coeffs, Z, z, np.sqrt(mass))
+    f = sops.clenshaw_summation(coeffs, Z, z, mass)
     g = P.T @ coeffs.astype(dtype)
     error = f-g
     assert np.max(abs(error)) < tol
 
     # Matrix of random coefficients, each column is coeffs of a function
     coeffs = np.random.random((n, 4))/np.arange(1,n+1)[:,np.newaxis]
-    f = sops.clenshaw_summation(coeffs, Z, z, np.sqrt(mass))
+    f = sops.clenshaw_summation(coeffs, Z, z, mass)
     g = P.T @ coeffs.astype(dtype)
     error = f.T-g
     assert np.max(abs(error)) < tol
