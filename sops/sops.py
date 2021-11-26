@@ -16,33 +16,47 @@ __all__ = ['stieltjes', 'modified_chebyshev', 'jacobi_operator', 'mass',
     ]
 
 
-def _make_rho_config(rho, a, b, c):
+def _check_jacobi_params(a, b, c):
     if a <= -1 or b <= -1:
-        raise ValueError('a and b must bn larger than -1')
+        raise ValueError(f'a ({a}) and b ({b}) must be larger than -1')
 
-    default_degree = 100
+
+def _make_rho_config(rho, a, b, c):
+    _check_jacobi_params(a, b, c)
+
+    config = {'rho': None, 'rhoprime': None, 'is_polynomial': False, 'degree': 100}
+
+    # rho is a callable function
     if callable(rho):
-        return {'rho': rho, 'rhoprime': None, 'degree': default_degree, 'is_polynomial': False}
+        config.update({'rho': rho})
+        return config
 
+    # rho is a dictionary.  Update the config with the dictionary params
     if isinstance(rho, dict):
-        degree = rho.pop('degree', default_degree)
-        return {'rho': rho['rho'], 'rhoprime': rho['rhoprime'], 'degree': degree, 'is_polynomial': False}
+        config.update(rho)
+        return config
 
+    # rho may be monomial-basis list of coefficients
     if not isinstance(rho, (tuple,list)):
-        raise ValueError('rho must bn a list of polynomial coefficients')
+        raise ValueError('rho must be a list of polynomial coefficients')
     if len(rho) < 2:
         raise ValueError('rho must have degree at least one')
     if rho[0] == 0:
         raise ValueError('rho must have non-zero leading coefficient')
+
+    # Check no roots lie in the domain [-1,1]
     roots = np.roots(rho)
     roots = roots[np.abs(roots.imag)<1e-12]
     for root in roots:
         if -1 <= root <= 1:
             raise ValueError('rho must have no roots in [-1,1]')
 
+    # rho function and derivative evaluation
     rho_fun = lambda z: np.polyval(rho, z)
-    rho_der = lambda z: np.polyval(np.polyder(rho), z)
-    return {'rho': rho_fun, 'rhoprime': rho_der, 'degree': len(rho)-1, 'is_polynomial': True}
+    rhoprime = np.polyder(rho)
+    rhoprime_fun = lambda z: np.polyval(rhoprime, z)
+    config.update({'rho': rho_fun, 'rhoprime': rhoprime_fun, 'degree': len(rho)-1, 'is_polynomial': True})
+    return config
 
 
 def _has_even_parity(rho, a, b, c):
@@ -69,12 +83,12 @@ def _stieltjes_iteration(n, z, dmu, dtype='float64'):
     for i in range(n):
         an[i] = np.sum(dmu*z*pnm1**2)
         bn[i+1] = np.sqrt(np.sum(dmu*((z-an[i])*pnm1 - bn[i]*pnm2)**2))
-        pn = 1/bn[i+1]*((z-an[i])*pnm1 - bn[i]*pnm2) 
+        pn = ((z-an[i])*pnm1 - bn[i]*pnm2)/bn[i+1]
         pnm1, pnm2 = pn, pnm1
     return an, bn[1:]
 
 
-def stieltjes(n, rho, a, b, c, return_mass=False, dtype='float64', internal='float128', verbose=True, tol=1e-14, nquad_init=None, quad_ratio=1.25):
+def stieltjes(n, rho, a, b, c, return_mass=False, dtype='float64', internal='float128', verbose=True, tol=1e-14, nquad=None, nquad_ratio=1.25):
     """
     Compute the three-term recurrence coefficients for the weight function
         w(t) = (1-t)**a * (1+t)**b + rho(t)**c
@@ -92,17 +106,17 @@ def stieltjes(n, rho, a, b, c, return_mass=False, dtype='float64', internal='flo
         Generalized Jacobi parameters.  a,b > -1, c arbitrary
     return_mass : boolean
         Flag to return the integral of the weight function
-    dtype: data-type, optional
+    dtype : data-type, optional
         Desired data-type for the output
-    internal: data-type, optional
+    internal : data-type, optional
         Internal data-type for compuatations
     verbose : boolean, optional
         Flag to print error diagnostics
     tol : float, optional
         Relative convergence criterion for off-diagonal recurrence coefficients
-    nquad_init : int, optional
+    nquad : int, optional
         Number of quadrature points for non-polynomial rho
-    quad_ratio : float, optional
+    nquad_ratio : float, optional
         Scale factor for number of quadrature points in convergence test
 
     Returns
@@ -125,9 +139,7 @@ def stieltjes(n, rho, a, b, c, return_mass=False, dtype='float64', internal='flo
         nquad = int(np.ceil((max_degree+1)/2))
     else:
         max_iters = 10
-        if nquad_init is not None:
-            nquad = nquad_init
-        else:
+        if nquad is None:
             nquad = 2*(n+1)
 
     betak = 0
@@ -153,14 +165,14 @@ def stieltjes(n, rho, a, b, c, return_mass=False, dtype='float64', internal='flo
             print('Stieltjes procedure failed to converge within tolerance')
             return None
         betak = beta
-        nquad = int(quad_ratio*nquad)
+        nquad = int(nquad_ratio*nquad)
 
     mass = np.sum(dmu)
     Z = diags([beta,alpha,beta], [-1,0,1], shape=(n+1,n), dtype=dtype)
     return (Z, mass) if return_mass else Z
 
 
-def modified_chebyshev(n, rho, a, b, c, return_mass=False, dtype='float64', internal='float128', verbose=False, tol=1e-14, nquad_init=None, quad_ratio=1.25):
+def modified_chebyshev(n, rho, a, b, c, return_mass=False, dtype='float64', internal='float128', verbose=False, tol=1e-14, nquad=None, nquad_ratio=1.25):
     """
     Compute the three-term recurrence coefficients for the weight function
         w(t) = (1-t)**a * (1+t)**b + rho(t)**c
@@ -178,17 +190,17 @@ def modified_chebyshev(n, rho, a, b, c, return_mass=False, dtype='float64', inte
         Generalized Jacobi parameters.  a,b > -1, c arbitrary
     return_mass : boolean
         Flag to return the integral of the weight function
-    dtype: data-type, optional
+    dtype : data-type, optional
         Desired data-type for the output
-    internal: data-type, optional
+    internal : data-type, optional
         Internal data-type for compuatations
     verbose : boolean, optional
         Flag to print error diagnostics
     tol : float, optional
         Relative convergence criterion for off-diagonal recurrence coefficients
-    nquad_init : int, optional
+    nquad : int, optional
         Number of quadrature points for non-polynomial rho
-    quad_ratio : float, optional
+    nquad_ratio : float, optional
         Scale factor for number of quadrature points in convergence test
 
     Returns
@@ -214,15 +226,14 @@ def modified_chebyshev(n, rho, a, b, c, return_mass=False, dtype='float64', inte
         # When c is an integer we can integrate exactly
         rho_degree = config['degree']
         npoly, max_iters = c*rho_degree+1, 1
-        nquad_init = npoly
+        nquad = npoly
     else:
         # Otherwise we run the Chebyshev process multiple times and check for convergence
         npoly, max_iters = 2*n, 10
-        if nquad_init is None:
-            nquad_init = npoly
+        if nquad is None:
+            nquad = npoly
 
-    nquad = nquad_init  # Number of quadrature points.  Exact for integer c
-    betak = 0           # Initial guess for beta
+    betak = 0  # Initial guess for beta for convergence tests
     for i in range(max_iters):
         z, w = jacobi.quadrature(nquad, a, b, dtype=internal)
         dmu = w * rho_fun(z)**c
@@ -260,7 +271,7 @@ def modified_chebyshev(n, rho, a, b, c, return_mass=False, dtype='float64', inte
             print('Modified Chebyshev failed to converge within tolerance')
             return None
         betak = beta
-        nquad = int(quad_ratio*nquad)
+        nquad = int(nquad_ratio*nquad)
 
     # The algorithm computes the monic recurrence coefficients.  Orthonormalize.
     mass = np.sum(dmu)
@@ -269,7 +280,7 @@ def modified_chebyshev(n, rho, a, b, c, return_mass=False, dtype='float64', inte
     return (Z, mass) if return_mass else Z
 
 
-def jacobi_operator(n, rho, a, b, c, return_mass=False, dtype='float64', internal='float128', algorithm='stieltjes', **kwargs):
+def jacobi_operator(n, rho, a, b, c, return_mass=False, dtype='float64', internal='float128', algorithm='stieltjes', **jacobi_kwargs):
     """
     Compute the three-term recurrence coefficients for the weight function
         w(t) = (1-t)**a * (1+t)**b + rho(t)**c
@@ -287,14 +298,14 @@ def jacobi_operator(n, rho, a, b, c, return_mass=False, dtype='float64', interna
         Generalized Jacobi parameters.  a,b > -1, c arbitrary
     return_mass : boolean
         Flag to return the integral of the weight function
-    dtype: data-type, optional
+    dtype : data-type, optional
         Desired data-type for the output
-    internal: data-type, optional
+    internal : data-type, optional
         Internal data-type for compuatations
     algorithm: str, optional
         Algorithm for computing the recurrence coefficients.
         One of ['stieltjes', 'chebyshev']
-    kwargs : dict, optional
+    jacobi_kwargs : dict, optional
         Keyword arguments to pass to the subroutine
 
     Returns
@@ -302,17 +313,17 @@ def jacobi_operator(n, rho, a, b, c, return_mass=False, dtype='float64', interna
     sparse matrix representation of Jacobi operator and optionally floating point mass
 
     """
-    algorithm = kwargs.pop('algorithm', algorithm)
+    algorithm = jacobi_kwargs.pop('algorithm', algorithm)
     if algorithm == 'stieltjes':
         fun = stieltjes
     elif algorithm == 'chebyshev':
         fun = modified_chebyshev
     else:
         raise ValueError(f'Unknown algorithm {algorithm}')
-    return fun(n, rho, a, b, c, return_mass=return_mass, dtype=dtype, internal=internal, **kwargs)
+    return fun(n, rho, a, b, c, return_mass=return_mass, dtype=dtype, internal=internal, **jacobi_kwargs)
 
 
-def mass(rho, a, b, c, dtype='float64', internal='float128', verbose=False, tol=1e-14, nquad_init=None, quad_ratio=1.25):
+def mass(rho, a, b, c, dtype='float64', internal='float128', verbose=False, tol=1e-14, nquad=None, nquad_ratio=1.25):
     """
     Compute the definite integral of the weight function
         w(t) = (1-t)**a * (1+t)**b + rho(t)**c
@@ -326,17 +337,17 @@ def mass(rho, a, b, c, dtype='float64', internal='float128', verbose=False, tol=
         rho may not vanish inside the domain.
     a,b,c : float
         Generalized Jacobi parameters.  a,b > -1, c arbitrary
-    dtype: data-type, optional
+    dtype : data-type, optional
         Desired data-type for the output
-    internal: data-type, optional
+    internal : data-type, optional
         Internal data-type for compuatations
     verbose : boolean, optional
         Flag to print error diagnostics
     tol : float, optional
         Relative convergence criterion for off-diagonal recurrence coefficients
-    nquad_init : int, optional
+    nquad : int, optional
         Number of quadrature points for non-polynomial rho
-    quad_ratio : float, optional
+    nquad_ratio : float, optional
         Scale factor for number of quadrature points in convergence test
 
     Returns
@@ -353,11 +364,8 @@ def mass(rho, a, b, c, dtype='float64', internal='float128', verbose=False, tol=
         nquad = int(np.ceil(c*rho_degree)/2)+1
     else:
         max_iters = 10
-        if nquad_init is None:
+        if nquad is None:
             nquad = 2*rho_degree
-        else:
-            nquad = nquad_init
-
 
     muk = 0.
     for i in range(max_iters):
@@ -378,12 +386,12 @@ def mass(rho, a, b, c, dtype='float64', internal='float128', verbose=False, tol=
             print('Mass failed to converge within tolerance')
             return None
         muk = mu
-        nquad = int(quad_ratio*nquad)
+        nquad = int(nquad_ratio*nquad)
 
     return mu
 
 
-def polynomials(n, rho, a, b, c, z, init=None, dtype='float64', internal='float128', **kwargs):
+def polynomials(n, rho, a, b, c, z, init=None, dtype='float64', internal='float128', **jacobi_kwargs):
     """
     Generalized Jacobi polynomials, P(n,rho,a,b,c,z), of type (rho,a,b,c) up to degree n-1.
     These polynomials are orthogonal on the interval (-1,1) with weight function
@@ -403,11 +411,11 @@ def polynomials(n, rho, a, b, c, z, init=None, dtype='float64', internal='float1
         Grid locations to evaluate the polynomials
     init: float or np.ndarray, optional
         Initial value for the recurrence. None -> 1/sqrt(mass)
-    dtype: data-type, optional
+    dtype : data-type, optional
         Desired data-type for the output
-    internal: data-type, optional
+    internal : data-type, optional
         Internal data-type for compuatations
-    kwargs : dict, optional
+    jacobi_kwargs : dict, optional
         Keyword arguments to pass to jacobi_operator()
 
     Returns
@@ -416,7 +424,7 @@ def polynomials(n, rho, a, b, c, z, init=None, dtype='float64', internal='float1
     the degree k polynomial is accessed via P[k-1]
 
     """
-    Z, mass = jacobi_operator(n+1, rho, a, b, c, return_mass=True, dtype=internal, **kwargs)
+    Z, mass = jacobi_operator(n+1, rho, a, b, c, return_mass=True, dtype=internal, **jacobi_kwargs)
     if init is None:
         init = 1 + 0*z
         init /= np.sqrt(mass, dtype=internal)
@@ -443,7 +451,7 @@ def polynomials(n, rho, a, b, c, z, init=None, dtype='float64', internal='float1
     return P.astype(dtype)
 
 
-def quadrature(n, rho, a, b, c, dtype='float64', internal='float128', **kwargs):
+def quadrature(n, rho, a, b, c, dtype='float64', internal='float128', **jacobi_kwargs):
     """
     Generalized Jacobi quadrature nodes and weights.
     The quadrature rule integrates polynomials up to get 2*n-1 exactly
@@ -459,11 +467,11 @@ def quadrature(n, rho, a, b, c, dtype='float64', internal='float128', **kwargs):
         rho may not vanish inside the domain.
     a,b,c : float
         Generalized Jacobi parameters.  a,b > -1, c arbitrary
-    dtype: data-type, optional
+    dtype : data-type, optional
         Desired data-type for the output
-    internal: data-type, optional
+    internal : data-type, optional
         Internal data-type for compuatations
-    kwargs : dict, optional
+    jacobi_kwargs : dict, optional
         Keyword arguments to pass to jacobi_operator()
 
     Returns
@@ -473,7 +481,7 @@ def quadrature(n, rho, a, b, c, dtype='float64', internal='float128', **kwargs):
 
     """
     # Compute the Jacobi operator.  eigs requires double precision inputs
-    Z, mass = jacobi_operator(n, rho, a, b, c, dtype='float64', internal=internal, return_mass=True, **kwargs)
+    Z, mass = jacobi_operator(n, rho, a, b, c, dtype='float64', internal=internal, return_mass=True, **jacobi_kwargs)
     zj, vj = eigs(Z.diagonal(0), Z.diagonal(1))
     wj = mass*np.asarray(vj[0,:]).squeeze()**2
 
@@ -499,9 +507,9 @@ def clenshaw_summation(f, Z, z, mass, dtype='float64', internal='float128'):
         Locations to evaluate the polynomial series
     mass : float
         Integral of the weight function to normalize the recurrence
-    dtype: data-type, optional
+    dtype : data-type, optional
         Desired data-type for the output
-    internal: data-type, optional
+    internal : data-type, optional
         Internal data-type for compuatations
 
     Returns
@@ -534,7 +542,7 @@ def clenshaw_summation(f, Z, z, mass, dtype='float64', internal='float128'):
     return v[0].reshape(shape).astype(dtype)
 
 
-def embedding_operator(kind, n, rho, a, b, c, dtype='float64', internal='float128', **kwargs):
+def embedding_operator(kind, n, rho, a, b, c, dtype='float64', internal='float128', **jacobi_kwargs):
     """
     Compute an embedding operator
 
@@ -550,11 +558,11 @@ def embedding_operator(kind, n, rho, a, b, c, dtype='float64', internal='float12
         rho may not vanish inside the domain.
     a,b,c : float
         Generalized Jacobi parameters.  a,b > -1, c arbitrary
-    dtype: data-type, optional
+    dtype : data-type, optional
         Desired data-type for the output
-    internal: data-type, optional
+    internal : data-type, optional
         Internal data-type for compuatations
-    kwargs : dict, optional
+    jacobi_kwargs : dict, optional
         Keyword arguments to pass to the Jacobi operator subroutine
 
     Returns
@@ -580,11 +588,11 @@ def embedding_operator(kind, n, rho, a, b, c, dtype='float64', internal='float12
             offsets = offsets[::2]
     else:
         raise ValueError(f'Invalid kind: {kind}')
-    _make_rho_config(rho, a+da, b+db, c+dc)
+    _check_jacobi_params(a+da, b+db, c+dc)
 
-    z, w = quadrature(n, rho, a+da, b+db, c+dc, dtype=internal, **kwargs)
-    P = polynomials(n, rho, a, b, c, z, dtype=internal, **kwargs)
-    Q = polynomials(n+m, rho, a+da, b+db, c+dc, z, dtype=internal, **kwargs)
+    z, w = quadrature(n, rho, a+da, b+db, c+dc, dtype=internal, **jacobi_kwargs)
+    P = polynomials(n, rho, a, b, c, z, dtype=internal, **jacobi_kwargs)
+    Q = polynomials(n+m, rho, a+da, b+db, c+dc, z, dtype=internal, **jacobi_kwargs)
 
     # Project (a,b,c) modes onto (a+da,b+db,c+dc) modes
     bands = np.zeros((len(offsets), n), dtype=dtype)
@@ -593,7 +601,7 @@ def embedding_operator(kind, n, rho, a, b, c, dtype='float64', internal='float12
     return diags(bands, offsets, shape=(n,n), dtype=dtype)
 
 
-def embedding_operator_adjoint(kind, n, rho, a, b, c, dtype='float64', internal='float128', **kwargs):
+def embedding_operator_adjoint(kind, n, rho, a, b, c, dtype='float64', internal='float128', **jacobi_kwargs):
     """
     Compute an embedding operator adjoint
 
@@ -609,11 +617,11 @@ def embedding_operator_adjoint(kind, n, rho, a, b, c, dtype='float64', internal=
         rho may not vanish inside the domain.
     a,b,c : float
         Generalized Jacobi parameters.  a,b > -1, c arbitrary
-    dtype: data-type, optional
+    dtype : data-type, optional
         Desired data-type for the output
-    internal: data-type, optional
+    internal : data-type, optional
         Internal data-type for compuatations
-    kwargs : dict, optional
+    jacobi_kwargs : dict, optional
         Keyword arguments to pass to the Jacobi operator subroutine
 
     Returns
@@ -639,11 +647,11 @@ def embedding_operator_adjoint(kind, n, rho, a, b, c, dtype='float64', internal=
             offsets = offsets[0::2]
     else:
         raise ValueError(f'Invalid kind: {kind}')
-    _make_rho_config(rho, a+da, b+db, c+dc)
+    _check_jacobi_params(a+da, b+db, c+dc)
 
-    z, w = quadrature(n+m, rho, a+da, b+db, c+dc, dtype=internal, **kwargs)
-    P = polynomials(n, rho, a, b, c, z, dtype=internal, **kwargs)
-    Q = polynomials(n+m, rho, a+da, b+db, c+dc, z, dtype=internal, **kwargs)
+    z, w = quadrature(n+m, rho, a+da, b+db, c+dc, dtype=internal, **jacobi_kwargs)
+    P = polynomials(n, rho, a, b, c, z, dtype=internal, **jacobi_kwargs)
+    Q = polynomials(n+m, rho, a+da, b+db, c+dc, z, dtype=internal, **jacobi_kwargs)
 
     # Project (a,b,c) modes onto (a+da,b+db,c+dc) modes
     bands = np.zeros((len(offsets), n), dtype=dtype)
@@ -653,7 +661,7 @@ def embedding_operator_adjoint(kind, n, rho, a, b, c, dtype='float64', internal=
     return diags(bands, offsets, shape=(n+m,n), dtype=dtype)
 
 
-def differential_operator(kind, n, rho, a, b, c, dtype='float64', internal='float128', **kwargs):
+def differential_operator(kind, n, rho, a, b, c, dtype='float64', internal='float128', **jacobi_kwargs):
     """
     Compute a differential operator
 
@@ -669,11 +677,11 @@ def differential_operator(kind, n, rho, a, b, c, dtype='float64', internal='floa
         rho may not vanish inside the domain.
     a,b,c : float
         Generalized Jacobi parameters.  a,b > -1, c arbitrary
-    dtype: data-type, optional
+    dtype : data-type, optional
         Desired data-type for the output
-    internal: data-type, optional
+    internal : data-type, optional
         Internal data-type for compuatations
-    kwargs : dict, optional
+    jacobi_kwargs : dict, optional
         Keyword arguments to pass to the Jacobi operator subroutine
 
     Returns
@@ -708,19 +716,19 @@ def differential_operator(kind, n, rho, a, b, c, dtype='float64', internal='floa
             offsets = offsets[0::2]
     else:
         raise ValueError(f'Invalid kind: {kind}')
-    _make_rho_config(rho, a+da, b+db, c+dc)
+    _check_jacobi_params(a+da, b+db, c+dc)
 
     # Project Pn onto Jm
     # i'th column of projPJ is the coefficients of P[i] w.r.t. J[j]
     z, w = jacobi.quadrature(n, a, b, dtype=internal)
-    P = polynomials(n, rho, a, b, c, z, dtype=internal, **kwargs)
+    P = polynomials(n, rho, a, b, c, z, dtype=internal, **jacobi_kwargs)
     J = jacobi.polynomials(n, a, b, z, dtype=internal)
     projPJ = np.array([np.sum(w*P*J[k], axis=1) for k in range(n)])
 
     # Compute the operator on J
     # i'th column of f is grid space evaluation of Op[P[i]]
-    z, w = quadrature(n+m, rho, a+da, b+db, c+dc, dtype=internal, **kwargs)
-    Q = polynomials(n+m, rho, a+da, b+db, c+dc, z, dtype=internal, **kwargs)
+    z, w = quadrature(n+m, rho, a+da, b+db, c+dc, dtype=internal, **jacobi_kwargs)
+    Q = polynomials(n+m, rho, a+da, b+db, c+dc, z, dtype=internal, **jacobi_kwargs)
 
     Z = jacobi.operator('Z', dtype=internal)(*op.codomain(n, a, b))
     mass = jacobi.mass(*op.codomain(n, a, b)[1:])
@@ -735,7 +743,7 @@ def differential_operator(kind, n, rho, a, b, c, dtype='float64', internal='floa
     return diags(bands, offsets, shape=(n+m,n), dtype=dtype)
 
 
-def differential_operator_adjoint(kind, n, rho, a, b, c, dtype='float64', internal='float128', **kwargs):
+def differential_operator_adjoint(kind, n, rho, a, b, c, dtype='float64', internal='float128', **jacobi_kwargs):
     """
     Compute an adjoint differential operator
 
@@ -751,11 +759,11 @@ def differential_operator_adjoint(kind, n, rho, a, b, c, dtype='float64', intern
         rho may not vanish inside the domain.
     a,b,c : float
         Generalized Jacobi parameters.  a,b > -1, c arbitrary
-    dtype: data-type, optional
+    dtype : data-type, optional
         Desired data-type for the output
-    internal: data-type, optional
+    internal : data-type, optional
         Internal data-type for compuatations
-    kwargs : dict, optional
+    jacobi_kwargs : dict, optional
         Keyword arguments to pass to the Jacobi operator subroutine
 
     Returns
@@ -787,21 +795,21 @@ def differential_operator_adjoint(kind, n, rho, a, b, c, dtype='float64', intern
         offsets = -np.arange(-1,m+1)
     else:
         raise ValueError(f'Invalid kind: {kind}')
-    _make_rho_config(rho, a+da, b+db, c+dc)
+    _check_jacobi_params(a+da, b+db, c+dc)
     if parity:
         offsets = offsets[0::2]
 
     # Project Pn onto Jm
     # i'th column of projPJ is the coefficients of P[i] w.r.t. J[j]
     z, w = jacobi.quadrature(n, a, b, dtype=internal)
-    P = polynomials(n, rho, a, b, c, z, dtype=internal, **kwargs)
+    P = polynomials(n, rho, a, b, c, z, dtype=internal, **jacobi_kwargs)
     J = jacobi.polynomials(n, a, b, z, dtype=internal)
     projPJ = np.array([np.sum(w*P*J[k], axis=1) for k in range(n)])
 
     # Compute the operator on J
     # i'th column of f is grid space evaluation of Op[P[i]]
-    z, w = quadrature(n+m, rho, a+da, b+db, c+dc, dtype=internal, **kwargs)
-    Q = polynomials(n+m, rho, a+da, b+db, c+dc, z, dtype=internal, **kwargs)
+    z, w = quadrature(n+m, rho, a+da, b+db, c+dc, dtype=internal, **jacobi_kwargs)
+    Q = polynomials(n+m, rho, a+da, b+db, c+dc, z, dtype=internal, **jacobi_kwargs)
 
     def evaluate_on_grid(op):
         Z = jacobi.operator('Z', dtype=internal)(*op.codomain(n, a, b))
@@ -821,7 +829,7 @@ def differential_operator_adjoint(kind, n, rho, a, b, c, dtype='float64', intern
     return diags(bands, offsets, shape=(n+m,n), dtype=dtype)
 
 
-def operator(name, rho, dtype='float64', internal='float128', **kwargs):
+def operator(name, rho, dtype='float64', internal='float128', **jacobi_kwargs):
     """
     Interface to GeneralizedJacobiOperator class
 
@@ -833,11 +841,11 @@ def operator(name, rho, dtype='float64', internal='float128', **kwargs):
         If a tuple or list, monomial basis coefficients of rho function
         If a dict, then must have callable items with keys 'rho' and 'rhoprime'.
         rho may not vanish inside the domain.
-    dtype: data-type, optional
+    dtype : data-type, optional
         Desired data-type for the output
-    internal: data-type, optional
+    internal : data-type, optional
         Internal data-type for compuatations
-    kwargs : dict, optional
+    jacobi_kwargs : dict, optional
         Keyword arguments to pass to the Jacobi operator subroutine
 
     Returns
@@ -849,10 +857,10 @@ def operator(name, rho, dtype='float64', internal='float128', **kwargs):
         return GeneralizedJacobiOperator.identity(rho, dtype=dtype)
     if name == 'Z':
         return GeneralizedJacobiOperator.recurrence(rho, dtype=dtype, internal=internal)
-    return GeneralizedJacobiOperator(name, rho, dtype=dtype, internal=internal, **kwargs)
+    return GeneralizedJacobiOperator(name, rho, dtype=dtype, internal=internal, **jacobi_kwargs)
 
 
-def operators(rho, dtype='float64', internal='float128', **kwargs):
+def operators(rho, dtype='float64', internal='float128', **jacobi_kwargs):
     """
     Interface to GeneralizedJacobiOperator class, binding rho and data-types
     to the operator constructor
@@ -863,11 +871,11 @@ def operators(rho, dtype='float64', internal='float128', **kwargs):
         If a tuple or list, monomial basis coefficients of rho function
         If a dict, then must have callable items with keys 'rho' and 'rhoprime'.
         rho may not vanish inside the domain.
-    dtype: data-type, optional
+    dtype : data-type, optional
         Desired data-type for the output
-    internal: data-type, optional
+    internal : data-type, optional
         Internal data-type for compuatations
-    kwargs : dict, optional
+    jacobi_kwargs : dict, optional
         Keyword arguments to pass to the Jacobi operator subroutine
 
     Returns
@@ -877,7 +885,7 @@ def operators(rho, dtype='float64', internal='float128', **kwargs):
 
     """
     def dispatch(name):
-        return operator(name, rho, dtype=dtype, internal=internal, **kwargs)
+        return operator(name, rho, dtype=dtype, internal=internal, **jacobi_kwargs)
     return dispatch
 
 
@@ -928,9 +936,9 @@ class GeneralizedJacobiOperator():
 
     Attributes
     ----------
-    name: str
+    name : str
         A, B, C, D, E, F, G
-    dtype: data-type
+    dtype : data-type
         Output data-type for the matrix operator.
 
 
@@ -947,16 +955,16 @@ class GeneralizedJacobiOperator():
     recurrence: Operator object for the Jacobi operator
 
     """
-    def __init__(self, name, rho, dtype='float64', internal='float128', **kwargs):
+    def __init__(self, name, rho, dtype='float64', internal='float128', **jacobi_kwargs):
         self.__function = getattr(self,f'_GeneralizedJacobiOperator__{name}')
 
         config = _make_rho_config(rho, 0, 0, 0)
-        self.rho        = rho
-        self.degree     = config['degree']
+        self.rho           = rho
+        self.degree        = config['degree']
 
-        self.dtype      = dtype
-        self.internal   = internal
-        self.kwargs     = kwargs
+        self.dtype         = dtype
+        self.internal      = internal
+        self.jacobi_kwargs = jacobi_kwargs
 
     def __call__(self,p):
         return Operator(*self.__function(p))
@@ -999,7 +1007,7 @@ class GeneralizedJacobiOperator():
     @staticmethod
     def identity(rho, dtype='float64'):
         def I(n,a,b,c):
-            _make_rho_config(rho, a, b, c)
+            _check_jacobi_params(a, b, c)
             N = np.ones(n,dtype=dtype)
             return infinite_csr(banded((N,[0]),(max(n,0),max(n,0))))
             
@@ -1008,20 +1016,20 @@ class GeneralizedJacobiOperator():
     @staticmethod
     def recurrence(rho, dtype='float64', internal='float128'):
         def Z(n,a,b,c):
-            _make_rho_config(rho, a, b, c)
+            _check_jacobi_params(a, b, c)
             op = jacobi_operator(n, rho, a, b, c, dtype=dtype, internal=internal)
             return infinite_csr(op) 
         return Operator(Z,GeneralizedJacobiCodomain(1,0,0,0))
 
     def _dispatch(self,kind,p,n,a,b,c):
-        _make_rho_config(self.rho, a, b, c)
+        _check_jacobi_params(a, b, c)
         if kind in ['A','B','C']:
             fun = {+1: embedding_operator, -1: embedding_operator_adjoint}[p]
         elif kind in ['D','E','F','G']:
             fun = {+1: differential_operator, -1: differential_operator_adjoint}[p]
         else:
             raise ValueError(f'Unknown operator kind: {kind}')
-        op = fun(kind, n, self.rho, a, b, c, dtype=self.dtype, internal=self.internal, **self.kwargs)
+        op = fun(kind, n, self.rho, a, b, c, dtype=self.dtype, internal=self.internal, **self.jacobi_kwargs)
         return infinite_csr(op)
 
 

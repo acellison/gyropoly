@@ -4,51 +4,6 @@ import matplotlib.pyplot as plt
 import sops
 
 
-def test_rho_function():
-    print('test_rho_function')
-    n, a, b, c = 10, 1, 1, 1
-    nquad_init = max(n,500)
-    sc = 0.1
-    rho = lambda z: (1-(sc**2/2*(z+1)))**0.5 - (sc**2 - (sc**2/2*(z+1)))**0.5
-    rhoprime = lambda z: -sc**2/2*0.5*(1-(sc**2/2*(z+1)))**-0.5 + sc**2/2*0.5*(sc**2-(sc**2/2*(z+1)))**-0.5
-    rho = {'rho': rho, 'rhoprime': rhoprime}
-
-    plot = False
-    if plot:
-        z = np.linspace(-1,1,1000)
-        plt.plot(np.sqrt(sc**2/2*(z+1)), rho(z))
-        plt.show()
-
-    quadtol = 1e-10
-    quad_ratio = 2
-    ZmC = sops.modified_chebyshev(n, rho, a, b, c, nquad_init=nquad_init, tol=quadtol, quad_ratio=quad_ratio, verbose=True)
-    ZS = sops.stieltjes(n, rho, a, b, c, nquad_init=nquad_init, tol=quadtol, quad_ratio=quad_ratio, verbose=True)
-    error = ZmC - ZS
-    print(np.max(abs(error)))
-
-    operator = sops.operators(rho, nquad_init=nquad_init, tol=quadtol, quad_ratio=quad_ratio)
-    op = operator('D')
-
-    Opp = op(+1)(n, a, b, c)
-    Opm = op(-1)(n, a, b, c)
-
-    Opp, Opm = [mat.todense() for mat in [Opp, Opm]]
-    zerotol = 1e-14
-    Opp[abs(Opp) < zerotol] = 0
-    Opm[abs(Opm) < zerotol] = 0
-
-    def plot_coeff_magnitude(fig, ax, mat):
-        sh = np.shape(mat)
-        xx = np.arange(sh[1])
-        yy = np.arange(sh[0],0,-1)
-        im = ax.pcolormesh(xx, yy, np.log10(np.abs(mat)), shading='auto')
-        fig.colorbar(im, ax=ax)
-
-    fig, ax = plt.subplots(1,2,figsize=plt.figaspect(0.5))
-    plot_coeff_magnitude(fig, ax[0], Opp)
-    plot_coeff_magnitude(fig, ax[1], Opm)
-
-
 def test_modified_chebyshev():
     n, rho, a, b, c = 100, [1,1,3], -1/2, 1/2, 3
     ZmC = sops.modified_chebyshev(n, rho, a, b, c)
@@ -77,7 +32,8 @@ def test_polynomial_norms():
 
 
 def plot_polynomials():
-    n, rho, a, b, c = 8, [-1,0,1.01], 1, 1, 3/2
+#    n, rho, a, b, c = 8, [-1,0,1.01], 1, 1, 3/2
+    n, rho, a, b, c = 8, [1,0,1], 1, 1, 1/2
     z = np.linspace(-1,1,1000)
     P = sops.polynomials(n, rho, a, b, c, z, verbose=True)
 
@@ -253,22 +209,72 @@ def test_mass():
     assert abs(mass-target) < 6e-15
     
 
-def main():
-    test_rho_function()
+def test_rho_function():
+    print('test_rho_function')
+    n, a, b, c = 20, 1, 1, 1
+    nquad = max(n, 500)
+    sc = 0.1
+    rho = lambda z: (1-(sc**2/2*(z+1)))**0.5 - (sc**2 - (sc**2/2*(z+1)))**0.5
+    rhoprime = lambda z: -sc**2/2*0.5*(1-(sc**2/2*(z+1)))**-0.5 + sc**2/2*0.5*(sc**2-(sc**2/2*(z+1)))**-0.5
+    rho = {'rho': rho, 'rhoprime': rhoprime, 'degree': 200}
+
+    plot = False
+    if plot:
+        z = np.linspace(-1,1,1000)
+        plt.plot(np.sqrt(sc**2/2*(z+1)), rho(z))
+        plt.show()
+
+    quadtol = 1e-10
+    nquad_ratio = 2
+    ZmC = sops.modified_chebyshev(n, rho, a, b, c, nquad=nquad, tol=quadtol, nquad_ratio=nquad_ratio, verbose=True)
+    ZS = sops.stieltjes(n, rho, a, b, c, nquad=nquad, tol=quadtol, nquad_ratio=nquad_ratio, verbose=True)
+    error = ZmC - ZS
+    print(np.max(abs(error)))
+
+    operator = sops.operators(rho, nquad=nquad, tol=quadtol, nquad_ratio=nquad_ratio)
+    op = operator('D')
+
+    Opp = op(+1)(n, a, b, c)
+    Opm = op(-1)(n, a, b, c)
+
+    Opp, Opm = [mat.todense() for mat in [Opp, Opm]]
+    zerotol = 1e-14
+    Opp[abs(Opp) < zerotol] = 0
+    Opm[abs(Opm) < zerotol] = 0
+
+    def plot_coeff_magnitude(fig, ax, mat):
+        sh = np.shape(mat)
+        xx = np.arange(sh[1])
+        yy = np.arange(sh[0],0,-1)
+        im = ax.pcolormesh(xx, yy, np.log10(np.abs(mat)), shading='auto')
+        fig.colorbar(im, ax=ax)
+
+    fig, ax = plt.subplots(1,2,figsize=plt.figaspect(0.5))
+    plot_coeff_magnitude(fig, ax[0], Opp)
+    plot_coeff_magnitude(fig, ax[1], Opm)
+
+
+def test():
     test_mass()
     test_modified_chebyshev()
-
     test_polynomial_norms()
     test_clenshaw_summation()
     test_operators()
+    test_rho_function()
 
+
+def plot():
     plot_polynomials()
     print_embedding_operators()
     print_differential_operators()
 
-    plt.show()
+
+def main():
+    test()
+#    plot()
 
 
 if __name__=='__main__':
     main()
+    plt.show()
 
