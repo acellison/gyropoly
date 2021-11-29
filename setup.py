@@ -2,6 +2,6 @@
 from setuptools import setup
 
 setup(
-    name='sops',
+    name='gyropoly',
     version='0.1'
 )

@@ -2,19 +2,19 @@ import numpy as np
 import matplotlib.pyplot as plt
 import sympy
 
-import sops
+from gyropoly import generalized_jacobi as gjacobi
 
 
 def test_modified_chebyshev():
     n, rho, a, b, c = 100, [1,1,3], -1/2, 1/2, 3
-    ZmC = sops.modified_chebyshev(n, rho, a, b, c)
-    ZS = sops.stieltjes(n, rho, a, b, c)
+    ZmC = gjacobi.modified_chebyshev(n, rho, a, b, c)
+    ZS = gjacobi.stieltjes(n, rho, a, b, c)
     error = ZmC - ZS
     assert np.max(abs(error)) < 2e-15
 
     n, rho, a, b, c = 1000, [-1,0,1.01], 1/2, 3/2, -2
-    ZmC = sops.modified_chebyshev(n, rho, a, b, c, verbose=True)
-    ZS = sops.stieltjes(n, rho, a, b, c, verbose=True)
+    ZmC = gjacobi.modified_chebyshev(n, rho, a, b, c, verbose=True)
+    ZS = gjacobi.stieltjes(n, rho, a, b, c, verbose=True)
     error = ZmC - ZS
     assert np.max(abs(error)) < 2e-15
 
@@ -22,12 +22,12 @@ def test_modified_chebyshev():
 def test_polynomial_norms():
     n, rho, a, b, c = 8, [-1,0,1.01], 1, 1, 3/2
     z = np.linspace(-1,1,1000)
-    P = sops.polynomials(n, rho, a, b, c, z, verbose=True)
+    P = gjacobi.polynomials(n, rho, a, b, c, z, verbose=True)
 
     w = (1-z)**a * (1+z)**b * np.polyval(rho, z)**c
 
-    zk, wk = sops.quadrature(n, rho, a, b, c, algorithm='stieltjes', verbose=True)
-    Pk = sops.polynomials(n, rho, a, b, c, zk)
+    zk, wk = gjacobi.quadrature(n, rho, a, b, c, algorithm='stieltjes', verbose=True)
+    Pk = gjacobi.polynomials(n, rho, a, b, c, zk)
     norms = np.sum(wk*Pk*Pk, axis=1)
     assert np.max(abs(norms-1)) < 2e-14
 
@@ -36,12 +36,12 @@ def plot_polynomials():
 #    n, rho, a, b, c = 8, [-1,0,1.01], 1, 1, 3/2
     n, rho, a, b, c = 8, [1,0,1], 1, 1, 1/2
     z = np.linspace(-1,1,1000)
-    P = sops.polynomials(n, rho, a, b, c, z, verbose=True)
+    P = gjacobi.polynomials(n, rho, a, b, c, z, verbose=True)
 
     w = (1-z)**a * (1+z)**b * np.polyval(rho, z)**c
 
-    zk, wk = sops.quadrature(n, rho, a, b, c, algorithm='stieltjes', verbose=True)
-    Pk = sops.polynomials(n, rho, a, b, c, zk)
+    zk, wk = gjacobi.quadrature(n, rho, a, b, c, algorithm='stieltjes', verbose=True)
+    Pk = gjacobi.polynomials(n, rho, a, b, c, zk)
 
     fig, ax = plt.subplots(1,2,figsize=plt.figaspect(0.5))
     ax[0].plot(z, P.T)
@@ -62,17 +62,17 @@ def print_embedding_operators():
     n, rho, a, b, c = 6, [1,2,3], 1, 2, 1
 #    n, rho, a, b, c = 6, [1,0,1], 1, 1, 1
 
-    A = sops.embedding_operator('A', n, rho, a, b, c)
-    B = sops.embedding_operator('B', n, rho, a, b, c)
-    C = sops.embedding_operator('C', n, rho, a, b, c)
+    A = gjacobi.embedding_operator('A', n, rho, a, b, c)
+    B = gjacobi.embedding_operator('B', n, rho, a, b, c)
+    C = gjacobi.embedding_operator('C', n, rho, a, b, c)
     print('Embedding Operators')
     print('A(+)'); print(A.todense())
     print('B(+)'); print(B.todense())
     print('C(+)'); print(C.todense())
 
-    Ad = sops.embedding_operator_adjoint('A', n, rho, a, b, c)
-    Bd = sops.embedding_operator_adjoint('B', n, rho, a, b, c)
-    Cd = sops.embedding_operator_adjoint('C', n, rho, a, b, c)
+    Ad = gjacobi.embedding_operator_adjoint('A', n, rho, a, b, c)
+    Bd = gjacobi.embedding_operator_adjoint('B', n, rho, a, b, c)
+    Cd = gjacobi.embedding_operator_adjoint('C', n, rho, a, b, c)
     print('Embedding Adjoints')
     print('A(-)'); print(Ad.todense())
     print('B(-)'); print(Bd.todense())
@@ -95,20 +95,20 @@ def print_differential_operators():
     n, rho, a, b, c = 5, [1,2,3], 1, 2, 1
 #    n, rho, a, b, c = 5, [1,3], 1, 2, 1
 
-    Dz = sops.differential_operator('D', n, rho, a, b, c)
-    Da = sops.differential_operator('E', n, rho, a, b, c)
-    Db = sops.differential_operator('F', n, rho, a, b, c)
-    Dc = sops.differential_operator('G', n, rho, a, b, c)
+    Dz = gjacobi.differential_operator('D', n, rho, a, b, c)
+    Da = gjacobi.differential_operator('E', n, rho, a, b, c)
+    Db = gjacobi.differential_operator('F', n, rho, a, b, c)
+    Dc = gjacobi.differential_operator('G', n, rho, a, b, c)
     print('Differential Operators')
     print('D(+)'); print(Dz.todense())
     print('E(+)'); print(Da.todense())
     print('F(+)'); print(Db.todense())
     print('G(+)'); print(Dc.todense())
 
-    Dzd = sops.differential_operator_adjoint('D', n, rho, a, b, c)
-    Dad = sops.differential_operator_adjoint('E', n, rho, a, b, c)
-    Dbd = sops.differential_operator_adjoint('F', n, rho, a, b, c)
-    Dcd = sops.differential_operator_adjoint('G', n, rho, a, b, c)
+    Dzd = gjacobi.differential_operator_adjoint('D', n, rho, a, b, c)
+    Dad = gjacobi.differential_operator_adjoint('E', n, rho, a, b, c)
+    Dbd = gjacobi.differential_operator_adjoint('F', n, rho, a, b, c)
+    Dcd = gjacobi.differential_operator_adjoint('G', n, rho, a, b, c)
     print('Differential Adjoints')
     print('D(-)'); print(Dzd.todense())
     print('E(-)'); print(Dad.todense())
@@ -137,25 +137,25 @@ def test_clenshaw_summation():
     tol = n*1e-13
 
     z = np.linspace(-1,1,1000)
-    Z, mass = sops.jacobi_operator(n, rho, a, b, c, return_mass=True)
-    P = sops.polynomials(n, rho, a, b, c, z.astype(dtype), dtype=dtype)
+    Z, mass = gjacobi.jacobi_operator(n, rho, a, b, c, return_mass=True)
+    P = gjacobi.polynomials(n, rho, a, b, c, z.astype(dtype), dtype=dtype)
 
     # Check the Clenshaw returns the correct polynomial for Id coeffs
     coeffs = np.eye(n)
-    f = sops.clenshaw_summation(coeffs, Z, z, mass)
+    f = gjacobi.clenshaw_summation(coeffs, Z, z, mass)
     error = (f-P).T
     assert np.max(abs(error)) < tol
 
     # Single vector of random coefficients
     coeffs = np.random.random(n)/np.arange(1,n+1)
-    f = sops.clenshaw_summation(coeffs, Z, z, mass)
+    f = gjacobi.clenshaw_summation(coeffs, Z, z, mass)
     g = P.T @ coeffs.astype(dtype)
     error = f-g
     assert np.max(abs(error)) < tol
 
     # Matrix of random coefficients, each column is coeffs of a function
     coeffs = np.random.random((n, 4))/np.arange(1,n+1)[:,np.newaxis]
-    f = sops.clenshaw_summation(coeffs, Z, z, mass)
+    f = gjacobi.clenshaw_summation(coeffs, Z, z, mass)
     g = P.T @ coeffs.astype(dtype)
     error = f.T-g
     assert np.max(abs(error)) < tol
@@ -164,7 +164,7 @@ def test_clenshaw_summation():
 def test_operators():
     n, rho, a, b, c = 10, [1,0,0,0,1], 1, 1, 1
     names = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'Id', 'N', 'Z']
-    A, B, C, D, E, F, G, Id, N, Z = ops = [sops.operator(kind, rho) for kind in names]
+    A, B, C, D, E, F, G, Id, N, Z = ops = [gjacobi.operator(kind, rho) for kind in names]
     d = len(rho)-1
 
     for name, op in zip(names, ops):
@@ -202,7 +202,7 @@ def test_operators():
 
 def test_mass():
     rho, a, b, c = [1,0,0,0,1], 1, 1, 1
-    mass = sops.mass(rho, a, b, c)
+    mass = gjacobi.mass(rho, a, b, c)
     target = 152/105
     assert abs(mass-target) < 1e-15
 
@@ -210,7 +210,7 @@ def test_mass():
     rho = lambda z: (1-(sc**2/2*(z+1)))**0.5 - (sc**2 - (sc**2/2*(z+1)))**0.5
     rhoprime = lambda z: -sc**2/2*0.5*(1-(sc**2/2*(z+1)))**-0.5 + sc**2/2*0.5*(sc**2-(sc**2/2*(z+1)))**-0.5
     rho, a, b, c = {'rho': rho, 'rhoprime': rhoprime}, 1, 1, 1
-    mass = sops.mass(rho, a, b, c, verbose=True)
+    mass = gjacobi.mass(rho, a, b, c, verbose=True)
     target = 1.238566411829964
     assert abs(mass-target) < 6e-15
     
@@ -231,12 +231,12 @@ def test_rho_function():
 
     quadtol = 1e-10
     nquad_ratio = 2
-    ZmC = sops.modified_chebyshev(n, rho, a, b, c, nquad=nquad, tol=quadtol, nquad_ratio=nquad_ratio, verbose=True)
-    ZS = sops.stieltjes(n, rho, a, b, c, nquad=nquad, tol=quadtol, nquad_ratio=nquad_ratio, verbose=True)
+    ZmC = gjacobi.modified_chebyshev(n, rho, a, b, c, nquad=nquad, tol=quadtol, nquad_ratio=nquad_ratio, verbose=True)
+    ZS = gjacobi.stieltjes(n, rho, a, b, c, nquad=nquad, tol=quadtol, nquad_ratio=nquad_ratio, verbose=True)
     error = ZmC - ZS
     assert np.max(abs(error)) < 1e-15
 
-    operator = sops.operators(rho, nquad=nquad, tol=quadtol, nquad_ratio=nquad_ratio)
+    operator = gjacobi.operators(rho, nquad=nquad, tol=quadtol, nquad_ratio=nquad_ratio)
     op = operator('D')
 
     Opp = op(+1)(n, a, b, c)
