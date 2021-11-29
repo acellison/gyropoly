@@ -3,8 +3,8 @@ from functools import partial
 from dedalus_sphere import jacobi
 from scipy.sparse import diags
 from scipy.sparse import dia_matrix as banded
-from scipy.linalg import eigh_tridiagonal as eigs
 from scipy.sparse.linalg import spsolve_triangular
+from scipy.linalg import eigh_tridiagonal
 
 from dedalus_sphere.operators import Operator, Codomain, infinite_csr
 
@@ -61,18 +61,10 @@ def _make_rho_config(rho, a, b, c):
 
 def _has_even_parity(rho, a, b, c):
     config = _make_rho_config(rho, a, b, c)
-    if not config['is_polynomial']:
-        return False
-
-    if a != b:
-        return False
-    rho_degree = len(rho)-1
-    if rho_degree%2 == 0:
-        odd_coeffs = np.array(rho[1::2])
-        if np.all(odd_coeffs == 0):
+    if a == b and config['is_polynomial'] and config['degree'] % 2 == 0:
+        if np.all(np.array(rho[1::2]) == 0):
             return True
-    else:
-        return False
+    return False
 
 
 def _stieltjes_iteration(n, z, dmu, dtype='float64'):
@@ -482,7 +474,7 @@ def quadrature(n, rho, a, b, c, dtype='float64', internal='float128', **jacobi_k
     """
     # Compute the Jacobi operator.  eigs requires double precision inputs
     Z, mass = jacobi_operator(n, rho, a, b, c, dtype='float64', internal=internal, return_mass=True, **jacobi_kwargs)
-    zj, vj = eigs(Z.diagonal(0), Z.diagonal(1))
+    zj, vj = eigh_tridiagonal(Z.diagonal(0), Z.diagonal(1))
     wj = mass*np.asarray(vj[0,:]).squeeze()**2
 
     indices = np.argsort(zj)
@@ -1035,11 +1027,8 @@ class GeneralizedJacobiOperator():
 
 class GeneralizedJacobiCodomain(Codomain):
     def __init__(self,dn=0,da=0,db=0,dc=0,Output=None):
-        if Output == None: Output = GeneralizedJacobiCodomain
+        if Output is None: Output = GeneralizedJacobiCodomain
         Codomain.__init__(self,*(dn,da,db,dc),Output=Output)
-
-    def __len__(self):
-        return 3
 
     def __str__(self):
         s = f'(n->n+{self[0]},a->a+{self[1]},b->b+{self[2]},c->c+{self[3]})'
@@ -1049,15 +1038,10 @@ class GeneralizedJacobiCodomain(Codomain):
         return self.Output(*self(*other[:4],evaluate=False))
 
     def __call__(self,*args,evaluate=True):
-        n,a,b,c = args[:4]
-        n, a, b, c = self[0] + n, self[1] + a, self[2] + b, self[3] + c
+        n, a, b, c = tuple(self[i] + args[i] for i in range(4))
         if evaluate and (a <= -1 or b <= -1):
             raise ValueError('invalid Jacobi parameter.')
-        return n,a,b,c
-
-    def __neg__(self):
-        a,b,c = -self[1],-self[2],-self[3]
-        return self.Output(-self[0],a,b,c)
+        return n, a, b, c
 
     def __eq__(self,other):
         return self[1:] == other[1:]
@@ -1065,7 +1049,5 @@ class GeneralizedJacobiCodomain(Codomain):
     def __or__(self,other):
         if self != other:
             raise TypeError('operators have incompatible codomains.')
-        if self[0] >= other[0]:
-            return self
-        return other
+        return self if self[0] >= other[0] else other
 

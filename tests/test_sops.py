@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import sympy
 
 import sops
 
@@ -193,6 +194,11 @@ def test_operators():
     assert op.codomain(n,a,b,c) == (n+1,a,b,c)
     assert np.shape(Op) == (n+1,n)
 
+    op = A(-1) @ A(+1) + B(-1) @ B(+1) + C(-1) @ C(+1)
+    Op = op(n,a,b,c)
+    assert op.codomain(n,a,b,c) == (n+d,a,b,c)
+    assert np.shape(Op) == (n+d,n)
+
 
 def test_mass():
     rho, a, b, c = [1,0,0,0,1], 1, 1, 1
@@ -213,23 +219,22 @@ def test_rho_function():
     print('test_rho_function')
     n, a, b, c = 20, 1, 1, 1
     nquad = max(n, 500)
-    sc = 0.1
-    rho = lambda z: (1-(sc**2/2*(z+1)))**0.5 - (sc**2 - (sc**2/2*(z+1)))**0.5
-    rhoprime = lambda z: -sc**2/2*0.5*(1-(sc**2/2*(z+1)))**-0.5 + sc**2/2*0.5*(sc**2-(sc**2/2*(z+1)))**-0.5
-    rho = {'rho': rho, 'rhoprime': rhoprime, 'degree': 200}
 
-    plot = False
-    if plot:
-        z = np.linspace(-1,1,1000)
-        plt.plot(np.sqrt(sc**2/2*(z+1)), rho(z))
-        plt.show()
+    # Inside tangent cylinder of radius sc.
+    # This is nasty - the derivative blows up at z=1
+    z = sympy.Symbol('z')
+    sc = 0.1
+    rho = (1 - sc**2/2*(z+1))**0.5 - sc*(1 - 1/2*(z+1))**0.5
+    rhoprime = sympy.diff(rho, z)
+    rho, rhoprime = [sympy.lambdify(z, fun) for fun in [rho, rhoprime]]
+    rho = {'rho': rho, 'rhoprime': rhoprime, 'degree': 200}
 
     quadtol = 1e-10
     nquad_ratio = 2
     ZmC = sops.modified_chebyshev(n, rho, a, b, c, nquad=nquad, tol=quadtol, nquad_ratio=nquad_ratio, verbose=True)
     ZS = sops.stieltjes(n, rho, a, b, c, nquad=nquad, tol=quadtol, nquad_ratio=nquad_ratio, verbose=True)
     error = ZmC - ZS
-    print(np.max(abs(error)))
+    assert np.max(abs(error)) < 1e-15
 
     operator = sops.operators(rho, nquad=nquad, tol=quadtol, nquad_ratio=nquad_ratio)
     op = operator('D')
@@ -244,9 +249,10 @@ def test_rho_function():
 
     def plot_coeff_magnitude(fig, ax, mat):
         sh = np.shape(mat)
-        xx = np.arange(sh[1])
-        yy = np.arange(sh[0],0,-1)
-        im = ax.pcolormesh(xx, yy, np.log10(np.abs(mat)), shading='auto')
+        with np.errstate(divide='ignore'):
+            data = np.log10(np.abs(mat))
+        im = ax.imshow(data)
+        ax.set_aspect('auto')
         fig.colorbar(im, ax=ax)
 
     fig, ax = plt.subplots(1,2,figsize=plt.figaspect(0.5))
