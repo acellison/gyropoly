@@ -21,9 +21,7 @@ def _check_jacobi_params(a, b, c):
         raise ValueError(f'a ({a}) and b ({b}) must be larger than -1')
 
 
-def _make_rho_config(rho, a, b, c):
-    _check_jacobi_params(a, b, c)
-
+def _make_rho_config(rho):
     config = {'rho': None, 'rhoprime': None, 'is_polynomial': False, 'degree': 100}
 
     # rho is a callable function
@@ -60,7 +58,8 @@ def _make_rho_config(rho, a, b, c):
 
 
 def _has_even_parity(rho, a, b, c):
-    config = _make_rho_config(rho, a, b, c)
+    _check_jacobi_params(a, b, c)
+    config = _make_rho_config(rho)
     if a == b and config['is_polynomial'] and config['degree'] % 2 == 0:
         if np.all(np.array(rho[1::2]) == 0):
             return True
@@ -116,7 +115,8 @@ def stieltjes(n, rho, a, b, c, return_mass=False, dtype='float64', internal='flo
     sparse matrix representation of Jacobi operator and optionally floating point mass
 
     """
-    config = _make_rho_config(rho, a, b, c)
+    _check_jacobi_params(a, b, c)
+    config = _make_rho_config(rho)
     rho_fun = config['rho']
     if c == 0:
         Z = jacobi.operator('Z', dtype=dtype)(n, a, b)
@@ -200,7 +200,8 @@ def modified_chebyshev(n, rho, a, b, c, return_mass=False, dtype='float64', inte
     sparse matrix representation of Jacobi operator and optionally floating point mass
 
     """
-    config = _make_rho_config(rho, a, b, c)
+    _check_jacobi_params(a, b, c)
+    config = _make_rho_config(rho)
     rho_fun = config['rho']
     if c == 0:
         Z = jacobi.operator('Z', dtype=dtype)(n, a, b)
@@ -347,7 +348,8 @@ def mass(rho, a, b, c, dtype='float64', internal='float128', verbose=False, tol=
     floating point integral of the weight function
 
     """
-    config = _make_rho_config(rho, a, b, c)
+    _check_jacobi_params(a, b, c)
+    config = _make_rho_config(rho)
     rho_fun, rho_degree = config['rho'], config['degree']
 
     c_is_integer = config['is_polynomial'] and int(c) == c and c >= 0
@@ -563,7 +565,8 @@ def embedding_operator(kind, n, rho, a, b, c, dtype='float64', internal='float12
     operator codomain n increment
 
     """
-    config = _make_rho_config(rho, a, b, c)
+    _check_jacobi_params(a, b, c)
+    config = _make_rho_config(rho)
     rho_degree = config['degree']
     parity = _has_even_parity(rho, a, b, c)
 
@@ -622,7 +625,8 @@ def embedding_operator_adjoint(kind, n, rho, a, b, c, dtype='float64', internal=
     operator codomain n increment
 
     """
-    config = _make_rho_config(rho, a, b, c)
+    _check_jacobi_params(a, b, c)
+    config = _make_rho_config(rho)
     rho_fun, rho_degree = [config[key] for key in ['rho', 'degree']]
     parity = _has_even_parity(rho, a, b, c)
 
@@ -682,7 +686,8 @@ def differential_operator(kind, n, rho, a, b, c, dtype='float64', internal='floa
     operator codomain n increment
 
     """
-    config = _make_rho_config(rho, a, b, c)
+    _check_jacobi_params(a, b, c)
+    config = _make_rho_config(rho)
     rho_degree = config['degree']
     parity = _has_even_parity(rho, a, b, c)
 
@@ -764,7 +769,8 @@ def differential_operator_adjoint(kind, n, rho, a, b, c, dtype='float64', intern
     operator codomain n increment
 
     """
-    config = _make_rho_config(rho, a, b, c)
+    _check_jacobi_params(a, b, c)
+    config = _make_rho_config(rho)
     rho_fun, rho_der, rho_degree = [config[key] for key in ['rho', 'rhoprime', 'degree']]
     parity = _has_even_parity(rho, a, b, c)
 
@@ -828,7 +834,7 @@ def operator(name, rho, dtype='float64', internal='float128', **jacobi_kwargs):
     Parameters
     ----------
     name : str
-        A, B, C, D, E, F, G, Id, Z (Jacobi operator)
+        A, B, C, D, E, F, G, Id, N, Z (Jacobi operator)
     rho : tuple,list or dict
         If a tuple or list, monomial basis coefficients of rho function
         If a dict, then must have callable items with keys 'rho' and 'rhoprime'.
@@ -847,6 +853,8 @@ def operator(name, rho, dtype='float64', internal='float128', **jacobi_kwargs):
     """
     if name == 'Id':
         return GeneralizedJacobiOperator.identity(rho, dtype=dtype)
+    if name == 'N':
+        return GeneralizedJacobiOperator.number(rho, dtype=dtype)
     if name == 'Z':
         return GeneralizedJacobiOperator.recurrence(rho, dtype=dtype, internal=internal)
     return GeneralizedJacobiOperator(name, rho, dtype=dtype, internal=internal, **jacobi_kwargs)
@@ -926,6 +934,13 @@ class GeneralizedJacobiOperator():
      Each -1 operator is the adjoint of the coresponding +1 operator and
      d is the polynomial degree of ρ.
 
+     In addition there are a few exceptional operators:
+
+        Identity: <n,ρ,a,b,c,z| -> <n,ρ,a,b,c,z|
+
+        Number:   <n,ρ,a,b,c,z| -> [0*P(0,ρ,a,b,c,z),1*P(1,ρ,a,b,c,z),...,(n-1)*P(n-1,ρ,a,b,c,z)]
+                  This operator doesn't have a local differential Left action.
+
     Attributes
     ----------
     name : str
@@ -944,13 +959,14 @@ class GeneralizedJacobiOperator():
     staticmethods
     -------------
     identity:   Operator object for identity matrix
+    number:     Operator object for polynomial degree
     recurrence: Operator object for the Jacobi operator
 
     """
     def __init__(self, name, rho, dtype='float64', internal='float128', **jacobi_kwargs):
         self.__function = getattr(self,f'_GeneralizedJacobiOperator__{name}')
 
-        config = _make_rho_config(rho, 0, 0, 0)
+        config = _make_rho_config(rho)
         self.rho           = rho
         self.degree        = config['degree']
 
@@ -1002,8 +1018,14 @@ class GeneralizedJacobiOperator():
             _check_jacobi_params(a, b, c)
             N = np.ones(n,dtype=dtype)
             return infinite_csr(banded((N,[0]),(max(n,0),max(n,0))))
-            
         return Operator(I,GeneralizedJacobiCodomain(0,0,0,0))
+
+    @staticmethod
+    def number(rho, dtype='float64'):
+        def N(n,a,b,c):
+            _check_jacobi_params(a, b, c)
+            return infinite_csr(banded((np.arange(n,dtype=dtype),[0]),(max(n,0),max(n,0))))
+        return Operator(N,GeneralizedJacobiCodomain(0,0,0,0))
 
     @staticmethod
     def recurrence(rho, dtype='float64', internal='float128'):

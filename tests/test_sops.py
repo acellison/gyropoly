@@ -163,12 +163,12 @@ def test_clenshaw_summation():
 
 def test_operators():
     n, rho, a, b, c = 10, [1,0,0,0,1], 1, 1, 1
-    names = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'Id', 'Z']
-    A, B, C, D, E, F, G, Id, Z = ops = [sops.operator(kind, rho) for kind in names]
+    names = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'Id', 'N', 'Z']
+    A, B, C, D, E, F, G, Id, N, Z = ops = [sops.operator(kind, rho) for kind in names]
     d = len(rho)-1
 
     for name, op in zip(names, ops):
-        if name in ['Id', 'Z']:
+        if name in ['Id', 'N', 'Z']:
             # No parity
             assert np.shape(op(n,a,b,c)) == (op.codomain(n,a,b,c)[0],n)
             continue
@@ -189,7 +189,7 @@ def test_operators():
     assert np.shape(Op) == (n+4*d,n)
 
     # Check we can cascade the jacobi operator
-    op = Z @ Id
+    op = N @ Z @ Id
     Op = op(n,a,b,c)
     assert op.codomain(n,a,b,c) == (n+1,a,b,c)
     assert np.shape(Op) == (n+1,n)
