@@ -8,7 +8,7 @@ from scipy.linalg import eigh_tridiagonal
 
 from dedalus_sphere.operators import Operator, Codomain, infinite_csr
 
-__all__ = ['stieltjes', 'modified_chebyshev', 'jacobi_operator', 'mass',
+__all__ = ['mass', 'stieltjes', 'modified_chebyshev', 'jacobi_operator',
     'polynomials', 'quadrature', 'clenshaw_summation',
     'embedding_operator', 'embedding_operator_adjoint',
     'differential_operator', 'differential_operator_adjoint',
@@ -85,6 +85,65 @@ def _quadrature_iteration(fun, nquad, max_iters, subroutine='', verbose=False, t
             return None
         last = current
     return current, other
+
+
+def mass(rho, a, b, c, dtype='float64', internal='float128', **quadrature_kwargs):
+    """
+    Compute the definite integral of the weight function
+        w(t) = (1-t)**a * (1+t)**b + rho(t)**c
+    on the interval (-1,1)
+
+    Parameters
+    ----------
+    rho : tuple,list or dict
+        If a tuple or list, monomial basis coefficients of rho function
+        If a dict, then must have callable items with keys 'rho' and 'rhoprime'.
+        rho may not vanish inside the domain.
+    a,b,c : float
+        Generalized Jacobi parameters.  a,b > -1, c arbitrary
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+    quadrature_kwargs : dict, optional, containing keys:
+        verbose : boolean, optional
+            Flag to print error diagnostics
+        tol : float, optional
+            Relative convergence criterion for mass
+        nquad : int, optional
+            Number of quadrature points for non-polynomial rho
+        nquad_ratio : float, optional
+            Scale factor for number of quadrature points in convergence test
+        max_iters : int, optional
+            Maximum number of iterations until convergence fails
+        These arguments are only used for non-polynomial rho functions since
+        quadrature can be computed exactly on polynomials of a given degree
+
+    Returns
+    -------
+    floating point integral of the weight function
+
+    """
+    _check_jacobi_params(a, b, c)
+    config = _make_rho_config(rho)
+    rho_fun, rho_degree = config['rho'], config['degree']
+
+    c_is_integer = config['is_polynomial'] and int(c) == c and c >= 0
+    if c_is_integer:
+        for key in ['max_iters', 'nquad']:
+            quadrature_kwargs.pop(key, None)
+        max_iters = 1
+        nquad = int(np.ceil(c*rho_degree)/2)+1
+    else:
+        max_iters = quadrature_kwargs.pop('max_iters', 10)
+        nquad = quadrature_kwargs.pop('nquad', 2*rho_degree)
+
+    def fun(nquad):
+        z, w = jacobi.quadrature(nquad, a, b, dtype=internal)
+        return np.sum(w*rho_fun(z)**c).astype(dtype), None
+
+    mu, _ = _quadrature_iteration(fun, nquad, max_iters, subroutine='Mass', **quadrature_kwargs)
+    return mu
 
 
 def _stieltjes_iteration(n, z, dmu, dtype='float64'):
@@ -316,65 +375,6 @@ def jacobi_operator(n, rho, a, b, c, return_mass=False, dtype='float64', interna
     else:
         raise ValueError(f'Unknown algorithm {algorithm}')
     return fun(n, rho, a, b, c, return_mass=return_mass, dtype=dtype, internal=internal, **jacobi_kwargs)
-
-
-def mass(rho, a, b, c, dtype='float64', internal='float128', **quadrature_kwargs):
-    """
-    Compute the definite integral of the weight function
-        w(t) = (1-t)**a * (1+t)**b + rho(t)**c
-    on the interval (-1,1)
-
-    Parameters
-    ----------
-    rho : tuple,list or dict
-        If a tuple or list, monomial basis coefficients of rho function
-        If a dict, then must have callable items with keys 'rho' and 'rhoprime'.
-        rho may not vanish inside the domain.
-    a,b,c : float
-        Generalized Jacobi parameters.  a,b > -1, c arbitrary
-    dtype : data-type, optional
-        Desired data-type for the output
-    internal : data-type, optional
-        Internal data-type for compuatations
-    quadrature_kwargs : dict, optional, containing keys:
-        verbose : boolean, optional
-            Flag to print error diagnostics
-        tol : float, optional
-            Relative convergence criterion for mass
-        nquad : int, optional
-            Number of quadrature points for non-polynomial rho
-        nquad_ratio : float, optional
-            Scale factor for number of quadrature points in convergence test
-        max_iters : int, optional
-            Maximum number of iterations until convergence fails
-        These arguments are only used for non-polynomial rho functions since
-        quadrature can be computed exactly on polynomials of a given degree
-
-    Returns
-    -------
-    floating point integral of the weight function
-
-    """
-    _check_jacobi_params(a, b, c)
-    config = _make_rho_config(rho)
-    rho_fun, rho_degree = config['rho'], config['degree']
-
-    c_is_integer = config['is_polynomial'] and int(c) == c and c >= 0
-    if c_is_integer:
-        for key in ['max_iters', 'nquad']:
-            quadrature_kwargs.pop(key, None)
-        max_iters = 1
-        nquad = int(np.ceil(c*rho_degree)/2)+1
-    else:
-        max_iters = quadrature_kwargs.pop('max_iters', 10)
-        nquad = quadrature_kwargs.pop('nquad', 2*rho_degree)
-
-    def fun(nquad):
-        z, w = jacobi.quadrature(nquad, a, b, dtype=internal)
-        return np.sum(w*rho_fun(z)**c).astype(dtype), None
-
-    mu, _ = _quadrature_iteration(fun, nquad, max_iters, subroutine='Mass', **quadrature_kwargs)
-    return mu
 
 
 def polynomials(n, rho, a, b, c, z, init=None, dtype='float64', internal='float128', **jacobi_kwargs):
