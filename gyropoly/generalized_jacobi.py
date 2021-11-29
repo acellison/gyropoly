@@ -66,6 +66,27 @@ def _has_even_parity(rho, a, b, c):
     return False
 
 
+def _quadrature_iteration(fun, nquad, max_iters, subroutine='', verbose=False, tol=1e-14, nquad_ratio=1.25):
+    current, other = fun(nquad)
+    last = current
+    for i in range(1, max_iters):
+        # Increase quadrature resolution and compute the function
+        nquad = int(nquad_ratio*nquad)
+        current, other = fun(nquad)
+
+        # Check for convergence
+        error = np.max(abs((current-last)/current))
+        if verbose:
+            print(f'{subroutine} quadrature relative error: ', error)
+        if error < tol:
+            break
+        elif i == max_iters-1:
+            print(f'Failed to converge within tolerance {tol} with error {error}')
+            return None
+        last = current
+    return current, other
+
+
 def _stieltjes_iteration(n, z, dmu, dtype='float64'):
     mass = np.sum(dmu)
     bn, an = np.zeros(n+1, dtype=dtype), np.zeros(n, dtype=dtype)
@@ -79,7 +100,7 @@ def _stieltjes_iteration(n, z, dmu, dtype='float64'):
     return an, bn[1:]
 
 
-def stieltjes(n, rho, a, b, c, return_mass=False, dtype='float64', internal='float128', verbose=True, tol=1e-14, nquad=None, nquad_ratio=1.25):
+def stieltjes(n, rho, a, b, c, return_mass=False, dtype='float64', internal='float128', **quadrature_kwargs):
     """
     Compute the three-term recurrence coefficients for the weight function
         w(t) = (1-t)**a * (1+t)**b + rho(t)**c
@@ -101,14 +122,19 @@ def stieltjes(n, rho, a, b, c, return_mass=False, dtype='float64', internal='flo
         Desired data-type for the output
     internal : data-type, optional
         Internal data-type for compuatations
-    verbose : boolean, optional
-        Flag to print error diagnostics
-    tol : float, optional
-        Relative convergence criterion for off-diagonal recurrence coefficients
-    nquad : int, optional
-        Number of quadrature points for non-polynomial rho
-    nquad_ratio : float, optional
-        Scale factor for number of quadrature points in convergence test
+    quadrature_kwargs : dict, optional, containing keys:
+        verbose : boolean, optional
+            Flag to print error diagnostics
+        tol : float, optional
+            Relative convergence criterion for off-diagonal recurrence coefficients
+        nquad : int, optional
+            Number of quadrature points for non-polynomial rho
+        nquad_ratio : float, optional
+            Scale factor for number of quadrature points in convergence test
+        max_iters : int, optional
+            Maximum number of iterations until convergence fails
+        These arguments are only used for non-polynomial rho functions since
+        quadrature can be computed exactly on polynomials of a given degree
 
     Returns
     -------
@@ -125,46 +151,29 @@ def stieltjes(n, rho, a, b, c, return_mass=False, dtype='float64', internal='flo
 
     c_is_integer = config['is_polynomial'] and int(c) == c and c >= 0
     if c_is_integer:
+        for key in ['max_iters', 'nquad']:
+            quadrature_kwargs.pop(key, None)
         max_iters = 1
-        rho_degree = config['degree']
-        max_degree = c*rho_degree+2*n
+        max_degree = c*config['degree']+2*n
         nquad = int(np.ceil((max_degree+1)/2))
     else:
-        max_iters = 10
-        if nquad is None:
-            nquad = 2*(n+1)
+        max_iters = quadrature_kwargs.pop('max_iters', 10)
+        nquad = quadrature_kwargs.pop('nquad', 2*(n+1))
 
-    betak = 0
-    for i in range(max_iters):
+    def fun(nquad):
         z, w = jacobi.quadrature(nquad, a, b, dtype=internal)
-
         dmu = w*rho_fun(z)**c
         mass = np.sum(dmu)
         alpha, beta = _stieltjes_iteration(n, z, dmu, dtype=internal)
+        return beta, (dmu, alpha)
 
-        if c_is_integer:
-            # Quadrature rule is exact for integer c
-            break
-
-        # Quadrature acting on non-polynomial rho**c.
-        # Check for convergence by increasing the quadrature resolution
-        error = np.max(abs((beta-betak)/beta))
-        if verbose and i > 0:
-            print('Stieltjes step relative error: ', error)
-        if error < tol:
-            break
-        elif i == max_iters-1:
-            print('Stieltjes procedure failed to converge within tolerance')
-            return None
-        betak = beta
-        nquad = int(nquad_ratio*nquad)
-
+    beta, (dmu, alpha) = _quadrature_iteration(fun, nquad, max_iters, subroutine='Stieltjes', **quadrature_kwargs)
     mass = np.sum(dmu)
     Z = diags([beta,alpha,beta], [-1,0,1], shape=(n+1,n), dtype=dtype)
     return (Z, mass) if return_mass else Z
 
 
-def modified_chebyshev(n, rho, a, b, c, return_mass=False, dtype='float64', internal='float128', verbose=False, tol=1e-14, nquad=None, nquad_ratio=1.25):
+def modified_chebyshev(n, rho, a, b, c, return_mass=False, dtype='float64', internal='float128', **quadrature_kwargs):
     """
     Compute the three-term recurrence coefficients for the weight function
         w(t) = (1-t)**a * (1+t)**b + rho(t)**c
@@ -186,14 +195,19 @@ def modified_chebyshev(n, rho, a, b, c, return_mass=False, dtype='float64', inte
         Desired data-type for the output
     internal : data-type, optional
         Internal data-type for compuatations
-    verbose : boolean, optional
-        Flag to print error diagnostics
-    tol : float, optional
-        Relative convergence criterion for off-diagonal recurrence coefficients
-    nquad : int, optional
-        Number of quadrature points for non-polynomial rho
-    nquad_ratio : float, optional
-        Scale factor for number of quadrature points in convergence test
+    quadrature_kwargs : dict, optional, containing keys:
+        verbose : boolean, optional
+            Flag to print error diagnostics
+        tol : float, optional
+            Relative convergence criterion for off-diagonal recurrence coefficients
+        nquad : int, optional
+            Number of quadrature points for non-polynomial rho
+        nquad_ratio : float, optional
+            Scale factor for number of quadrature points in convergence test
+        max_iters : int, optional
+            Maximum number of iterations until convergence fails
+        These arguments are only used for non-polynomial rho functions since
+        quadrature can be computed exactly on polynomials of a given degree
 
     Returns
     -------
@@ -216,18 +230,19 @@ def modified_chebyshev(n, rho, a, b, c, return_mass=False, dtype='float64', inte
 
     c_is_integer = config['is_polynomial'] and int(c) == c and c >= 0
     if c_is_integer:
+        for key in ['max_iters', 'nquad']:
+            quadrature_kwargs.pop(key, None)
         # When c is an integer we can integrate exactly
         rho_degree = config['degree']
         npoly, max_iters = c*rho_degree+1, 1
         nquad = npoly
     else:
         # Otherwise we run the Chebyshev process multiple times and check for convergence
-        npoly, max_iters = 2*n, 10
-        if nquad is None:
-            nquad = npoly
+        npoly = 2*n
+        max_iters = quadrature_kwargs.pop('max_iters', 10)
+        nquad = quadrature_kwargs.pop('nquad', npoly)
 
-    betak = 0  # Initial guess for beta for convergence tests
-    for i in range(max_iters):
+    def fun(nquad):
         z, w = jacobi.quadrature(nquad, a, b, dtype=internal)
         dmu = w * rho_fun(z)**c
 
@@ -249,23 +264,10 @@ def modified_chebyshev(n, rho, a, b, c, return_mass=False, dtype='float64', inte
             alpha[k] = an[k] + cn[k]*sigma[ki,k+1]/sigma[ki,k] - cn[k-1]*sigma[ki-1,k]/sigma[ki-1,k-1]
             beta[k] = cn[k-1]*sigma[ki,k]/sigma[ki-1,k-1]
 
-        if c_is_integer:
-            # Quadrature rule is exact for integer c
-            break
+        return beta, (dmu, alpha)
 
-        # Quadrature acting on non-polynomial rho**c.
-        # Check for convergence by increasing the quadrature resolution
-        error = np.max(abs((beta-betak)/beta))
-        if verbose and i > 0:
-            print('Chebyshev step relative error: ', error)
-        if error < tol:
-            break
-        elif i == max_iters-1:
-            print('Modified Chebyshev failed to converge within tolerance')
-            return None
-        betak = beta
-        nquad = int(nquad_ratio*nquad)
-
+    beta, (dmu, alpha) = _quadrature_iteration(fun, nquad, max_iters, subroutine='Chebyshev', **quadrature_kwargs)
+        
     # The algorithm computes the monic recurrence coefficients.  Orthonormalize.
     mass = np.sum(dmu)
     beta = np.sqrt(beta[1:])
@@ -316,7 +318,7 @@ def jacobi_operator(n, rho, a, b, c, return_mass=False, dtype='float64', interna
     return fun(n, rho, a, b, c, return_mass=return_mass, dtype=dtype, internal=internal, **jacobi_kwargs)
 
 
-def mass(rho, a, b, c, dtype='float64', internal='float128', verbose=False, tol=1e-14, nquad=None, nquad_ratio=1.25):
+def mass(rho, a, b, c, dtype='float64', internal='float128', **quadrature_kwargs):
     """
     Compute the definite integral of the weight function
         w(t) = (1-t)**a * (1+t)**b + rho(t)**c
@@ -334,14 +336,19 @@ def mass(rho, a, b, c, dtype='float64', internal='float128', verbose=False, tol=
         Desired data-type for the output
     internal : data-type, optional
         Internal data-type for compuatations
-    verbose : boolean, optional
-        Flag to print error diagnostics
-    tol : float, optional
-        Relative convergence criterion for off-diagonal recurrence coefficients
-    nquad : int, optional
-        Number of quadrature points for non-polynomial rho
-    nquad_ratio : float, optional
-        Scale factor for number of quadrature points in convergence test
+    quadrature_kwargs : dict, optional, containing keys:
+        verbose : boolean, optional
+            Flag to print error diagnostics
+        tol : float, optional
+            Relative convergence criterion for mass
+        nquad : int, optional
+            Number of quadrature points for non-polynomial rho
+        nquad_ratio : float, optional
+            Scale factor for number of quadrature points in convergence test
+        max_iters : int, optional
+            Maximum number of iterations until convergence fails
+        These arguments are only used for non-polynomial rho functions since
+        quadrature can be computed exactly on polynomials of a given degree
 
     Returns
     -------
@@ -354,34 +361,19 @@ def mass(rho, a, b, c, dtype='float64', internal='float128', verbose=False, tol=
 
     c_is_integer = config['is_polynomial'] and int(c) == c and c >= 0
     if c_is_integer:
+        for key in ['max_iters', 'nquad']:
+            quadrature_kwargs.pop(key, None)
         max_iters = 1
         nquad = int(np.ceil(c*rho_degree)/2)+1
     else:
-        max_iters = 10
-        if nquad is None:
-            nquad = 2*rho_degree
+        max_iters = quadrature_kwargs.pop('max_iters', 10)
+        nquad = quadrature_kwargs.pop('nquad', 2*rho_degree)
 
-    muk = 0.
-    for i in range(max_iters):
+    def fun(nquad):
         z, w = jacobi.quadrature(nquad, a, b, dtype=internal)
-        mu = np.sum(w*rho_fun(z)**c).astype(dtype)
-        if c_is_integer:
-            # Quadrature rule is exact for integer c
-            break
+        return np.sum(w*rho_fun(z)**c).astype(dtype), None
 
-        # Quadrature acting on non-polynomial rho**c.
-        # Check for convergence by increasing the quadrature resolution
-        error = abs((mu-muk)/mu)
-        if verbose and i > 0:
-            print('Mass quadrature relative error: ', error)
-        if error < tol:
-            break
-        elif i == max_iters-1:
-            print('Mass failed to converge within tolerance')
-            return None
-        muk = mu
-        nquad = int(nquad_ratio*nquad)
-
+    mu, _ = _quadrature_iteration(fun, nquad, max_iters, subroutine='Mass', **quadrature_kwargs)
     return mu
 
 
