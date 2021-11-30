@@ -66,7 +66,7 @@ def _has_even_parity(rho, a, b, c):
     return False
 
 
-def _quadrature_iteration(fun, nquad, max_iters, subroutine='', verbose=False, tol=1e-14, nquad_ratio=1.25):
+def _quadrature_iteration(fun, nquad, max_iters, label='', verbose=False, tol=1e-14, nquad_ratio=1.25):
     current, other = fun(nquad)
     last = current
     for i in range(1, max_iters):
@@ -142,7 +142,7 @@ def mass(rho, a, b, c, dtype='float64', internal='float128', **quadrature_kwargs
         z, w = jacobi.quadrature(nquad, a, b, dtype=internal)
         return np.sum(w*rho_fun(z)**c).astype(dtype), None
 
-    mu, _ = _quadrature_iteration(fun, nquad, max_iters, subroutine='Mass', **quadrature_kwargs)
+    mu, _ = _quadrature_iteration(fun, nquad, max_iters, label='Mass', **quadrature_kwargs)
     return mu
 
 
@@ -226,7 +226,7 @@ def stieltjes(n, rho, a, b, c, return_mass=False, dtype='float64', internal='flo
         alpha, beta = _stieltjes_iteration(n, z, dmu, dtype=internal)
         return beta, (dmu, alpha)
 
-    beta, (dmu, alpha) = _quadrature_iteration(fun, nquad, max_iters, subroutine='Stieltjes', **quadrature_kwargs)
+    beta, (dmu, alpha) = _quadrature_iteration(fun, nquad, max_iters, label='Stieltjes', **quadrature_kwargs)
     mass = np.sum(dmu)
     Z = diags([beta,alpha,beta], [-1,0,1], shape=(n+1,n), dtype=dtype)
     return (Z, mass) if return_mass else Z
@@ -325,7 +325,7 @@ def modified_chebyshev(n, rho, a, b, c, return_mass=False, dtype='float64', inte
 
         return beta, (dmu, alpha)
 
-    beta, (dmu, alpha) = _quadrature_iteration(fun, nquad, max_iters, subroutine='Chebyshev', **quadrature_kwargs)
+    beta, (dmu, alpha) = _quadrature_iteration(fun, nquad, max_iters, label='Chebyshev', **quadrature_kwargs)
         
     # The algorithm computes the monic recurrence coefficients.  Orthonormalize.
     mass = np.sum(dmu)
