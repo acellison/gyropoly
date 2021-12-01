@@ -259,7 +259,7 @@ def modified_chebyshev(n, rho, a, b, c, return_mass=False, dtype='float64', inte
                            return_mass=return_mass, dtype=dtype, internal=internal, **quadrature_kwargs)
 
 
-def recurrence(n, rho, a, b, c, return_mass=False, dtype='float64', internal='float128', algorithm='stieltjes', **recurrence_kwargs):
+def recurrence(n, rho, a, b, c, return_mass=False, dtype='float64', internal='float128', algorithm='stieltjes', **quadrature_kwargs):
     """
     Compute the three-term recurrence coefficients for the weight function
         w(t) = (1-t)**a * (1+t)**b + rho(t)**c
@@ -284,8 +284,8 @@ def recurrence(n, rho, a, b, c, return_mass=False, dtype='float64', internal='fl
     algorithm: str, optional
         Algorithm for computing the recurrence coefficients.
         One of ['stieltjes', 'chebyshev']
-    recurrence_kwargs : dict, optional
-        Keyword arguments to pass to the subroutine
+    quadrature_kwargs : dict, optional
+        Keyword arguments to pass to the recurrence computation subroutine
 
     Returns
     -------
@@ -297,14 +297,14 @@ def recurrence(n, rho, a, b, c, return_mass=False, dtype='float64', internal='fl
         mass = jacobi.mass(a, b).astype(dtype)
         return (Z, mass) if return_mass else Z
 
-    algorithm = recurrence_kwargs.pop('algorithm', algorithm)
+    algorithm = quadrature_kwargs.pop('algorithm', algorithm)
     if algorithm == 'stieltjes':
         fun = stieltjes
     elif algorithm == 'chebyshev':
         fun = modified_chebyshev
     else:
         raise ValueError(f'Unknown algorithm {algorithm}')
-    return fun(n, rho, a, b, c, return_mass=return_mass, dtype=dtype, internal=internal, **recurrence_kwargs)
+    return fun(n, rho, a, b, c, return_mass=return_mass, dtype=dtype, internal=internal, **quadrature_kwargs)
 
 
 def polynomials(n, rho, a, b, c, z, init=None, dtype='float64', internal='float128', **recurrence_kwargs):
@@ -389,7 +389,7 @@ def embedding_operator(kind, n, rho, a, b, c, dtype='float64', internal='float12
 
     Parameters
     ----------
-    name : str
+    kind : str
         A, B, C
     n : integer
         Number of polynomials in expansion, one less than max degree
@@ -449,7 +449,7 @@ def embedding_operator_adjoint(kind, n, rho, a, b, c, dtype='float64', internal=
 
     Parameters
     ----------
-    name : str
+    kind : str
         A, B, C
     n : integer
         Number of polynomials in expansion, one less than max degree
@@ -510,7 +510,7 @@ def differential_operator(kind, n, rho, a, b, c, dtype='float64', internal='floa
 
     Parameters
     ----------
-    name : str
+    kind : str
         D, E, F, G
     n : integer
         Number of polynomials in expansion, one less than max degree
@@ -593,7 +593,7 @@ def differential_operator_adjoint(kind, n, rho, a, b, c, dtype='float64', intern
 
     Parameters
     ----------
-    name : str
+    kind : str
         D, E, F, G
     n : integer
         Number of polynomials in expansion, one less than max degree
