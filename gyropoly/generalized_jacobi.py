@@ -3,10 +3,11 @@ from functools import partial
 from dedalus_sphere import jacobi
 from scipy.sparse import diags
 from scipy.sparse import dia_matrix as banded
-from scipy.sparse.linalg import spsolve_triangular
 from scipy.linalg import eigh_tridiagonal
 
 from dedalus_sphere.operators import Operator, Codomain, infinite_csr
+from . import tools
+from .tools import clenshaw_summation
 
 __all__ = ['mass', 'stieltjes', 'modified_chebyshev', 'jacobi_operator',
     'polynomials', 'quadrature', 'clenshaw_summation',
@@ -66,25 +67,8 @@ def _has_even_parity(rho, a, b, c):
     return False
 
 
-def _quadrature_iteration(fun, nquad, max_iters, label='', verbose=False, tol=1e-14, nquad_ratio=1.25):
-    current, other = fun(nquad)
-    last = current
-    for i in range(1, max_iters):
-        # Increase quadrature resolution and compute the function
-        nquad = int(nquad_ratio*nquad)
-        current, other = fun(nquad)
-
-        # Check for convergence
-        error = np.max(abs((current-last)/current))
-        if verbose:
-            print(f'{label} quadrature relative error: ', error)
-        if error < tol:
-            break
-        elif i == max_iters-1:
-            print(f'Failed to converge within tolerance {tol} with error {error}')
-            return None
-        last = current
-    return current, other
+def _is_polynomial_weight(config, c):
+    return config['is_polynomial'] and int(c) == c and c >= 0
 
 
 def mass(rho, a, b, c, dtype='float64', internal='float128', **quadrature_kwargs):
@@ -128,8 +112,7 @@ def mass(rho, a, b, c, dtype='float64', internal='float128', **quadrature_kwargs
     config = _make_rho_config(rho)
     rho_fun, rho_degree = config['rho'], config['degree']
 
-    c_is_integer = config['is_polynomial'] and int(c) == c and c >= 0
-    if c_is_integer:
+    if _is_polynomial_weight(config, c):
         for key in ['max_iters', 'nquad']:
             quadrature_kwargs.pop(key, None)
         max_iters = 1
@@ -142,21 +125,8 @@ def mass(rho, a, b, c, dtype='float64', internal='float128', **quadrature_kwargs
         z, w = jacobi.quadrature(nquad, a, b, dtype=internal)
         return np.sum(w*rho_fun(z)**c).astype(dtype), None
 
-    mu, _ = _quadrature_iteration(fun, nquad, max_iters, label='Mass', **quadrature_kwargs)
-    return mu
-
-
-def _stieltjes_iteration(n, z, dmu, dtype='float64'):
-    mass = np.sum(dmu)
-    bn, an = np.zeros(n+1, dtype=dtype), np.zeros(n, dtype=dtype)
-    bn[0] = np.sqrt(mass, dtype=dtype)
-    pnm1, pnm2 = np.ones(len(dmu), dtype=dtype)/bn[0], np.zeros(len(dmu), dtype=dtype)
-    for i in range(n):
-        an[i] = np.sum(dmu*z*pnm1**2)
-        bn[i+1] = np.sqrt(np.sum(dmu*((z-an[i])*pnm1 - bn[i]*pnm2)**2))
-        pn = ((z-an[i])*pnm1 - bn[i]*pnm2)/bn[i+1]
-        pnm1, pnm2 = pn, pnm1
-    return an, bn[1:]
+    mu, _ = tools.quadrature_iteration(fun, nquad, max_iters, label='Mass', **quadrature_kwargs)
+    return mu.astype(dtype)
 
 
 def stieltjes(n, rho, a, b, c, return_mass=False, dtype='float64', internal='float128', **quadrature_kwargs):
@@ -203,13 +173,8 @@ def stieltjes(n, rho, a, b, c, return_mass=False, dtype='float64', internal='flo
     _check_jacobi_params(a, b, c)
     config = _make_rho_config(rho)
     rho_fun = config['rho']
-    if c == 0:
-        Z = jacobi.operator('Z', dtype=dtype)(n, a, b)
-        mass = jacobi.mass(a, b)
-        return (Z, mass) if return_mass else Z
 
-    c_is_integer = config['is_polynomial'] and int(c) == c and c >= 0
-    if c_is_integer:
+    if _is_polynomial_weight(config, c):
         for key in ['max_iters', 'nquad']:
             quadrature_kwargs.pop(key, None)
         max_iters = 1
@@ -219,17 +184,11 @@ def stieltjes(n, rho, a, b, c, return_mass=False, dtype='float64', internal='flo
         max_iters = quadrature_kwargs.pop('max_iters', 10)
         nquad = quadrature_kwargs.pop('nquad', 2*(n+1))
 
-    def fun(nquad):
-        z, w = jacobi.quadrature(nquad, a, b, dtype=internal)
-        dmu = w*rho_fun(z)**c
-        mass = np.sum(dmu)
-        alpha, beta = _stieltjes_iteration(n, z, dmu, dtype=internal)
-        return beta, (dmu, alpha)
+    base_quadrature = lambda nquad: jacobi.quadrature(nquad, a, b, dtype=internal)
+    augmented_weight = lambda z: rho_fun(z)**c
 
-    beta, (dmu, alpha) = _quadrature_iteration(fun, nquad, max_iters, label='Stieltjes', **quadrature_kwargs)
-    mass = np.sum(dmu)
-    Z = diags([beta,alpha,beta], [-1,0,1], shape=(n+1,n), dtype=dtype)
-    return (Z, mass) if return_mass else Z
+    return tools.stieltjes(base_quadrature, augmented_weight, n, nquad, max_iters, \
+                           return_mass=return_mass, dtype=dtype, internal=internal, **quadrature_kwargs)
 
 
 def modified_chebyshev(n, rho, a, b, c, return_mass=False, dtype='float64', internal='float128', **quadrature_kwargs):
@@ -276,19 +235,8 @@ def modified_chebyshev(n, rho, a, b, c, return_mass=False, dtype='float64', inte
     _check_jacobi_params(a, b, c)
     config = _make_rho_config(rho)
     rho_fun = config['rho']
-    if c == 0:
-        Z = jacobi.operator('Z', dtype=dtype)(n, a, b)
-        mass = jacobi.mass(a, b)
-        return (Z, mass) if return_mass else Z
 
-    n = n+1
-
-    # Get the recurrence coefficients for a nearby weight function
-    Z = jacobi.operator('Z', dtype=internal)(2*n, a, b)
-    an, bn, cn = [Z.diagonal(d) for d in [0,-1,+1]]
-
-    c_is_integer = config['is_polynomial'] and int(c) == c and c >= 0
-    if c_is_integer:
+    if _is_polynomial_weight(config, c):
         for key in ['max_iters', 'nquad']:
             quadrature_kwargs.pop(key, None)
         # When c is an integer we can integrate exactly
@@ -297,41 +245,18 @@ def modified_chebyshev(n, rho, a, b, c, return_mass=False, dtype='float64', inte
         nquad = npoly
     else:
         # Otherwise we run the Chebyshev process multiple times and check for convergence
-        npoly = 2*n
+        npoly = 2*(n+1)
         max_iters = quadrature_kwargs.pop('max_iters', 10)
         nquad = quadrature_kwargs.pop('nquad', npoly)
 
-    def fun(nquad):
-        z, w = jacobi.quadrature(nquad, a, b, dtype=internal)
-        dmu = w * rho_fun(z)**c
+    # Get the recurrence coefficients for a nearby weight function
+    base_operator = lambda n: jacobi.operator('Z', dtype=internal)(n, a, b)
+    base_quadrature = lambda nquad: jacobi.quadrature(nquad, a, b, dtype=internal)
+    base_polynomials = lambda npoly, z: jacobi.polynomials(npoly, a, b, z, dtype=internal)
+    augmented_weight = lambda z: rho_fun(z)**c
 
-        # Compute the first moments of the weight function
-        P = jacobi.polynomials(npoly, a, b, z, dtype=internal)
-        nu = np.sum(dmu*P, axis=1)
-
-        # Initialize the modified moments
-        sigma = np.zeros((3,2*n), dtype=internal)
-        sigma[0,:len(nu)] = nu
-
-        # Run the iteration, computing alpha[k] and beta[k] for k = 0...n-1
-        alpha, beta = np.zeros(n, dtype=internal), np.zeros(n, dtype=internal)
-        alpha[0] = an[0] + cn[0]*nu[1]/nu[0]
-        beta[0] = nu[0]
-        for k in range(1,n):
-            ki, l = k%3, np.arange(k, min(2*n-k, npoly+k))
-            sigma[ki,l] = cn[l]*sigma[ki-1,l+1] - (alpha[k-1]-an[l])*sigma[ki-1,l] - beta[k-1]*sigma[ki-2,l] + bn[l-1]*sigma[ki-1,l-1]
-            alpha[k] = an[k] + cn[k]*sigma[ki,k+1]/sigma[ki,k] - cn[k-1]*sigma[ki-1,k]/sigma[ki-1,k-1]
-            beta[k] = cn[k-1]*sigma[ki,k]/sigma[ki-1,k-1]
-
-        return beta, (dmu, alpha)
-
-    beta, (dmu, alpha) = _quadrature_iteration(fun, nquad, max_iters, label='Chebyshev', **quadrature_kwargs)
-        
-    # The algorithm computes the monic recurrence coefficients.  Orthonormalize.
-    mass = np.sum(dmu)
-    beta = np.sqrt(beta[1:])
-    Z = diags([beta,alpha,beta],[-1,0,1],(n,n-1),dtype=dtype)
-    return (Z, mass) if return_mass else Z
+    return tools.chebyshev(base_operator, base_quadrature, base_polynomials, augmented_weight, n, npoly, nquad, max_iters, \
+                           return_mass=return_mass, dtype=dtype, internal=internal, **quadrature_kwargs)
 
 
 def jacobi_operator(n, rho, a, b, c, return_mass=False, dtype='float64', internal='float128', algorithm='stieltjes', **jacobi_kwargs):
@@ -367,6 +292,11 @@ def jacobi_operator(n, rho, a, b, c, return_mass=False, dtype='float64', interna
     sparse matrix representation of Jacobi operator and optionally floating point mass
 
     """
+    if c == 0:
+        Z = jacobi.operator('Z', dtype=internal)(n, a, b).astype(dtype)
+        mass = jacobi.mass(a, b).astype(dtype)
+        return (Z, mass) if return_mass else Z
+
     algorithm = jacobi_kwargs.pop('algorithm', algorithm)
     if algorithm == 'stieltjes':
         fun = stieltjes
@@ -410,31 +340,11 @@ def polynomials(n, rho, a, b, c, z, init=None, dtype='float64', internal='float1
     the degree k polynomial is accessed via P[k-1]
 
     """
-    Z, mass = jacobi_operator(n+1, rho, a, b, c, return_mass=True, dtype=internal, **jacobi_kwargs)
-    if init is None:
-        init = 1 + 0*z
-        init /= np.sqrt(mass, dtype=internal)
+    if c == 0:
+        return jacobi.polynomials(n, a, b, z, dtype=dtype, internal=internal)
 
-    Z = banded(Z).data
-
-    shape = n
-    if type(z) == np.ndarray:
-        z = z.astype(internal)
-        shape = (shape, len(z))
-
-    P    = np.empty(shape, dtype=internal)
-    P[0] = init
-
-    if len(Z) == 2:
-        P[1] = z*P[0]/Z[1,1]
-        for k in range(2,n):
-            P[k] = (z*P[k-1] - Z[0,k-2]*P[k-2])/Z[1,k]
-    else:
-        P[1] = (z-Z[1,0])*P[0]/Z[2,1]
-        for k in range(2,n):
-            P[k] = ((z-Z[1,k-1])*P[k-1] - Z[0,k-2]*P[k-2])/Z[2,k]
-
-    return P.astype(dtype)
+    Z, mass = jacobi_operator(n, rho, a, b, c, return_mass=True, dtype=internal, **jacobi_kwargs)
+    return tools.polynomials(Z, mass, z, init=init, dtype=dtype, internal=internal)
 
 
 def quadrature(n, rho, a, b, c, dtype='float64', internal='float128', **jacobi_kwargs):
@@ -466,66 +376,11 @@ def quadrature(n, rho, a, b, c, dtype='float64', internal='float128', **jacobi_k
         Quadrature nodes and weights for integration under the generalize Jacobi weight
 
     """
-    # Compute the Jacobi operator.  eigs requires double precision inputs
-    Z, mass = jacobi_operator(n, rho, a, b, c, dtype='float64', internal=internal, return_mass=True, **jacobi_kwargs)
-    zj, vj = eigh_tridiagonal(Z.diagonal(0), Z.diagonal(1))
-    wj = mass*np.asarray(vj[0,:]).squeeze()**2
+    if c == 0:
+        return jacobi.quadrature(n, a, b, dtype=dtype, internal=internal)
 
-    indices = np.argsort(zj)
-    return zj[indices].astype(dtype), wj[indices].astype(dtype)
-
-
-def clenshaw_summation(f, Z, z, mass, dtype='float64', internal='float128'):
-    """
-    Clenshaw summation algorithm to sum a finite polynomial series.
-    The algorithm uses the three-term recurrence coefficients to
-    efficiently sum the series.  Assumes the recurrence coefficients
-    yield the unit-normalized polynomials.
-
-    Parameters
-    ----------
-    f : array_like
-        Coefficients in series expansion.  If a 2D array, each column
-        is intepreted as the coefficients for a separate expansion
-    Z : array_like
-        Three-term recurrence coefficients for the polynomial series
-    z : float or array_like
-        Locations to evaluate the polynomial series
-    mass : float
-        Integral of the weight function to normalize the recurrence
-    dtype : data-type, optional
-        Desired data-type for the output
-    internal : data-type, optional
-        Internal data-type for compuatations
-
-    Returns
-    -------
-    np.ndarray of shape (np.shape(f)[1],)+np.shape(z) corresponding to evaluation
-    of each column of f coefficients at locations z
-
-    """
-    init = np.sqrt(mass, dtype=internal)
-    an, bn = Z.diagonal(0), np.append(init, Z.diagonal(1))
-    an, bn = [c.astype(internal) for c in [an, bn]]
-    n = len(an)-1
-    if np.shape(f)[0] != n+1:
-        raise ValueError('Incorrect coefficient shape')
-
-    if np.ndim(f) == 1:
-        shape = np.shape(z)
-        f = f[:,np.newaxis]
-    else:
-        shape = np.shape(f)[1:] + np.shape(z)
-
-    v = np.empty(np.shape(f)+np.shape(z), dtype=internal)
-    f, z = f[:,:,np.newaxis], z[np.newaxis,:]
-    f, z = [c.astype(internal) for c in [f, z]]
-
-    v[n] = f[n]/bn[n]
-    v[n-1] = (f[n-1] + (z-an[n-1])*v[n])/bn[n-1]
-    for k in range(n-2, -1, -1):
-        v[k] = (f[k] + (z-an[k])*v[k+1] - bn[k+1]*v[k+2])/bn[k]
-    return v[0].reshape(shape).astype(dtype)
+    Z, mass = jacobi_operator(n, rho, a, b, c, dtype=dtype, internal=internal, return_mass=True, **jacobi_kwargs)
+    return tools.quadrature(Z, mass, dtype=dtype)
 
 
 def embedding_operator(kind, n, rho, a, b, c, dtype='float64', internal='float128', **jacobi_kwargs):
