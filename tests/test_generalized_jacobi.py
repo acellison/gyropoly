@@ -137,7 +137,7 @@ def test_clenshaw_summation():
     tol = n*1e-13
 
     z = np.linspace(-1,1,1000)
-    Z, mass = gjacobi.jacobi_operator(n, rho, a, b, c, return_mass=True)
+    Z, mass = gjacobi.recurrence(n, rho, a, b, c, return_mass=True)
     P = gjacobi.polynomials(n, rho, a, b, c, z.astype(dtype), dtype=dtype)
 
     # Check the Clenshaw returns the correct polynomial for Id coeffs
