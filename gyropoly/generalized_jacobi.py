@@ -77,7 +77,7 @@ def _quadrature_iteration(fun, nquad, max_iters, label='', verbose=False, tol=1e
         # Check for convergence
         error = np.max(abs((current-last)/current))
         if verbose:
-            print(f'{subroutine} quadrature relative error: ', error)
+            print(f'{label} quadrature relative error: ', error)
         if error < tol:
             break
         elif i == max_iters-1:
@@ -133,7 +133,7 @@ def mass(rho, a, b, c, dtype='float64', internal='float128', **quadrature_kwargs
         for key in ['max_iters', 'nquad']:
             quadrature_kwargs.pop(key, None)
         max_iters = 1
-        nquad = int(np.ceil(c*rho_degree)/2)+1
+        nquad = int(np.ceil((c*rho_degree+1)/2))
     else:
         max_iters = quadrature_kwargs.pop('max_iters', 10)
         nquad = quadrature_kwargs.pop('nquad', 2*rho_degree)

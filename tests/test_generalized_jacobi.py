@@ -201,6 +201,11 @@ def test_operators():
 
 
 def test_mass():
+    rho, a, b, c = [1,0,0,3], 1, 1, 1
+    mass = gjacobi.mass(rho, a, b, c)
+    target = 4
+    assert abs(mass-target) < 1e-15
+
     rho, a, b, c = [1,0,0,0,1], 1, 1, 1
     mass = gjacobi.mass(rho, a, b, c)
     target = 152/105
