@@ -7,29 +7,44 @@ from scipy.sparse import dia_matrix as banded
 from dedalus_sphere.operators import Operator, Codomain, infinite_csr
 from . import tools
 
-__all__ = ['AugmentedJacobi',
-    'clenshaw_summation',
-    'operator', 'operators', 'AugmentedJacobiOperator', 'AugmentedJacobiCodomain',
-    ]
+__all__ = ['AugmentedJacobi', 'AugmentedJacobiOperator', 'operator', 'operators']
 
 
 class AugmentedJacobi():
     dtype, internal = 'float64', 'float128'
 
     def __init__(self, a, b, factor_param_list):
+        # Jacobi portion of the weight function
         if a <= -1 or b <= -1:
             raise ValueError(f'a ({a}) and b ({b}) must both be greater than -1')
         self.a, self.b = a, b
-        factors, params = zip(*factor_param_list)
-        self.poly_configs = [_make_poly_config(rho) for rho in factors]
-        self.augmented_factors, self.augmented_params = factors, params
 
-    def apply_arrow(self, da, db, dc):
-        if len(dc) != self.num_augmented_factors:
-            raise ValueError('Invalid number of parameters')
-        a, b = self.a+da, self.b+db
-        c = [c+d for c,d in zip(self.augmented_params, dc)]
-        return AugmentedJacobi(a, b, zip(self.augmented_factors, c))
+        factors, params = zip(*factor_param_list)
+        self._augmented_factors, self._augmented_params = factors, params
+
+        # Augmented parameter index metadata.  The augmented weight is a polynomial if all parameters
+        # are non-negative integers.  We have standard Jacobi(a,b) if all parameters are zero.
+        self._is_polynomial = np.all([int(c) == c and c >= 0 for c in self.augmented_params])
+        self._is_unweighted = np.all([c == 0 for c in self.augmented_params])
+
+        # Augmented weight function is a product of polynomial factors.
+        # Compute the total (weighted) degree, the unweighted degree, and check parity.
+        self._polynomial_product = PolynomialProduct(factors, params)
+        self._total_degree = self._polynomial_product.total_degree(weighted=True) if self._is_polynomial else None
+        self._unweighted_degree = self._polynomial_product.total_degree(weighted=False)
+        self._has_even_parity = self.a == self.b and self._polynomial_product.has_even_parity
+
+    @property
+    def factors(self):
+        return self._polynomial_product.factors
+
+    @property
+    def degrees(self):
+        return self._polynomial_product.degrees
+
+    @property
+    def augmented_params(self):
+        return self._augmented_params
 
     @property
     def params(self):
@@ -39,11 +54,41 @@ class AugmentedJacobi():
     def num_augmented_factors(self):
         return len(self.augmented_params)
 
-    def factors(self, z):
-        return (1-z, 1+z) + tuple(config['rho'](z) for config in self.poly_configs)
+    @property
+    def is_polynomial(self):
+        return self._is_polynomial
+
+    @property
+    def total_degree(self):
+        return self._total_degree
+
+    @property
+    def has_even_parity(self):
+        return self._has_even_parity
+
+    @property
+    def unweighted_degree(self):
+        return self._unweighted_degree
+
+    @property
+    def is_unweighted(self):
+        return self._is_unweighted
+
+    def apply_arrow(self, da, db, dc):
+        if len(dc) != self.num_augmented_factors:
+            raise ValueError('Invalid number of parameters')
+        a, b = self.a+da, self.b+db
+        c = [c+d for c,d in zip(self.augmented_params, dc)]
+        return AugmentedJacobi(a, b, zip(self._augmented_factors, c))
+
+    def rho(self, z):
+        return self._polynomial_product.evaluate(z, weighted=False)
+
+    def rhoprime(self, z):
+        return self._polynomial_product.derivative(z)
 
     def augmented_weight(self, z):
-        return np.prod([config['rho'](z)**c for config, c in zip(self.poly_configs, self.augmented_params)], axis=0)
+        return self._polynomial_product.evaluate(z, weighted=True)
 
     def weight(self, z):
         return (1-z)**self.a * (1+z)**self.b * self.augmented_weight(z)
@@ -60,60 +105,86 @@ class AugmentedJacobi():
     def polynomials(self, n, z, dtype=dtype, internal=internal, **kwargs):
         return polynomials(self, n, z, dtype=dtype, internal=internal, **kwargs)
 
-    @property
-    def is_unweighted(self):
-        return np.all([c == 0 for c in self.augmented_params])
+
+class PolynomialProduct():
+    def __init__(self, factors, powers=None):
+        configs = [_make_poly_config(factor) for factor in factors]
+        self._n = len(configs)
+        if powers is None:
+            powers = np.ones(len(configs), dtype=int)
+        elif len(powers) != len(factors):
+            raise ValueError('powers and factors must be the same length')
+        self._powers = powers
+        self._has_even_parity = np.all([factor['even'] for factor in configs])
+        self._degrees = [factor['degree'] for factor in configs]
+        self._factors = [factor['function'] for factor in configs]
+        self._derivatives = [factor['derivative'] for factor in configs]
 
     @property
-    def min_degree(self):
-        d = 0
-        for config, c in zip(self.poly_configs, self.augmented_params):
-            if int(c) == c and c >= 0:
-                d += c*config['degree']
-            else:
-                d += 100
-        return d
+    def factors(self):
+        return self._factors
 
     @property
-    def degree(self):
-        if not self.is_polynomial:
-            raise ValueError('Augmented weight function is not a polynomial')
-        return np.sum([c*config['degree'] for config, c in zip(self.poly_configs, self.augmented_params)])
+    def degrees(self):
+        return self._degrees
 
     @property
-    def is_polynomial(self):
-        return np.all([int(c) == c and c >= 0 for c in self.augmented_params])
+    def powers(self):
+        return self._powers
 
     @property
     def has_even_parity(self):
-        if self.a == self.b:
-            even_degrees = np.all([config['degree'] % 2 == 0 for config in self.poly_configs])
-            if even_degrees:
-                return np.all([np.all(config['coeffs'][1::2] == 0) for config in self.poly_configs])
-        return False
+        return self._has_even_parity
+
+    def __len__(self):
+        return self._n
+
+    def evaluate(self, z, weighted=True):
+        n = len(self)
+        c = self.powers if weighted else np.ones(n, int)
+        return np.prod([factor(z)**c for factor, c in zip(self.factors, c)], axis=0)
+
+    def derivative(self, z):
+        n, c = len(self), self.powers
+        f, fprime = [[g(z) for g in feval] for feval in [self._factors, self._derivatives]]
+        products = [np.prod([f[j] for j in range(n) if j != i], axis=0) for i in range(n)]
+        return np.sum([c[i]*fprime[i]*products[i] for i in range(n)], axis=0)
+
+    def degree(self, index):
+        return self.degrees[index]
+
+    def power(self, index):
+        return self.power[index]
+
+    def total_degree(self, weighted=True):
+        c = self.powers if weighted else np.ones(len(self), int)
+        return sum(c[i] * self.degree(i) for i in range(len(self)))
 
 
-def _make_poly_config(rho):
-    # rho may be monomial-basis list of coefficients
-    if not isinstance(rho, (tuple,list)):
-        raise ValueError('rho must be a list of polynomial coefficients')
-    if len(rho) < 2:
-        raise ValueError('rho must have degree at least one')
-    if rho[0] == 0:
-        raise ValueError('rho must have non-zero leading coefficient')
+def _make_poly_config(coeffs):
+    # coeffs are monomial-basis list of coefficients
+    if not isinstance(coeffs, (tuple,list)):
+        raise ValueError('coeffs must be a list')
+    if len(coeffs) < 2:
+        raise ValueError('polynomial must have degree at least one')
+    if coeffs[0] == 0:
+        raise ValueError('polynomial must have non-zero leading coefficient')
 
     # Check no roots lie in the domain [-1,1]
-    roots = np.roots(rho)
+    roots = np.roots(coeffs)
     roots = roots[np.abs(roots.imag)<1e-12]
     for root in roots:
         if -1 <= root <= 1:
-            raise ValueError('rho must have no roots in [-1,1]')
+            raise ValueError('polynomial must have no roots in [-1,1]')
 
-    # rho function and derivative evaluation
-    rho_fun = lambda z: np.polyval(rho, z)
-    rhoprime = np.polyder(rho)
-    rhoprime_fun = lambda z: np.polyval(rhoprime, z)
-    return {'rho': rho_fun, 'rhoprime': rhoprime_fun, 'degree': len(rho)-1, 'coeffs': np.array(rho)}
+    coeffs, degree = np.array(coeffs), len(coeffs)-1
+    even = degree % 2 == 0 and np.all(coeffs[1::2] == 0)
+
+    # function and derivative evaluation
+    function = lambda z: np.polyval(coeffs, z)
+    dcoeffs = np.polyder(coeffs)
+    derivative = lambda z: np.polyval(dcoeffs, z)
+    return {'function': function, 'derivative': derivative, 'coeffs': coeffs, 'degree': degree, 'even': even}
 
 
 def mass(system, dtype='float64', internal='float128', **quadrature_kwargs):
@@ -136,12 +207,12 @@ def mass(system, dtype='float64', internal='float128', **quadrature_kwargs):
         tol : float, optional
             Relative convergence criterion for mass
         nquad : int, optional
-            Number of quadrature points for non-polynomial rho
+            Number of quadrature points for non-polynomial augmented weight
         nquad_ratio : float, optional
             Scale factor for number of quadrature points in convergence test
         max_iters : int, optional
             Maximum number of iterations until convergence fails
-        These arguments are only used for non-polynomial rho functions since
+        These arguments are only used for non-polynomial augmented weight functions since
         quadrature can be computed exactly on polynomials of a given degree
 
     Returns
@@ -156,9 +227,9 @@ def mass(system, dtype='float64', internal='float128', **quadrature_kwargs):
         for key in ['max_iters', 'nquad']:
             quadrature_kwargs.pop(key, None)
         max_iters = 1
-        nquad = int(np.ceil((system.degree+1)/2))
+        nquad = int(np.ceil((system.total_degree+1)/2))
     else:
-        min_degree = system.min_degree
+        min_degree = 100
         max_iters = quadrature_kwargs.pop('max_iters', 10)
         nquad = quadrature_kwargs.pop('nquad', 2*min_degree)
 
@@ -172,8 +243,7 @@ def mass(system, dtype='float64', internal='float128', **quadrature_kwargs):
 
 def stieltjes(system, n, return_mass=False, dtype='float64', internal='float128', **quadrature_kwargs):
     """
-    Compute the three-term recurrence coefficients for the weight function
-        w(z) = base_system.weight(z) * rho(z)**c
+    Compute the three-term recurrence coefficients for the orthogonal polynomial system
     on the interval (-1,1) using the Stieltjes Procedure
 
     Parameters
@@ -194,12 +264,12 @@ def stieltjes(system, n, return_mass=False, dtype='float64', internal='float128'
         tol : float, optional
             Relative convergence criterion for off-diagonal recurrence coefficients
         nquad : int, optional
-            Number of quadrature points for non-polynomial rho
+            Number of quadrature points for non-polynomial augmented weight
         nquad_ratio : float, optional
             Scale factor for number of quadrature points in convergence test
         max_iters : int, optional
             Maximum number of iterations until convergence fails
-        These arguments are only used for non-polynomial rho functions since
+        These arguments are only used for non-polynomial augmented weight functions since
         quadrature can be computed exactly on polynomials of a given degree
 
     Returns
@@ -211,7 +281,7 @@ def stieltjes(system, n, return_mass=False, dtype='float64', internal='float128'
         for key in ['max_iters', 'nquad']:
             quadrature_kwargs.pop(key, None)
         max_iters = 1
-        max_degree = system.degree+2*n
+        max_degree = system.total_degree+2*n
         nquad = int(np.ceil((max_degree+1)/2))
     else:
         max_iters = quadrature_kwargs.pop('max_iters', 10)
@@ -226,8 +296,7 @@ def stieltjes(system, n, return_mass=False, dtype='float64', internal='float128'
 
 def modified_chebyshev(system, n, return_mass=False, dtype='float64', internal='float128', **quadrature_kwargs):
     """
-    Compute the three-term recurrence coefficients for the weight function
-        w(z) = base_system.weight(z) * rho(z)**c
+    Compute the three-term recurrence coefficients for the orthogonal polynomial system
     on the interval (-1,1) using the Modified Chebyshev algorithm
 
     Parameters
@@ -248,12 +317,12 @@ def modified_chebyshev(system, n, return_mass=False, dtype='float64', internal='
         tol : float, optional
             Relative convergence criterion for off-diagonal recurrence coefficients
         nquad : int, optional
-            Number of quadrature points for non-polynomial rho
+            Number of quadrature points for non-polynomial augmented weight
         nquad_ratio : float, optional
             Scale factor for number of quadrature points in convergence test
         max_iters : int, optional
             Maximum number of iterations until convergence fails
-        These arguments are only used for non-polynomial rho functions since
+        These arguments are only used for non-polynomial augmented weight functions since
         quadrature can be computed exactly on polynomials of a given degree
 
     Returns
@@ -265,7 +334,7 @@ def modified_chebyshev(system, n, return_mass=False, dtype='float64', internal='
         for key in ['max_iters', 'nquad']:
             quadrature_kwargs.pop(key, None)
         # When c is alpha integer we can integrate exactly
-        npoly, max_iters = system.degree+1, 1
+        npoly, max_iters = system.total_degree+1, 1
         nquad = npoly
     else:
         # Otherwise we run the Chebyshev process multiple times and check for convergence
@@ -285,8 +354,7 @@ def modified_chebyshev(system, n, return_mass=False, dtype='float64', internal='
 
 def recurrence(system, n, return_mass=False, dtype='float64', internal='float128', algorithm='stieltjes', **quadrature_kwargs):
     """
-    Compute the three-term recurrence coefficients for the weight function
-        w(z) = base_system.weight(z) * rho(z)**c
+    Compute the three-term recurrence coefficients for the orthogonal polynomial system
     on the interval (-1,1)
 
     Parameters
@@ -326,9 +394,8 @@ def recurrence(system, n, return_mass=False, dtype='float64', internal='float128
 
 def polynomials(system, n, z, init=None, dtype='float64', internal='float128', **recurrence_kwargs):
     """
-    Generalized Jacobi polynomials, P(n,rho,a,b,c,z), of type (rho,a,b,c) up to degree n-1.
-    These polynomials are orthogonal on the interval (-1,1) with weight function
-        w(z) = base_system.weight(z) * rho(z)**c
+    Generalized Jacobi polynomials, P(n,a,b,(c1,...),z), of type (a,b,(c1,...)) up to degree n-1.
+    These polynomials are orthogonal on the interval (-1,1) with weight function system.weight(z)
 
     Parameters
     ----------
@@ -428,8 +495,7 @@ def embedding_operator(kind, system, n, dtype='float64', internal='float128', **
         da, db, m = 0, 1, 1
         offsets = np.arange(0,m+1)
     elif isinstance(kind, tuple) and kind[0] == 'C':
-        config = system.poly_configs[kind[1]]
-        da, db, m = 0, 0, config['degree']
+        da, db, m = 0, 0, system.degrees[kind[1]]
         dc[kind[1]] = 1
         offsets = np.arange(0, min(n,m+1))
         if parity:
@@ -488,8 +554,7 @@ def embedding_operator_adjoint(kind, system, n, dtype='float64', internal='float
         da, db, m, f =  0, -1, 1, lambda z: 1+z
         offsets = np.arange(0,-(m+1),-1)
     elif isinstance(kind, tuple) and kind[0] == 'C':
-        config = system.poly_configs[kind[1]]
-        da, db, m, f =  0,  0, config['degree'], config['rho']
+        da, db, m, f =  0,  0, system.degrees[kind[1]], system.factors[kind[1]]
         dc[kind[1]] = -1
         offsets = np.arange(0,-(m+1),-1)
         if parity:
@@ -511,7 +576,7 @@ def embedding_operator_adjoint(kind, system, n, dtype='float64', internal='float
     return diags(bands, offsets, shape=(n+m,n), dtype=dtype)
 
 
-def differential_operator(kind, system, n, rho, a, b, c, dtype='float64', internal='float128', **recurrence_kwargs):
+def differential_operator(kind, system, n, dtype='float64', internal='float128', **recurrence_kwargs):
     """
     Compute a differential operator
 
@@ -521,12 +586,10 @@ def differential_operator(kind, system, n, rho, a, b, c, dtype='float64', intern
         D, E, F, G
     n : integer
         Number of polynomials in expansion, one less than max degree
-    rho : tuple,list or dict
-        If a tuple or list, monomial basis coefficients of rho function
-        If a dict, then must have callable items with keys 'rho' and 'rhoprime'.
-        rho may not vanish inside the domain.
-    a,b,c : float
-        Generalized Jacobi parameters.  a,b > -1, c arbitrary
+    system : AugmentedSystem
+        OP system to augment with additional weight factor
+    n : integer
+        Number of polynomials in expansion, one less than max degree
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -540,50 +603,51 @@ def differential_operator(kind, system, n, rho, a, b, c, dtype='float64', intern
     operator codomain n increment
 
     """
-    _check_jacobi_params(a, b, c)
-    config = _make_poly_config(rho)
-    rho_degree = config['degree']
-    parity = AugmentedSystem(base_system, rho, c).has_even_parity
+    parity = system.has_even_parity
+    degree = system.unweighted_degree
 
+    dc = np.ones(system.num_augmented_factors, dtype=int)
     if kind == 'D':
-        da, db, dc, m = +1, +1, +1, -1
+        da, db, m = +1, +1, -1
         op = jacobi.operator('D', dtype=internal)(+1)
-        offsets = np.arange(1, min(n,2+rho_degree))
+        offsets = np.arange(1, min(n,2+degree))
         if parity:
             offsets = offsets[0::2]
     elif kind == 'E':
-        da, db, dc, m = -1, +1, +1, 0
+        da, db, m = -1, +1, 0
         op = jacobi.operator('C', dtype=internal)(-1)
-        offsets = np.arange(0, min(n,1+rho_degree))
+        offsets = np.arange(0, min(n,1+degree))
     elif kind == 'F':
-        da, db, dc, m = +1, -1, +1, 0
+        da, db, m = +1, -1, 0
         op = jacobi.operator('C', dtype=internal)(+1)
-        offsets = np.arange(0, min(n,1+rho_degree))
+        offsets = np.arange(0, min(n,1+degree))
     elif kind == 'G':
-        da, db, dc, m = -1, -1, +1, 1
+        da, db, m = -1, -1, 1
         op = jacobi.operator('D', dtype=internal)(-1)
-        offsets = np.arange(-1, min(n,rho_degree))
+        offsets = np.arange(-1, min(n,degree))
         if parity:
             offsets = offsets[0::2]
     else:
         raise ValueError(f'Invalid kind: {kind}')
-    _check_jacobi_params(a+da, b+db, c+dc)
+
+    cosystem = system.apply_arrow(da, db, dc)
+    a, b = system.a, system.b
 
     # Project Pn onto Jm
     # i'th column of projPJ is the coefficients of P[i] w.r.t. J[j]
     z, w = jacobi.quadrature(n, a, b, dtype=internal)
-    P = polynomials(n, rho, a, b, c, z, dtype=internal, **recurrence_kwargs)
+    P = system.polynomials(n, z, dtype=internal, **recurrence_kwargs)
     J = jacobi.polynomials(n, a, b, z, dtype=internal)
     projPJ = np.array([np.sum(w*P*J[k], axis=1) for k in range(n)])
 
     # Compute the operator on J
     # i'th column of f is grid space evaluation of Op[P[i]]
-    z, w = quadrature(n+m, rho, a+da, b+db, c+dc, dtype=internal, **recurrence_kwargs)
-    Q = polynomials(n+m, rho, a+da, b+db, c+dc, z, dtype=internal, **recurrence_kwargs)
+    z, w = cosystem.quadrature(n+m, dtype=internal, **recurrence_kwargs)
+    Q = cosystem.polynomials(n+m, z, dtype=internal, **recurrence_kwargs)
 
     Z = jacobi.operator('Z', dtype=internal)(*op.codomain(n, a, b))
     mass = jacobi.mass(*op.codomain(n, a, b)[1:])
-    f = clenshaw_summation(op(n, a, b) @ projPJ, Z, z, mass, dtype=internal)
+    f = tools.clenshaw_summation(op(n, a, b) @ projPJ, Z, z, mass, dtype=internal)
 
     bands = np.zeros((len(offsets), n), dtype=dtype)
     for i,k in enumerate(offsets):
@@ -594,7 +658,7 @@ def differential_operator(kind, system, n, rho, a, b, c, dtype='float64', intern
     return diags(bands, offsets, shape=(n+m,n), dtype=dtype)
 
 
-def differential_operator_adjoint(kind, n, rho, a, b, c, dtype='float64', internal='float128', **recurrence_kwargs):
+def differential_operator_adjoint(kind, system, n, dtype='float64', internal='float128', **recurrence_kwargs):
     """
     Compute alpha adjoint differential operator
 
@@ -604,12 +668,10 @@ def differential_operator_adjoint(kind, n, rho, a, b, c, dtype='float64', intern
         D, E, F, G
     n : integer
         Number of polynomials in expansion, one less than max degree
-    rho : tuple,list or dict
-        If a tuple or list, monomial basis coefficients of rho function
-        If a dict, then must have callable items with keys 'rho' and 'rhoprime'.
-        rho may not vanish inside the domain.
-    a,b,c : float
-        Generalized Jacobi parameters.  a,b > -1, c arbitrary
+    system : AugmentedSystem
+        OP system to augment with additional weight factor
+    n : integer
+        Number of polynomials in expansion, one less than max degree
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -623,54 +685,55 @@ def differential_operator_adjoint(kind, n, rho, a, b, c, dtype='float64', intern
     operator codomain n increment
 
     """
-    _check_jacobi_params(a, b, c)
-    config = _make_poly_config(rho)
-    rho_fun, rho_der, rho_degree = [config[key] for key in ['rho', 'rhoprime', 'degree']]
-    parity = AugmentedSystem(base_system, rho, c).has_even_parity
+    rho_fun, rho_der, degree = system.rho, system.rhoprime, system.unweighted_degree
+    parity = system.has_even_parity
 
     A, B, C, D, Id = [jacobi.operator(name, dtype=internal) for name in ['A', 'B', 'C', 'D', 'Id']]
+    dc = -np.ones(system.num_augmented_factors, dtype=int)
     if kind == 'D':
-        da, db, dc, m = -1, -1, -1, 1+rho_degree
+        da, db, m = -1, -1, 1+degree
         op1, op2 = D(-1), -A(-1) @ B(-1)
         offsets = -np.arange(1,m+1)
     elif kind == 'E':
-        da, db, dc, m = +1, -1, -1, rho_degree
+        da, db, m = +1, -1, degree
         op1, op2 = C(+1), B(-1)
         offsets = -np.arange(0,m+1)
     elif kind == 'F':
-        da, db, dc, m = -1, +1, -1, rho_degree
+        da, db, m = -1, +1, degree
         op1, op2 = C(-1), -A(-1)
         offsets = -np.arange(0,m+1)
     elif kind == 'G':
-        da, db, dc, m = +1, +1, -1, rho_degree-1
+        da, db, m = +1, +1, degree-1
         op1, op2 = D(+1), Id
         offsets = -np.arange(-1,m+1)
     else:
         raise ValueError(f'Invalid kind: {kind}')
-    _check_jacobi_params(a+da, b+db, c+dc)
     if parity:
         offsets = offsets[0::2]
+
+    cosystem = system.apply_arrow(da, db, dc)
+    a, b = system.a, system.b
 
     # Project Pn onto Jm
     # i'th column of projPJ is the coefficients of P[i] w.r.t. J[j]
     z, w = jacobi.quadrature(n, a, b, dtype=internal)
-    P = polynomials(n, rho, a, b, c, z, dtype=internal, **recurrence_kwargs)
+    P = system.polynomials(n, z, dtype=internal, **recurrence_kwargs)
     J = jacobi.polynomials(n, a, b, z, dtype=internal)
     projPJ = np.array([np.sum(w*P*J[k], axis=1) for k in range(n)])
 
     # Compute the operator on J
     # i'th column of f is grid space evaluation of Op[P[i]]
-    z, w = quadrature(n+m, rho, a+da, b+db, c+dc, dtype=internal, **recurrence_kwargs)
-    Q = polynomials(n+m, rho, a+da, b+db, c+dc, z, dtype=internal, **recurrence_kwargs)
+    z, w = cosystem.quadrature(n+m, dtype=internal, **recurrence_kwargs)
+    Q = cosystem.polynomials(n+m, z, dtype=internal, **recurrence_kwargs)
 
     def evaluate_on_grid(op):
         Z = jacobi.operator('Z', dtype=internal)(*op.codomain(n, a, b))
         mass = jacobi.mass(*op.codomain(n, a, b)[1:])
-        return clenshaw_summation(op(n, a, b) @ projPJ, Z, z, mass, dtype=internal)
+        return tools.clenshaw_summation(op(n, a, b) @ projPJ, Z, z, mass, dtype=internal)
 
     f1, f2 = [evaluate_on_grid(op) for op in [op1, op2]]
     z = z[np.newaxis,:]
-    f = rho_fun(z)*f1 + c*rho_der(z)*f2
+    f = rho_fun(z)*f1 + rho_der(z)*f2
 
     bands = np.zeros((len(offsets), n), dtype=dtype)
     for i,k in enumerate(offsets):
@@ -681,18 +744,17 @@ def differential_operator_adjoint(kind, n, rho, a, b, c, dtype='float64', intern
     return diags(bands, offsets, shape=(n+m,n), dtype=dtype)
 
 
-def operator(name, rho, dtype='float64', internal='float128', **recurrence_kwargs):
+def operator(name, factors, dtype='float64', internal='float128', **recurrence_kwargs):
     """
     Interface to AugmentedJacobiOperator class
 
     Parameters
     ----------
-    name : str
-        A, B, C, D, E, F, G, Id, N, Z (Jacobi operator)
-    rho : tuple,list or dict
-        If a tuple or list, monomial basis coefficients of rho function
-        If a dict, then must have callable items with keys 'rho' and 'rhoprime'.
-        rho may not vanish inside the domain.
+    name : str or tuple
+        If str: A, B, D, E, F, G, Id, N, Z (Jacobi operator)
+        If tuple: ('C', index) for C embedding operator
+    factors : list
+        Sequence of monomial basis coefficients for augmented polynomial factors
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -706,25 +768,23 @@ def operator(name, rho, dtype='float64', internal='float128', **recurrence_kwarg
 
     """
     if name == 'Id':
-        return AugmentedJacobiOperator.identity(rho, dtype=dtype)
+        return AugmentedJacobiOperator.identity(factors, dtype=dtype)
     if name == 'N':
-        return AugmentedJacobiOperator.number(rho, dtype=dtype)
+        return AugmentedJacobiOperator.number(factors, dtype=dtype)
     if name == 'Z':
-        return AugmentedJacobiOperator.recurrence(rho, dtype=dtype, internal=internal)
-    return AugmentedJacobiOperator(name, rho, dtype=dtype, internal=internal, **recurrence_kwargs)
+        return AugmentedJacobiOperator.recurrence(factors, dtype=dtype, internal=internal)
+    return AugmentedJacobiOperator(name, factors, dtype=dtype, internal=internal, **recurrence_kwargs)
 
 
-def operators(rho, dtype='float64', internal='float128', **recurrence_kwargs):
+def operators(factors, dtype='float64', internal='float128', **recurrence_kwargs):
     """
     Interface to AugmentedJacobiOperator class, binding rho and data-types
     to the operator constructor
 
     Parameters
     ----------
-    rho : tuple,list or dict
-        If a tuple or list, monomial basis coefficients of rho function
-        If a dict, then must have callable items with keys 'rho' and 'rhoprime'.
-        rho may not vanish inside the domain.
+    factors : list
+        Sequence of monomial basis coefficients for augmented polynomial factors
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -739,7 +799,7 @@ def operators(rho, dtype='float64', internal='float128', **recurrence_kwargs):
 
     """
     def dispatch(name):
-        return operator(name, rho, dtype=dtype, internal=internal, **recurrence_kwargs)
+        return operator(name, factors, dtype=dtype, internal=internal, **recurrence_kwargs)
     return dispatch
 
 
@@ -747,13 +807,13 @@ class AugmentedJacobiOperator():
     """
     The base class for primary operators acting on finite row vectors of Generalized Jacobi polynomials.
 
-    <n,ρ,a,b,c,z| = [P(0,ρ,a,b,c,z),P(1,ρ,a,b,c,z),...,P(n-1,ρ,a,b,c,z)]
+    <n,a,b,(c1,...),z| = [P(0,a,b,(c1,...),z),P(1,a,b,(c1,...),z),...,P(n-1,a,b,(c1,...),z)]
 
-    P(k,ρ,a,b,c,z) = <n,ρ,a,b,c,z|k> if k < n else 0.
+    P(k,a,b,(c1,...),z) = <n,a,b,(c1,...),z|k> if k < n else 0.
 
     Each oparator takes the form:
 
-    L(ρ,a,b,c,z,d/dz) <n,ρ,a,b,c,z| = <n+dn,ρ,a+da,b+db,c,z| R(n,ρ,a,b,c)
+    L(a,b,(c1,...),z,d/dz) <n,a,b,(c1,...),z| = <n+dn,a+da,b+db,c+dc,z| R(n,a,b,c+dc)
 
     The Left action is a z-differential operator.
     The Right action is a matrix with n+dn rows and n columns.
@@ -761,7 +821,7 @@ class AugmentedJacobiOperator():
     The Right action is encoded with alpha "infinite_csr" sparse matrix object.
     The parameter increments are encoded with a AugmentedJacobiCodomain object.
 
-     L(ρ,a,b,c,z,d/dz)  ................................  dn, da, db, dc
+     L(a,b,c,z,d/dz)  ..................................  dn, da, db, dc
     --------------------------------------------------------------------
      A(+1) = 1      ....................................   0, +1,  0,  0
      A(-1) = 1-z    ....................................  +1, -1,  0,  0
@@ -782,17 +842,17 @@ class AugmentedJacobiOperator():
      F(+1) = b + (1+z)*d/dz ............................   0, +1, -1, +1
      F(-1) = ρ(z)*[a-(1-z)*d/dz] - c*ρ'(z)*(1-z) .......   d, -1, +1, -1
 
-     G(+1) = (1+z)*a - (1-z)*b - (1-z**2)*d/dz .........  +1, +1, +1, -1
-     G(-1) = ρ(z)*d/dz + c*ρ'(z) ....................... d-1, -1, -1, +1
+     G(+1) = (1+z)*a - (1-z)*b - (1-z**2)*d/dz .........  +1, -1, -1, +1
+     G(-1) = ρ(z)*d/dz + c*ρ'(z) ....................... d-1, +1, +1, -1
 
      Each -1 operator is the adjoint of the coresponding +1 operator and
      d is the polynomial degree of ρ.
 
      In addition there are a few exceptional operators:
 
-        Identity: <n,ρ,a,b,c,z| -> <n,ρ,a,b,c,z|
+        Identity: <n,a,b,c,z| -> <n,a,b,c,z|
 
-        Number:   <n,ρ,a,b,c,z| -> [0*P(0,ρ,a,b,c,z),1*P(1,ρ,a,b,c,z),...,(n-1)*P(n-1,ρ,a,b,c,z)]
+        Number:   <n,a,b,c,z| -> [0*P(0,a,b,c,z),1*P(1,a,b,c,z),...,(n-1)*P(n-1,a,b,c,z)]
                   This operator doesn't have a local differential Left action.
 
     Attributes
@@ -807,7 +867,7 @@ class AugmentedJacobiOperator():
     -------
     __call__(p): p=-1,1
         returns Operator object depending on p.
-        Operator.function is alpha infinite_csr matrix constructor for n,ρ,a,b,c.
+        Operator.function is alpha infinite_csr matrix constructor for n,a,b,c.
         Operator.codomain is a AugmentedJacobiCodomain object.
 
     staticmethods
@@ -817,15 +877,21 @@ class AugmentedJacobiOperator():
     recurrence: Operator object for the Jacobi operator
 
     """
-    def __init__(self, name, rho, dtype='float64', internal='float128', **recurrence_kwargs):
-        self.__function = getattr(self,f'_AugmentedJacobiOperator__{name}')
+    def __init__(self, name, factors, dtype='float64', internal='float128', **recurrence_kwargs):
+        if isinstance(name, tuple):
+            # C operator
+            name, index = name
+            if name != 'C':
+                raise ValueError("Invalid two-argument kind - must be ('C', index)")
+            self.__function = self.__Ci(index)
+        else:
+            self.__function = getattr(self,f'_AugmentedJacobiOperator__{name}')
 
-        config = _make_poly_config(rho)
-        self.rho           = rho
-        self.degree        = config['degree']
-
-        self.dtype         = dtype
-        self.internal      = internal
+        self.factors  = factors
+        self.weight   = PolynomialProduct(factors)
+        self.degree   = self.weight.total_degree(weighted=False)
+        self.dtype    = dtype
+        self.internal = internal
         self.recurrence_kwargs = recurrence_kwargs
 
     def __call__(self,p):
@@ -834,76 +900,96 @@ class AugmentedJacobiOperator():
     def __A(self,p):
         op = partial(self._dispatch, 'A', p)
         dn = 1 if p == -1 else 0
-        return op, AugmentedJacobiCodomain(dn,p,0,0)
+        nc = len(self.weight)
+        return op, AugmentedJacobiCodomain(dn,p,0,(0,)*nc)
 
     def __B(self,p):
         op = partial(self._dispatch, 'B', p)
         dn = 1 if p == -1 else 0
-        return op, AugmentedJacobiCodomain(dn,0,p,0)
+        nc = len(self.weight)
+        return op, AugmentedJacobiCodomain(dn,0,p,(0,)*nc)
 
-    def __C(self,p):
-        op = partial(self._dispatch, 'C', p)
-        dn = self.degree if p == -1 else 0
-        return op, AugmentedJacobiCodomain(dn,0,0,p)
+    def __Ci(self,i):
+        def __C(p):
+            op = partial(self._dispatch, ('C',i), p)
+            dn = self.weight.degree(i) if p == -1 else 0
+            nc = len(self.weight)
+            dc = np.zeros(nc, dtype=int)
+            dc[i] = p
+            return op, AugmentedJacobiCodomain(dn,0,0,dc)
+        return __C
 
     def __D(self,p):
         op = partial(self._dispatch, 'D', p)
         dn = 1+self.degree if p == -1 else -1
-        return op, AugmentedJacobiCodomain(dn,p,p,p)
+        nc = len(self.weight)
+        return op, AugmentedJacobiCodomain(dn,p,p,(p,)*nc)
 
     def __E(self,p):
         op = partial(self._dispatch, 'E', p)
         dn = self.degree if p == -1 else 0
-        return op, AugmentedJacobiCodomain(dn,-p,p,p)
+        nc = len(self.weight)
+        return op, AugmentedJacobiCodomain(dn,-p,p,(p,)*nc)
 
     def __F(self,p):
         op = partial(self._dispatch, 'F', p)
         dn = self.degree if p == -1 else 0
-        return op, AugmentedJacobiCodomain(dn,p,-p,p)
+        nc = len(self.weight)
+        return op, AugmentedJacobiCodomain(dn,p,-p,(p,)*nc)
 
     def __G(self,p):
         op = partial(self._dispatch, 'G', p)
         dn = self.degree-1 if p == -1 else 1
-        return op, AugmentedJacobiCodomain(dn,p,p,-p)
+        nc = len(self.weight)
+        return op, AugmentedJacobiCodomain(dn,-p,-p,(p,)*nc)
 
     @staticmethod
-    def identity(rho, dtype='float64'):
+    def identity(factors, dtype='float64'):
         def I(n,a,b,c):
-            _check_jacobi_params(a, b, c)
             N = np.ones(n,dtype=dtype)
             return infinite_csr(banded((N,[0]),(max(n,0),max(n,0))))
-        return Operator(I,AugmentedJacobiCodomain(0,0,0,0))
+        nc = len(factors)
+        return Operator(I,AugmentedJacobiCodomain(0,0,0,(0,)*nc))
 
     @staticmethod
-    def number(rho, dtype='float64'):
+    def number(factors, dtype='float64'):
         def N(n,a,b,c):
-            _check_jacobi_params(a, b, c)
             return infinite_csr(banded((np.arange(n,dtype=dtype),[0]),(max(n,0),max(n,0))))
-        return Operator(N,AugmentedJacobiCodomain(0,0,0,0))
+        nc = len(factors)
+        return Operator(N,AugmentedJacobiCodomain(0,0,0,(0,)*nc))
 
     @staticmethod
-    def recurrence(rho, dtype='float64', internal='float128'):
+    def recurrence(factors, dtype='float64', internal='float128'):
         def Z(n,a,b,c):
-            _check_jacobi_params(a, b, c)
-            op = recurrence(n, rho, a, b, c, dtype=dtype, internal=internal)
+            system = AugmentedJacobi(a, b, zip(factors,c))
+            op = system.recurrence(n, dtype=dtype, internal=internal)
             return infinite_csr(op) 
-        return Operator(Z,AugmentedJacobiCodomain(1,0,0,0))
+        nc = len(factors)
+        return Operator(Z,AugmentedJacobiCodomain(1,0,0,(0,)*nc))
 
     def _dispatch(self,kind,p,n,a,b,c):
-        _check_jacobi_params(a, b, c)
-        if kind in ['A','B','C']:
+        if isinstance(kind, tuple):
+            if kind[0] == 'C':
+                c_embed = True
+            else:
+                raise ValueError("Invalid two-argument kind - must be ('C', index)")
+        else:
+            c_embed = False
+        if kind in ['A','B'] or c_embed:
             fun = {+1: embedding_operator, -1: embedding_operator_adjoint}[p]
         elif kind in ['D','E','F','G']:
             fun = {+1: differential_operator, -1: differential_operator_adjoint}[p]
         else:
             raise ValueError(f'Unknown operator kind: {kind}')
-        op = fun(kind, n, self.rho, a, b, c, dtype=self.dtype, internal=self.internal, **self.recurrence_kwargs)
+        system = AugmentedJacobi(a, b, zip(self.factors,c))
+        op = fun(kind, system, n, dtype=self.dtype, internal=self.internal, **self.recurrence_kwargs)
         return infinite_csr(op)
 
 
 class AugmentedJacobiCodomain(Codomain):
     def __init__(self,dn=0,da=0,db=0,dc=0,Output=None):
         if Output is None: Output = AugmentedJacobiCodomain
+        dc = tuple(dc)
         Codomain.__init__(self,*(dn,da,db,dc),Output=Output)
 
     def __str__(self):
@@ -914,7 +1000,8 @@ class AugmentedJacobiCodomain(Codomain):
         return self.Output(*self(*other[:4],evaluate=False))
 
     def __call__(self,*args,evaluate=True):
-        n, a, b, c = tuple(self[i] + args[i] for i in range(4))
+        n, a, b = tuple(self[i] + args[i] for i in range(3))
+        c = tuple(self[3][i] + args[3][i] for i in range(len(self[3])))
         if evaluate and (a <= -1 or b <= -1):
             raise ValueError('invalid Jacobi parameter.')
         return n, a, b, c
