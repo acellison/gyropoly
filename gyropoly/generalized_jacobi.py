@@ -775,8 +775,8 @@ class GeneralizedJacobiOperator():
      F(+1) = b + (1+z)*d/dz ............................   0, +1, -1, +1
      F(-1) = ρ(z)*[a-(1-z)*d/dz] - c*ρ'(z)*(1-z) .......   d, -1, +1, -1
 
-     G(+1) = (1+z)*a - (1-z)*b - (1-z**2)*d/dz .........  +1, +1, +1, -1
-     G(-1) = ρ(z)*d/dz + c*ρ'(z) ....................... d-1, -1, -1, +1
+     G(+1) = (1+z)*a - (1-z)*b - (1-z**2)*d/dz .........  +1, -1, -1, +1
+     G(-1) = ρ(z)*d/dz + c*ρ'(z) ....................... d-1, +1, +1, -1
 
      Each -1 operator is the adjoint of the coresponding +1 operator and
      d is the polynomial degree of ρ.
@@ -857,7 +857,7 @@ class GeneralizedJacobiOperator():
     def __G(self,p):
         op = partial(self._dispatch, 'G', p)
         dn = self.degree-1 if p == -1 else 1
-        return op, GeneralizedJacobiCodomain(dn,p,p,-p)
+        return op, GeneralizedJacobiCodomain(dn,-p,-p,+p)
 
     @staticmethod
     def identity(rho, dtype='float64'):
