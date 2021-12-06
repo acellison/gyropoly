@@ -394,7 +394,7 @@ def recurrence(system, n, return_mass=False, dtype='float64', internal='float128
 
 def polynomials(system, n, z, init=None, dtype='float64', internal='float128', **recurrence_kwargs):
     """
-    Generalized Jacobi polynomials, P(n,a,b,(c1,...),z), of type (a,b,(c1,...)) up to degree n-1.
+    Generalized Jacobi polynomials, P(n,a,b,c,z), of type (a,b,c) up to degree n-1.
     These polynomials are orthogonal on the interval (-1,1) with weight function system.weight(z)
 
     Parameters
@@ -773,6 +773,8 @@ def operator(name, factors, dtype='float64', internal='float128', **recurrence_k
         return AugmentedJacobiOperator.number(factors, dtype=dtype)
     if name == 'Z':
         return AugmentedJacobiOperator.recurrence(factors, dtype=dtype, internal=internal)
+    if len(factors) == 1 and name == 'C':
+        name = ('C', 0)
     return AugmentedJacobiOperator(name, factors, dtype=dtype, internal=internal, **recurrence_kwargs)
 
 
@@ -807,13 +809,13 @@ class AugmentedJacobiOperator():
     """
     The base class for primary operators acting on finite row vectors of Generalized Jacobi polynomials.
 
-    <n,a,b,(c1,...),z| = [P(0,a,b,(c1,...),z),P(1,a,b,(c1,...),z),...,P(n-1,a,b,(c1,...),z)]
+    <n,a,b,c,z| = [P(0,a,b,c,z),P(1,a,b,c,z),...,P(n-1,a,b,c,z)]
 
-    P(k,a,b,(c1,...),z) = <n,a,b,(c1,...),z|k> if k < n else 0.
+    P(k,a,b,c,z) = <n,a,b,c,z|k> if k < n else 0.
 
     Each oparator takes the form:
 
-    L(a,b,(c1,...),z,d/dz) <n,a,b,(c1,...),z| = <n+dn,a+da,b+db,c+dc,z| R(n,a,b,c+dc)
+    L(a,b,c,z,d/dz) <n,a,b,c,z| = <n+dn,a+da,b+db,c+dc,z| R(n,a,b,c+dc)
 
     The Left action is a z-differential operator.
     The Right action is a matrix with n+dn rows and n columns.

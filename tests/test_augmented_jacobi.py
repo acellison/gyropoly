@@ -207,6 +207,7 @@ def test_differential_operators():
     dtype = 'float128'
     z = np.linspace(-1,1,1000, dtype=dtype)
 
+    n = 6  # one more than degree of f
     def make_functions(a, b):
         f = lambda z: 4 + 2*z + z**2 - z**3 + 0.2*z**5
         fprime = lambda z: 2 + 2*z - 3*z**2 + z**4
@@ -243,7 +244,7 @@ def test_differential_operators():
     diff = lambda kind, system, n: ajacobi.differential_operator(kind, system, n, dtype=dtype)
 
     # Test 1
-    n, a, b, rho, c = 8, 1, 1, [1,0,0,3], 2
+    a, b, rho, c = 1, 1, [1,0,0,3], 2
     system = make_system(a,b,[(rho,c)])
     P = system.polynomials(n, z, dtype=dtype)
     kinds = ['D', 'E', 'F', 'G']
@@ -257,7 +258,7 @@ def test_differential_operators():
     check_grid(system, G, +1, -1, -1, [+1], f, Gf, 6.5e-13)
 
     # Test 2
-    n, a, b = 12, 0.5, 0.5
+    a, b = 0.5, 0.5
     rho1, c1 =   [1,0,1], 1
     rho2, c2 = [1,0,0,3], 2
     system = make_system(a,b,[(rho1,c1),(rho2,c2)])
@@ -272,7 +273,7 @@ def test_differential_operators():
     check_grid(system, G, +1, -1, -1, [+1,+1], f, Gf, 1.4e-12)
 
     # Test 2
-    n, a, b = 12, 0.5, 0.5
+    a, b = 0.5, 0.5
     rho1, rho2, rho3 = [1,2], [1,3], [1,4]
     c1, c2, c3 = 1,2,3
     system = make_system(a,b,[(rho1,c1),(rho2,c2),(rho3,c3)])
@@ -292,6 +293,7 @@ def test_differential_operator_adjoints():
     dtype = 'float128'
     z = np.linspace(-1,1,1000, dtype=dtype)
 
+    n = 6  # one more than degree of f
     def make_functions(a, b, rhoc):
         f  = lambda z: 4 + 2*z +   z**2 -   z**3 + 0.2*z**5
         df = lambda z:     2   + 2*z    - 3*z**2 +     z**4
@@ -336,7 +338,7 @@ def test_differential_operator_adjoints():
     kinds = ['D', 'E', 'F', 'G']
 
     # Test 1
-    n, a, b, rho, c = 8, 1, 1, [1,0,0,3], 2
+    a, b, rho, c = 1, 1, [1,0,0,3], 2
     system = make_system(a,b,[(rho,c)])
     P = system.polynomials(n, z, dtype=dtype)
     d = system.unweighted_degree
@@ -346,11 +348,11 @@ def test_differential_operator_adjoints():
     f, Df, Ef, Ff, Gf = make_functions(a, b, [(rho,c)])
     check_grid(system, D, d+1, -1, -1, [-1], f, Df, 6e-13)
     check_grid(system, E, d  , +1, -1, [-1], f, Ef, 7e-13)
-    check_grid(system, F, d  , -1, +1, [-1], f, Ff, 6e-13)
-    check_grid(system, G, d-1, +1, +1, [-1], f, Gf, 5e-13)
+    check_grid(system, F, d  , -1, +1, [-1], f, Ff, 7e-13)
+    check_grid(system, G, d-1, +1, +1, [-1], f, Gf, 6e-13)
 
     # Test 2
-    n, a, b = 12, 0.5, 0.5
+    a, b = 0.5, 0.5
     rho1, c1 =   [1,0,1], 1
     rho2, c2 = [1,0,0,3], 2
     d1, d2 = [len(r)-1 for r in [rho1,rho2]]
@@ -367,7 +369,7 @@ def test_differential_operator_adjoints():
     check_grid(system, G, d-1, +1, +1, [-1,-1], f, Gf, 1.1e-12)
 
     # Test 2
-    n, a, b = 12, 0.5, 0.5
+    a, b = 0.5, 0.5
     rho1, rho2, rho3 = [1,2], [1,3], [1,4]
     c1, c2, c3 = 1,2,3
     system = make_system(a,b,[(rho1,c1),(rho2,c2),(rho3,c3)])
@@ -389,11 +391,34 @@ def test_operators():
     rho1, c1 =   [1,0,1], 1
     rho2, c2 = [1,0,0,3], 2
     d1, d2 = [len(r)-1 for r in [rho1,rho2]]
-    d = d1 + d2
+    d, dmax = d1 + d2, max(d1,d2)
+    nc = 2
 
     factors, c = (rho1,rho2), (c1, c2)
     names = ['A', 'B', ('C',0), ('C',1), 'D', 'E', 'F', 'G', 'Id', 'N', 'Z']
     A, B, C1, C2, D, E, F, G, Id, N, Z = ops = [ajacobi.operator(kind, factors) for kind in names]
+
+    codomains = {'A': {+1: (0,1,0,(0,)*nc),  -1: (1,-1,0,(0,)*nc)},
+                 'B': {+1: (0,0,1,(0,)*nc),  -1: (1,0,-1,(0,)*nc)},
+                 ('C',0): {+1: (0,0,0,(1,0)), -1: (d1,0,0,(-1,0))},
+                 ('C',1): {+1: (0,0,0,(0,1)), -1: (d2,0,0,(0,-1))},
+                 'D': {+1: (-1,+1,+1,(+1,)*nc),  -1: (d+1,-1,-1,(-1,)*nc)},
+                 'E': {+1: ( 0,-1,+1,(+1,)*nc),  -1: (d,  +1,-1,(-1,)*nc)},
+                 'F': {+1: ( 0,+1,-1,(+1,)*nc),  -1: (d,  -1,+1,(-1,)*nc)},
+                 'G': {+1: (+1,-1,-1,(+1,)*nc),  -1: (d-1,+1,+1,(-1,)*nc)},
+                 'Id': (0,0,0,(0,)*nc),
+                 'N': (0,0,0,(0,)*nc),
+                 'Z': (+1,0,0,(0,)*nc)}
+
+    def check_codomain(op, codomain):
+        assert op.codomain[:] == codomain[:]
+
+    for name, op in zip(names, ops):
+        if name in ['Id', 'N', 'Z']:
+            check_codomain(op, codomains[name])
+        else:
+            check_codomain(op(+1), codomains[name][+1])
+            check_codomain(op(-1), codomains[name][-1])
 
     for name, op in zip(names, ops):
         if name in ['Id', 'N', 'Z']:
@@ -424,8 +449,8 @@ def test_operators():
 
     op = A(-1) @ A(+1) + B(-1) @ B(+1) + C1(-1) @ C1(+1) + C2(-1) @ C2(+1)
     Op = op(n,a,b,c)
-    assert op.codomain(n,a,b,c) == (n+max(d1,d2),a,b,c)
-    assert np.shape(Op) == (n+max(d1,d2),n)
+    assert op.codomain(n,a,b,c) == (n+dmax,a,b,c)
+    assert np.shape(Op) == (n+dmax,n)
 
 
 
