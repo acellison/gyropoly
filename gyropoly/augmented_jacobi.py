@@ -337,7 +337,7 @@ def modified_chebyshev(system, n, return_mass=False, dtype='float64', internal='
     if system.is_polynomial:
         for key in ['max_iters', 'nquad']:
             quadrature_kwargs.pop(key, None)
-        # When c is alpha integer we can integrate exactly
+        # When c is an integer we can integrate exactly
         npoly, max_iters = system.total_degree+1, 1
         nquad = npoly
     else:
@@ -587,7 +587,7 @@ def quadrature(system, n, quick=False, days=3, dtype='float64', internal='float1
 
 def embedding_operator(kind, system, n, dtype='float64', internal='float128', **recurrence_kwargs):
     """
-    Compute alpha embedding operator
+    Compute an embedding operator
 
     Parameters
     ----------
@@ -643,7 +643,7 @@ def embedding_operator(kind, system, n, dtype='float64', internal='float128', **
 
 def embedding_operator_adjoint(kind, system, n, dtype='float64', internal='float128', **recurrence_kwargs):
     """
-    Compute alpha embedding operator adjoint
+    Compute an embedding operator adjoint
 
     Parameters
     ----------
@@ -775,7 +775,7 @@ def differential_operator(kind, system, n, dtype='float64', internal='float128',
 
 def differential_operator_adjoint(kind, system, n, dtype='float64', internal='float128', **recurrence_kwargs):
     """
-    Compute alpha adjoint differential operator
+    Compute an adjoint differential operator
 
     Parameters
     ----------
@@ -929,7 +929,7 @@ class AugmentedJacobiOperator():
     The Left action is a z-differential operator.
     The Right action is a matrix with n+dn rows and n columns.
 
-    The Right action is encoded with alpha "infinite_csr" sparse matrix object.
+    The Right action is encoded with an "infinite_csr" sparse matrix object.
     The parameter increments are encoded with a AugmentedJacobiCodomain object.
 
      L(a,b,c,z,d/dz)  ..................................  dn, da, db, dc
@@ -978,7 +978,7 @@ class AugmentedJacobiOperator():
     -------
     __call__(p): p=-1,1
         returns Operator object depending on p.
-        Operator.function is alpha infinite_csr matrix constructor for n,a,b,c.
+        Operator.function is an infinite_csr matrix constructor for n,a,b,c.
         Operator.codomain is a AugmentedJacobiCodomain object.
 
     staticmethods

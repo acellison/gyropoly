@@ -422,8 +422,6 @@ def test_operators():
     assert np.shape(Op) == (n+dmax,n)
 
 
-
-
 def main():
     test_mass()
     test_recurrence()
