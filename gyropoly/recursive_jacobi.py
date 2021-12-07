@@ -681,7 +681,7 @@ def differential_operator(kind, n, rho, a, b, c, dtype='float64', internal='floa
 
     Z = jacobi.operator('Z', dtype=internal)(*op.codomain(n, a, b))
     mass = jacobi.mass(*op.codomain(n, a, b)[1:])
-    f = clenshaw_summation(op(n, a, b) @ projPJ, Z, z, mass, dtype=internal)
+    f = clenshaw_summation(op(n, a, b) @ projPJ, Z, mass, z, dtype=internal)
 
     bands = np.zeros((len(offsets), n), dtype=dtype)
     for i,k in enumerate(offsets):
@@ -764,7 +764,7 @@ def differential_operator_adjoint(kind, n, rho, a, b, c, dtype='float64', intern
     def evaluate_on_grid(op):
         Z = jacobi.operator('Z', dtype=internal)(*op.codomain(n, a, b))
         mass = jacobi.mass(*op.codomain(n, a, b)[1:])
-        return clenshaw_summation(op(n, a, b) @ projPJ, Z, z, mass, dtype=internal)
+        return clenshaw_summation(op(n, a, b) @ projPJ, Z, mass, z, dtype=internal)
 
     f1, f2 = [evaluate_on_grid(op) for op in [op1, op2]]
     z = z[np.newaxis,:]

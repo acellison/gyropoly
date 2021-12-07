@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.sparse import diags
 from scipy.sparse import dia_matrix as banded
-from scipy.linalg import eigh_tridiagonal
+from scipy.linalg import eigvalsh_tridiagonal
 
 
 def quadrature_iteration(fun, nquad, max_iters, label='', verbose=False, tol=1e-14, nquad_ratio=1.25):
@@ -166,7 +166,7 @@ def chebyshev(base_operator, base_quadrature, base_polynomials, augmented_weight
         return beta, (dmu, alpha)
 
     beta, (dmu, alpha) = quadrature_iteration(fun, nquad, max_iters, label='Chebyshev', **quadrature_kwargs)
-        
+
     # The algorithm computes the monic recurrence coefficients.  Orthonormalize.
     mass = np.sum(dmu).astype(dtype)
     beta = np.sqrt(beta[1:])
@@ -174,37 +174,11 @@ def chebyshev(base_operator, base_quadrature, base_polynomials, augmented_weight
     return (Z, mass) if return_mass else Z
 
 
-def quadrature(Z, mass, dtype='float64'):
-    """
-    Compute the generalized Jacobi quadrature nodes and weights from the
-    three-term recurrence coefficients.
-
-    The quadrature rule integrates polynomials up to get 2*n-1 exactly
-    with the weighted integral I[f] = integrate( w(t) f(t) dt, t, -1, 1 )
-
-    Parameters
-    ----------
-    Z : sparse matrix
-        Jacobi operator with three-term recurrence coefficients
-    mass : float
-        Floating point integral of weight function
-    dtype : data-type, optional
-        Desired data-type for the output
-
-    Returns
-    -------
-    (nodes, weights) : tuple of np.ndarray
-        Quadrature nodes and weights for integration under the generalize Jacobi weight
-
-    """
-    Z = Z.astype('float64')  # eigh requires double precision
-    zj, vj = eigh_tridiagonal(Z.diagonal(0), Z.diagonal(1))
-    wj = mass*np.asarray(vj[0,:]).squeeze()**2
-    indices = np.argsort(zj)
-    return zj[indices].astype(dtype), wj[indices].astype(dtype)
+def _truncate(mat, shape):
+    return banded((mat.data, mat.offsets), shape=shape)
 
 
-def polynomials(Z, mass, z, init=None, dtype='float64', internal='float128'):
+def polynomials(Z, mass, z, n=None, init=None, dtype='float64', internal='float128'):
     """
     Generalized Jacobi polynomials, P(n,rho,a,b,c,z), of type (rho,a,b,c) up to degree n-1.
     These polynomials are orthogonal on the interval (-1,1) with weight function
@@ -231,6 +205,9 @@ def polynomials(Z, mass, z, init=None, dtype='float64', internal='float128'):
     the degree k polynomial is accessed via P[k-1]
 
     """
+    if n is not None:
+        Z = _truncate(Z, shape=(n+1,n))
+
     n = np.shape(Z)[1]
     if init is None:
         init = 1 + 0*z
@@ -257,7 +234,68 @@ def polynomials(Z, mass, z, init=None, dtype='float64', internal='float128'):
     return P.astype(dtype)
 
 
-def clenshaw_summation(f, Z, z, mass, dtype='float64', internal='float128'):
+def quadrature_nodes(Z, mass, n=None, dtype='float64'):
+    """
+    Compute the generalized Jacobi quadrature nodes from the
+    three-term recurrence coefficients.
+
+    The quadrature rule integrates polynomials up to get 2*n-1 exactly
+    with the weighted integral I[f] = integrate( w(t) f(t) dt, t, -1, 1 )
+
+    Parameters
+    ----------
+    Z : sparse matrix
+        Jacobi operator with three-term recurrence coefficients
+    mass : float
+        Floating point integral of weight function
+    dtype : data-type, optional
+        Desired data-type for the output
+
+    Returns
+    -------
+    (nodes, weights) : tuple of np.ndarray
+        Quadrature nodes and weights for integration under the generalize Jacobi weight
+
+    """
+    if n is not None:
+        Z = _truncate(Z, shape=(n+1,n))
+
+    Z = Z.astype('float64')  # eigvalsh requires double precision
+    zj = eigvalsh_tridiagonal(Z.diagonal(0), Z.diagonal(1))
+    indices = np.argsort(zj)
+    return zj[indices].astype(dtype)
+
+
+def quadrature(Z, mass, n=None, dtype='float64'):
+    """
+    Compute the generalized Jacobi quadrature nodes and weights from the
+    three-term recurrence coefficients.
+
+    The quadrature rule integrates polynomials up to get 2*n-1 exactly
+    with the weighted integral I[f] = integrate( w(t) f(t) dt, t, -1, 1 )
+
+    Parameters
+    ----------
+    Z : sparse matrix
+        Jacobi operator with three-term recurrence coefficients
+    mass : float
+        Floating point integral of weight function
+    dtype : data-type, optional
+        Desired data-type for the output
+
+    Returns
+    -------
+    (nodes, weights) : tuple of np.ndarray
+        Quadrature nodes and weights for integration under the generalize Jacobi weight
+
+    """
+    z = quadrature_nodes(Z, mass, n=n, dtype=dtype)
+    P = polynomials(Z, mass, z, dtype=dtype)
+    w = P[0]**2/np.sum(P**2,axis=0) * mass
+    return z.astype(dtype), w.astype(dtype)
+
+
+def clenshaw_summation(f, Z, mass, z, dtype='float64', internal='float128'):
     """
     Clenshaw summation algorithm to sum a finite polynomial series.
     The algorithm uses the three-term recurrence coefficients to
@@ -271,10 +309,10 @@ def clenshaw_summation(f, Z, z, mass, dtype='float64', internal='float128'):
         is intepreted as the coefficients for a separate expansion
     Z : array_like
         Three-term recurrence coefficients for the polynomial series
-    z : float or array_like
-        Locations to evaluate the polynomial series
     mass : float
         Integral of the weight function to normalize the recurrence
+    z : float or array_like
+        Locations to evaluate the polynomial series
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
