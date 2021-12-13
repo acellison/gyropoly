@@ -4,7 +4,8 @@ from dedalus_sphere import jacobi
 from scipy.sparse import diags
 from scipy.sparse import dia_matrix as banded
 
-from dedalus_sphere.operators import Operator, Codomain, infinite_csr
+import dedalus_sphere.operators as de_operators
+from dedalus_sphere.operators import infinite_csr
 from . import tools
 
 __all__ = ['AugmentedJacobi', 'AugmentedJacobiOperator', 'operator', 'operators']
@@ -109,6 +110,7 @@ class AugmentedJacobi():
         n = np.shape(coeffs)[0]
         Z, mass = self.recurrence(n, dtype=internal, internal=internal, return_mass=True, **kwargs)
         return tools.clenshaw_summation(coeffs, Z, mass, z, dtype=dtype, internal=internal)
+
 
 class PolynomialProduct():
     def __init__(self, factors, powers=None):
@@ -629,8 +631,6 @@ def embedding_operator(kind, system, n, dtype='float64', internal='float128', **
             offsets = offsets[::2]
     else:
         raise ValueError(f'Invalid kind: {kind}')
-    if parity:
-        offsets = offsets[::2]
 
     cosystem = system.apply_arrow(da, db, dc)
 
@@ -639,6 +639,26 @@ def embedding_operator(kind, system, n, dtype='float64', internal='float128', **
 
     bands = project(cosystem, n, m, fun, offsets, dtype=internal, use_jacobi_quadrature=use_jacobi_quadrature, **recurrence_kwargs)
     return diags(bands, offsets, shape=(n,n), dtype=dtype)
+
+
+def rhoprime_multiplication(system, n, dtype='float64', internal='float128', **recurrence_kwargs):
+    parity = system.has_even_parity
+    use_jacobi_quadrature = recurrence_kwargs.pop('use_jacobi_quadrature', False)
+
+    da, db, m = 1, 1, system.unweighted_degree-1
+    dc = np.zeros(system.num_augmented_factors, dtype=int)
+
+    offsets = np.arange(-m,m+3)
+    if parity:
+        offsets = offsets[::2]
+
+    cosystem = system.apply_arrow(da, db, dc)
+
+    def fun(z):
+        return system.rhoprime(z) * system.polynomials(n, z, dtype=internal, **recurrence_kwargs)
+
+    bands = project(cosystem, n, m, fun, offsets, dtype=internal, use_jacobi_quadrature=use_jacobi_quadrature, **recurrence_kwargs)
+    return diags(bands, offsets, shape=(n+m,n), dtype=dtype)
 
 
 def embedding_operator_adjoint(kind, system, n, dtype='float64', internal='float128', **recurrence_kwargs):
@@ -733,8 +753,6 @@ def differential_operator(kind, system, n, dtype='float64', internal='float128',
         da, db, m = +1, +1, -1
         op = jacobi.operator('D', dtype=internal)(+1)
         offsets = np.arange(1, min(n,2+degree))
-        if parity:
-            offsets = offsets[0::2]
     elif kind == 'E':
         da, db, m = -1, +1, 0
         op = jacobi.operator('C', dtype=internal)(-1)
@@ -747,10 +765,10 @@ def differential_operator(kind, system, n, dtype='float64', internal='float128',
         da, db, m = -1, -1, 1
         op = jacobi.operator('D', dtype=internal)(-1)
         offsets = np.arange(-1, min(n,degree))
-        if parity:
-            offsets = offsets[0::2]
     else:
         raise ValueError(f'Invalid kind: {kind}')
+    if parity and kind in ['D', 'G']:
+        offsets = offsets[0::2]
 
     cosystem = system.apply_arrow(da, db, dc)
     a, b = system.a, system.b
@@ -824,7 +842,7 @@ def differential_operator_adjoint(kind, system, n, dtype='float64', internal='fl
         offsets = -np.arange(-1,m+1)
     else:
         raise ValueError(f'Invalid kind: {kind}')
-    if parity:
+    if parity and kind in ['D', 'G']:
         offsets = offsets[0::2]
 
     cosystem = system.apply_arrow(da, db, dc)
@@ -876,10 +894,11 @@ def operator(name, factors, dtype='float64', internal='float128', **recurrence_k
     AugmentedJacobiOperator with weight function rho
 
     """
+    nc = len(factors)
     if name == 'Id':
-        return AugmentedJacobiOperator.identity(factors, dtype=dtype)
+        return AugmentedJacobiOperator.identity(nc, dtype=dtype)
     if name == 'N':
-        return AugmentedJacobiOperator.number(factors, dtype=dtype)
+        return AugmentedJacobiOperator.number(nc, dtype=dtype)
     if name == 'Z':
         return AugmentedJacobiOperator.recurrence(factors, dtype=dtype, internal=internal)
     if len(factors) == 1 and name == 'C':
@@ -912,6 +931,17 @@ def operators(factors, dtype='float64', internal='float128', **recurrence_kwargs
     def dispatch(name):
         return operator(name, factors, dtype=dtype, internal=internal, **recurrence_kwargs)
     return dispatch
+
+
+class Operator(de_operators.Operator):
+    def __init__(self, function, codomain, Output=None):
+        if Output is None: Output = Operator
+        super().__init__(function, codomain, Output=Output)
+
+    @property
+    def identity(self):
+        nc = len(self.codomain[3])
+        return AugmentedJacobiOperator.identity(nc)
 
 
 class AugmentedJacobiOperator():
@@ -1055,18 +1085,16 @@ class AugmentedJacobiOperator():
         return op, AugmentedJacobiCodomain(dn,-p,-p,(p,)*nc)
 
     @staticmethod
-    def identity(factors, dtype='float64'):
+    def identity(nc, dtype='float64'):
         def I(n,a,b,c):
             N = np.ones(n,dtype=dtype)
             return infinite_csr(banded((N,[0]),(max(n,0),max(n,0))))
-        nc = len(factors)
         return Operator(I,AugmentedJacobiCodomain(0,0,0,(0,)*nc))
 
     @staticmethod
-    def number(factors, dtype='float64'):
+    def number(nc, dtype='float64'):
         def N(n,a,b,c):
             return infinite_csr(banded((np.arange(n,dtype=dtype),[0]),(max(n,0),max(n,0))))
-        nc = len(factors)
         return Operator(N,AugmentedJacobiCodomain(0,0,0,(0,)*nc))
 
     @staticmethod
@@ -1097,11 +1125,11 @@ class AugmentedJacobiOperator():
         return infinite_csr(op)
 
 
-class AugmentedJacobiCodomain(Codomain):
+class AugmentedJacobiCodomain(de_operators.Codomain):
     def __init__(self,dn=0,da=0,db=0,dc=0,Output=None):
         if Output is None: Output = AugmentedJacobiCodomain
         dc = tuple(dc)
-        Codomain.__init__(self,*(dn,da,db,dc),Output=Output)
+        super().__init__(*(dn,da,db,dc),Output=Output)
 
     def __str__(self):
         s = f'(n->n+{self[0]},a->a+{self[1]},b->b+{self[2]},c->c+{self[3]})'

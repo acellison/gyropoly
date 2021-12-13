@@ -68,7 +68,7 @@ def test_mass():
     mass = system.mass()
     target = 152/105
     assert abs(mass-target) < 1e-15
-    
+
     # Test 3
     a, b = 0.5, 0.5
     rho, c = [1,0,0,0,1], 0.5
@@ -137,12 +137,13 @@ def test_embedding_operators():
     print('test_embedding_operators')
     dtype = 'float64'
     z = np.linspace(-1,1,1000, dtype=dtype)
+    n = 4
 
     kwargs = {'use_jacobi_quadrature': True}
     embed = lambda kind, system, n: ajacobi.embedding_operator(kind, system, n, dtype=dtype, **kwargs)
     embed_adjoint = lambda kind, system, n: ajacobi.embedding_operator_adjoint(kind, system, n, dtype=dtype, **kwargs)
 
-    def check_grid(system, P, op, dn, da, db, dc, f, tol):
+    def check_grid(system, P, op, dn, da, db, dc, f, tol, verbose=False):
         cosystem = system.apply_arrow(da, db, dc)
         Q = cosystem.polynomials(n+dn, z, dtype=dtype)
         grid2 = (P * f).T
@@ -150,45 +151,78 @@ def test_embedding_operators():
         error = np.max(abs(grid1-grid2))
         if error >= tol:
             print(f'Error {error} exceeds tolerance {tol}')
-        assert error < tol
+        if verbose:
+            print(f'Error = {error}')
+        else:
+            assert error < tol
 
-    # Test 1
-    n, a, b, rho, c = 4, 1, 1, [1,0,0,3], 2
-    d = len(rho)-1
-    system = make_system(a,b,[(rho,c)])
-    P = system.polynomials(n, z, dtype=dtype)
-    kinds = ['A', 'B', ('C',0)]
+    def run_tests(a, b, rhoc, tols, verbose=False):
+        system = make_system(a,b,rhoc)
+        degrees = [len(rc[0])-1 for rc in rhoc]
+        nc = len(rhoc)
+        kinds = ['A', 'B'] + list(zip(('C',)*nc, range(nc)))
+        P = system.polynomials(n, z, dtype=dtype)
 
-    A, B, C = [embed(kind, system, n) for kind in kinds]
-    check_grid(system, P, A, 0, 1, 0, [0], 1., 5e-16)
-    check_grid(system, P, B, 0, 0, 1, [0], 1., 7e-16)
-    check_grid(system, P, C, 0, 0, 0, [1], 1., 5e-16)
+        ops = [embed(kind, system, n) for kind in kinds]
+        A, B = ops[:2]
+        C = ops[2:]
+        check_grid(system, P, A, 0, 1, 0, (0,)*nc, 1., tols['A+'], verbose=verbose)
+        check_grid(system, P, B, 0, 0, 1, (0,)*nc, 1., tols['B+'], verbose=verbose)
+        for index in range(nc):
+            dc = np.zeros(nc, dtype=int)
+            dc[index] = 1
+            check_grid(system, P, C[index], 0, 0, 0, dc, 1., tols['C+'][index], verbose=verbose)
 
-    A, B, C = [embed_adjoint(kind, system, n) for kind in kinds]
-    check_grid(system, P, A, 1, -1, 0, [0], 1-z, 9e-16)
-    check_grid(system, P, B, 1, 0, -1, [0], 1+z, 9e-16)
-    check_grid(system, P, C, d, 0, 0, [-1], np.polyval(rho,z), 2e-15)
-    
+        ops = [embed_adjoint(kind, system, n) for kind in kinds]
+        A, B = ops[:2]
+        C = ops[2:]
+        check_grid(system, P, A, 1, -1, 0, (0,)*nc, 1-z, tols['A-'], verbose=verbose)
+        check_grid(system, P, B, 1, 0, -1, (0,)*nc, 1+z, tols['B-'], verbose=verbose)
+        for index in range(nc):
+            dc = np.zeros(nc, dtype=int)
+            dc[index] = -1
+            check_grid(system, P, C[index], degrees[index], 0, 0, dc, np.polyval(rhoc[index][0],z), tols['C-'][index], verbose=verbose)
+
+    # Test 1: Parity
+    a, b, rho, c = 1, 1, [1,0,1], 2
+    run_tests(a, b, [(rho,c)], {'A+': 8.9e-16, 'B+': 1.4e-15, 'C+': [8.9e-16],
+                                'A-': 8.9e-16, 'B-': 1.8e-15, 'C-': [1.8e-15]})
+
     # Test 2
-    n, a, b = 4, 0.5, 0.5
+    a, b, rho, c = 1, 1, [1,0,0,3], 2
+    run_tests(a, b, [(rho,c)], {'A+': 5e-16, 'B+': 7e-16, 'C+': [5e-16],
+                                'A-': 9e-16, 'B-': 9e-16, 'C-': [2e-15]})
+
+    # Test 3
+    a, b = 0.5, 0.5
     rho1, c1 =   [1,0,1], 1
     rho2, c2 = [1,0,0,3], 2
-    d1, d2 = [len(r)-1 for r in [rho1,rho2]]
-    system = make_system(a,b,[(rho1,c1),(rho2,c2)])
-    P = system.polynomials(n, z, dtype=dtype)
-    kinds = ['A', 'B', ('C',0), ('C',1)]
+    run_tests(a, b, [(rho1,c1),(rho2,c2)], {'A+': 3e-16, 'B+': 5e-16, 'C+': [3e-16,5e-16],
+                                            'A-': 5e-16, 'B-': 3e-16, 'C-': [5e-16,2e-15]})
 
-    A, B, C1, C2 = [embed(kind, system, n) for kind in kinds]
-    check_grid(system, P, A,  0, 1, 0, [0,0], 1., 3e-16)
-    check_grid(system, P, B,  0, 0, 1, [0,0], 1., 5e-16)
-    check_grid(system, P, C1, 0, 0, 0, [1,0], 1., 3e-16)
-    check_grid(system, P, C2, 0, 0, 0, [0,1], 1., 5e-16)
 
-    A, B, C1, C2 = [embed_adjoint(kind, system, n) for kind in kinds]
-    check_grid(system, P, A,  1,  -1, 0, [0,0], 1-z, 5e-16)
-    check_grid(system, P, B,  1,  0, -1, [0,0], 1+z, 3e-16)
-    check_grid(system, P, C1, d1, 0, 0, [-1,0], np.polyval(rho1,z), 5e-16)
-    check_grid(system, P, C2, d2, 0, 0, [0,-1], np.polyval(rho2,z), 2e-15)
+def test_rhoprime_multiplication():
+    print('test_rhoprime_multiplication')
+    n, a, b = 10, 1, 1
+    rho, c = [1/2,0,1], 3
+    Z, A, B = [ajacobi.operator(kind, [rho]) for kind in ['Z', 'A', 'B']]
+
+    system = make_system(a,b,[(rho,c)])
+    op1 = ajacobi.rhoprime_multiplication(system, n)
+    op2 = c*(Z @ A(+1) @ B(+1))(n, a, b, (c,))
+    assert np.max(abs(op2-op1)) < 9.5e-16
+
+    # Test 3
+    a, b = 0.5, 0.5
+    rho1, c1 = [2,3], 1
+    rho2, c2 = [1/2,0,3], 2
+    nc = 2
+    system = make_system(a, b, [(rho1,c1),(rho2,c2)])
+    Z, A, B = [ajacobi.operator(kind, (rho1,rho2)) for kind in ['Z', 'A', 'B']]
+
+    op1 = ajacobi.rhoprime_multiplication(system, n)
+    op2 = ((c1*2*(1/2*Z@Z+3) + c2*(2*Z+3)@Z) @ A(+1) @ B(+1))(n, a, b, (c1,c2))
+    assert np.max(abs(op2-op1)) < 2.7e-15
 
 
 def test_differential_operators():
@@ -206,7 +240,7 @@ def test_differential_operators():
         Gf = lambda z: ((1+z)*a - (1-z)*b)*f(z) - (1-z**2)*fprime(z)
         return f, Df, Ef, Ff, Gf
 
-    def check_grid(system, op, dn, da, db, dc, fin, fout, tol):
+    def check_grid(system, op, dn, da, db, dc, fin, fout, tol, verbose=False):
         z, w = system.quadrature(n, dtype=dtype)
         P = system.polynomials(n, z, dtype=dtype)
         finz = fin(z)
@@ -218,6 +252,8 @@ def test_differential_operators():
         foutz = fout(zz)
         error = np.max(abs(fcoeff-foutz))
 
+        if verbose:
+            print(f'Error = {error}')
         if error >= tol:
             print(f'Error {error} exceeds tolerance {tol}')
         assert error < tol
@@ -225,46 +261,38 @@ def test_differential_operators():
     kwargs = {'use_jacobi_quadrature': False}
     diff = lambda kind, system, n: ajacobi.differential_operator(kind, system, n, dtype=dtype, **kwargs)
 
-    # Test 1
-    a, b, rho, c = 1, 1, [1,0,0,3], 2
-    system = make_system(a,b,[(rho,c)])
-    kinds = ['D', 'E', 'F', 'G']
+    def run_tests(a, b, rhoc, tols, verbose=False):
+        system = make_system(a,b,rhoc)
+        kinds = ['D', 'E', 'F', 'G']
+        nc = len(rhoc)
 
-    D, E, F, G = [diff(kind, system, n) for kind in kinds]
+        D, E, F, G = [diff(kind, system, n) for kind in kinds]
 
-    f, Df, Ef, Ff, Gf = make_functions(a, b)
-    check_grid(system, D, -1, +1, +1, [+1], f, Df, 1.2e-15)
-    check_grid(system, E,  0, -1, +1, [+1], f, Ef, 3.5e-15)
-    check_grid(system, F,  0, +1, -1, [+1], f, Ff, 1.7e-15)
-    check_grid(system, G, +1, -1, -1, [+1], f, Gf, 1.2e-15)
+        f, Df, Ef, Ff, Gf = make_functions(a, b)
+        check_grid(system, D, -1, +1, +1, (+1,)*nc, f, Df, tols['D'], verbose=verbose)
+        check_grid(system, E,  0, -1, +1, (+1,)*nc, f, Ef, tols['E'], verbose=verbose)
+        check_grid(system, F,  0, +1, -1, (+1,)*nc, f, Ff, tols['F'], verbose=verbose)
+        check_grid(system, G, +1, -1, -1, (+1,)*nc, f, Gf, tols['G'], verbose=verbose)
+
+    # Test 1: Parity
+    a, b, rho, c = 1, 1, [1,0,1], 2
+    run_tests(a, b, [(rho,c)], {'D': 7.9e-16, 'E': 8.4e-16, 'F': 3.3e-15, 'G': 9.1e-16})
 
     # Test 2
+    a, b, rho, c = 1, 1, [1,0,0,3], 2
+    run_tests(a, b, [(rho,c)], {'D': 1.2e-15, 'E': 3.5e-15, 'F': 1.7e-15, 'G': 1.2e-15})
+
+    # Test 3
     a, b = 0.5, 0.5
     rho1, c1 =   [1,0,1], 1
     rho2, c2 = [1,0,0,3], 2
-    system = make_system(a,b,[(rho1,c1),(rho2,c2)])
+    run_tests(a, b, [(rho1,c1),(rho2,c2)], {'D': 1.2e-15, 'E': 2.1e-15, 'F': 1.7e-15, 'G': 1.9e-15})
 
-    D, E, F, G = [diff(kind, system, n) for kind in kinds]
-
-    f, Df, Ef, Ff, Gf = make_functions(a, b)
-    check_grid(system, D, -1, +1, +1, [+1,+1], f, Df, 1.2e-15)
-    check_grid(system, E,  0, -1, +1, [+1,+1], f, Ef, 2.1e-15)
-    check_grid(system, F,  0, +1, -1, [+1,+1], f, Ff, 1.7e-15)
-    check_grid(system, G, +1, -1, -1, [+1,+1], f, Gf, 1.9e-15)
-
-    # Test 2
+    # Test 4
     a, b = 2, 0.5
     rho1, rho2, rho3 = [1,2], [1,3], [1,4]
     c1, c2, c3 = 1,2,3
-    system = make_system(a,b,[(rho1,c1),(rho2,c2),(rho3,c3)])
-
-    D, E, F, G = [diff(kind, system, n) for kind in kinds]
-
-    f, Df, Ef, Ff, Gf = make_functions(a, b)
-    check_grid(system, D, -1, +1, +1, [+1,+1,+1], f, Df, 4.3e-14)
-    check_grid(system, E,  0, -1, +1, [+1,+1,+1], f, Ef, 3.2e-14)
-    check_grid(system, F,  0, +1, -1, [+1,+1,+1], f, Ff, 8.9e-14)
-    check_grid(system, G, +1, -1, -1, [+1,+1,+1], f, Gf, 2.2e-14)
+    run_tests(a, b, [(rho1,c1),(rho2,c2),(rho3,c3)], {'D': 4.3e-14, 'E': 3.2e-14, 'F': 8.9e-14, 'G': 2.2e-14})
 
 
 def test_differential_operator_adjoints():
@@ -288,7 +316,7 @@ def test_differential_operator_adjoints():
         Gf = lambda z: rho(z)*df(z) + rhoprime(z)*f(z)
         return f, Df, Ef, Ff, Gf
 
-    def check_grid(system, op, dn, da, db, dc, fin, fout, tol):
+    def check_grid(system, op, dn, da, db, dc, fin, fout, tol, verbose=False):
         n = np.shape(op)[1]
         z, w = system.quadrature(n, dtype=dtype)
         finz = fin(z)
@@ -303,55 +331,47 @@ def test_differential_operator_adjoints():
 
         if error >= tol:
             print(f'Error {error} exceeds tolerance {tol}')
-        assert error < tol
+        if verbose:
+            print(f'Error = {error}')
+        else:
+            assert error < tol
 
     kwargs = {'use_jacobi_quadrature': False}
     diff = lambda kind, system, n: ajacobi.differential_operator_adjoint(kind, system, n, dtype=dtype, **kwargs)
-    kinds = ['D', 'E', 'F', 'G']
 
-    # Test 1
-    a, b, rho, c = 1, 1, [1,0,0,3], 2
-    system = make_system(a,b,[(rho,c)])
-    d = system.unweighted_degree
+    def run_tests(a, b, rhoc, tols, verbose=False):
+        system = make_system(a,b,rhoc)
+        d = system.unweighted_degree
+        kinds = ['D', 'E', 'F', 'G']
+        nc = len(rhoc)
 
-    D, E, F, G = [diff(kind, system, n) for kind in kinds]
+        D, E, F, G = [diff(kind, system, n) for kind in kinds]
 
-    f, Df, Ef, Ff, Gf = make_functions(a, b, [(rho,c)])
-    check_grid(system, D, d+1, -1, -1, [-1], f, Df, 2.4e-15)
-    check_grid(system, E, d  , +1, -1, [-1], f, Ef, 8.5e-15)
-    check_grid(system, F, d  , -1, +1, [-1], f, Ff, 5.1e-15)
-    check_grid(system, G, d-1, +1, +1, [-1], f, Gf, 2.2e-15)
+        f, Df, Ef, Ff, Gf = make_functions(a, b, rhoc)
+        check_grid(system, D, d+1, -1, -1, (-1,)*nc, f, Df, tols['D'], verbose=verbose)
+        check_grid(system, E, d  , +1, -1, (-1,)*nc, f, Ef, tols['E'], verbose=verbose)
+        check_grid(system, F, d  , -1, +1, (-1,)*nc, f, Ff, tols['F'], verbose=verbose)
+        check_grid(system, G, d-1, +1, +1, (-1,)*nc, f, Gf, tols['G'], verbose=verbose)
+
+    # Test 1: Parity
+    a, b, rho, c = 1, 1, [1,0,1], 2
+    run_tests(a, b, [(rho,c)], {'D': 3.7e-15, 'E': 1.8e-14, 'F': 3.3e-15, 'G': 4.9e-15})
 
     # Test 2
+    a, b, rho, c = 1, 1, [1,0,0,3], 2
+    run_tests(a, b, [(rho,c)], {'D': 2.4e-15, 'E': 8.5e-15, 'F': 5.1e-15, 'G': 2.2e-15})
+
+    # Test 3
     a, b = 0.5, 0.5
     rho1, c1 =   [1,0,1], 1
     rho2, c2 = [1,0,0,3], 2
-    d1, d2 = [len(r)-1 for r in [rho1,rho2]]
-    system = make_system(a,b,[(rho1,c1),(rho2,c2)])
-    d = system.unweighted_degree
+    run_tests(a, b, [(rho1,c1),(rho2,c2)], {'D': 3.3e-14, 'E': 4.7e-14, 'F': 1.1e-14, 'G': 1.5e-14})
 
-    D, E, F, G = [diff(kind, system, n) for kind in kinds]
-
-    f, Df, Ef, Ff, Gf = make_functions(a, b, [(rho1,c1),(rho2,c2)])
-    check_grid(system, D, d+1, -1, -1, [-1,-1], f, Df, 3.3e-14)
-    check_grid(system, E, d  , +1, -1, [-1,-1], f, Ef, 4.7e-14)
-    check_grid(system, F, d  , -1, +1, [-1,-1], f, Ff, 1.1e-14)
-    check_grid(system, G, d-1, +1, +1, [-1,-1], f, Gf, 1.5e-14)
-
-    # Test 2
+    # Test 4
     a, b = 0.5, 0.5
     rho1, rho2, rho3 = [1,2], [1,3], [1,4]
     c1, c2, c3 = 1,2,3
-    system = make_system(a,b,[(rho1,c1),(rho2,c2),(rho3,c3)])
-    d = system.unweighted_degree
-
-    D, E, F, G = [diff(kind, system, n) for kind in kinds]
-
-    f, Df, Ef, Ff, Gf = make_functions(a, b, [(rho1,c1),(rho2,c2),(rho3,c3)])
-    check_grid(system, D, d+1, -1, -1, [-1,-1,-1], f, Df, 1.6e-13)
-    check_grid(system, E, d  , +1, -1, [-1,-1,-1], f, Ef, 2.8e-13)
-    check_grid(system, F, d  , -1, +1, [-1,-1,-1], f, Ff, 2.2e-13)
-    check_grid(system, G, d-1, +1, +1, [-1,-1,-1], f, Gf, 1.4e-13)
+    run_tests(a, b, [(rho1,c1),(rho2,c2),(rho3,c3)], {'D': 1.6e-13, 'E': 2.8e-13, 'F': 2.2e-13, 'G': 1.4e-13})
 
 
 def test_operators():
@@ -427,6 +447,7 @@ def main():
     test_recurrence()
     test_polynomials()
     test_embedding_operators()
+    test_rhoprime_multiplication()
     test_differential_operators()
     test_differential_operator_adjoints()
     test_operators()
