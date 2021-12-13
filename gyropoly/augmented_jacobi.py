@@ -894,11 +894,10 @@ def operator(name, factors, dtype='float64', internal='float128', **recurrence_k
     AugmentedJacobiOperator with weight function rho
 
     """
-    nc = len(factors)
     if name == 'Id':
-        return AugmentedJacobiOperator.identity(nc, dtype=dtype)
+        return AugmentedJacobiOperator.identity(factors, dtype=dtype)
     if name == 'N':
-        return AugmentedJacobiOperator.number(nc, dtype=dtype)
+        return AugmentedJacobiOperator.number(factors, dtype=dtype)
     if name == 'Z':
         return AugmentedJacobiOperator.recurrence(factors, dtype=dtype, internal=internal)
     if len(factors) == 1 and name == 'C':
@@ -934,14 +933,31 @@ def operators(factors, dtype='float64', internal='float128', **recurrence_kwargs
 
 
 class Operator(de_operators.Operator):
-    def __init__(self, function, codomain, Output=None):
-        if Output is None: Output = Operator
+    def __init__(self, factors, function, codomain):
+        Output = partial(Operator, factors)
         super().__init__(function, codomain, Output=Output)
+        self.factors = factors
 
     @property
     def identity(self):
-        nc = len(self.codomain[3])
-        return AugmentedJacobiOperator.identity(nc)
+        return AugmentedJacobiOperator.identity(self.factors)
+
+    def __matmul__(self, other):
+        self._check_factors(other)
+        return super().__matmul__(other)
+
+    def __add__(self, other):
+        self._check_factors(other)
+        return super().__add__(other)
+
+    def __mul__(self, other):
+        self._check_factors(other)
+        return super().__mul__(other)
+
+    def _check_factors(self, other):
+        if isinstance(other, Operator):
+            if self.factors != other.factors:
+                raise ValueError('Each operator must have identical augmented factors')
 
 
 class AugmentedJacobiOperator():
@@ -1036,7 +1052,7 @@ class AugmentedJacobiOperator():
         self.recurrence_kwargs = recurrence_kwargs
 
     def __call__(self,p):
-        return Operator(*self.__function(p))
+        return Operator(self.factors,*self.__function(p))
 
     def __A(self,p):
         op = partial(self._dispatch, 'A', p)
@@ -1085,17 +1101,19 @@ class AugmentedJacobiOperator():
         return op, AugmentedJacobiCodomain(dn,-p,-p,(p,)*nc)
 
     @staticmethod
-    def identity(nc, dtype='float64'):
+    def identity(factors, dtype='float64'):
         def I(n,a,b,c):
             N = np.ones(n,dtype=dtype)
             return infinite_csr(banded((N,[0]),(max(n,0),max(n,0))))
-        return Operator(I,AugmentedJacobiCodomain(0,0,0,(0,)*nc))
+        nc = len(factors)
+        return Operator(factors,I,AugmentedJacobiCodomain(0,0,0,(0,)*nc))
 
     @staticmethod
-    def number(nc, dtype='float64'):
+    def number(factors, dtype='float64'):
         def N(n,a,b,c):
             return infinite_csr(banded((np.arange(n,dtype=dtype),[0]),(max(n,0),max(n,0))))
-        return Operator(N,AugmentedJacobiCodomain(0,0,0,(0,)*nc))
+        nc = len(factors)
+        return Operator(factors,N,AugmentedJacobiCodomain(0,0,0,(0,)*nc))
 
     @staticmethod
     def recurrence(factors, dtype='float64', internal='float128'):
@@ -1104,7 +1122,7 @@ class AugmentedJacobiOperator():
             op = system.recurrence(n, dtype=dtype, internal=internal)
             return infinite_csr(op) 
         nc = len(factors)
-        return Operator(Z,AugmentedJacobiCodomain(1,0,0,(0,)*nc))
+        return Operator(factors,Z,AugmentedJacobiCodomain(1,0,0,(0,)*nc))
 
     def _dispatch(self,kind,p,n,a,b,c):
         if isinstance(kind, tuple):

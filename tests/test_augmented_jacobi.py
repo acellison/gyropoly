@@ -442,6 +442,32 @@ def test_operators():
     assert np.shape(Op) == (n+dmax,n)
 
 
+def test_mismatching_augmented_weight():
+    print('test_badness')
+    def should_raise(f):
+        try:
+            f()
+            assert False
+        except ValueError:
+            pass
+
+    rho1 = ([1,0,1],)
+    rho2 = ([1,0,2],)
+    A1 = ajacobi.operator('A', rho1)
+    A2 = ajacobi.operator('A', rho2)
+    should_raise(lambda: A1(+1) @ A2(+1))
+    should_raise(lambda: A1(+1) + A2(+1))
+    should_raise(lambda: A1(+1) * A2(+1))
+
+    rho1 = ([1,0,1], [1,4])
+    rho2 = ([1,0,1],)
+    A1 = ajacobi.operator('A', rho1)
+    A2 = ajacobi.operator('A', rho2)
+    should_raise(lambda: A1(+1) @ A2(+1))
+    should_raise(lambda: A1(+1) + A2(+1))
+    should_raise(lambda: A1(+1) * A2(+1))
+
+
 def main():
     test_mass()
     test_recurrence()
@@ -451,8 +477,10 @@ def main():
     test_differential_operators()
     test_differential_operator_adjoints()
     test_operators()
+    test_mismatching_augmented_weight()
     print('ok')
 
 
 if __name__ == '__main__':
     main()
+
