@@ -934,6 +934,7 @@ def operators(factors, dtype='float64', internal='float128', **recurrence_kwargs
 
 class Operator(de_operators.Operator):
     def __init__(self, factors, function, codomain):
+        factors = tuple(factors)
         Output = partial(Operator, factors)
         super().__init__(function, codomain, Output=Output)
         self.factors = factors

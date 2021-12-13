@@ -374,8 +374,8 @@ def test_differential_operator_adjoints():
     run_tests(a, b, [(rho1,c1),(rho2,c2),(rho3,c3)], {'D': 1.6e-13, 'E': 2.8e-13, 'F': 2.2e-13, 'G': 1.4e-13})
 
 
-def test_operators():
-    print('test_operators')
+def test_operator_codomains():
+    print('test_operator_codomains')
     n, a, b = 10, 1, 1
     rho1, c1 =   [1,0,1], 1
     rho2, c2 = [1,0,0,3], 2
@@ -385,7 +385,7 @@ def test_operators():
 
     factors, c = (rho1,rho2), (c1, c2)
     names = ['A', 'B', ('C',0), ('C',1), 'D', 'E', 'F', 'G', 'Id', 'N', 'Z']
-    A, B, C1, C2, D, E, F, G, Id, N, Z = ops = [ajacobi.operator(kind, factors) for kind in names]
+    ops = [ajacobi.operator(kind, factors) for kind in names]
 
     codomains = {'A': {+1: (0,1,0,(0,)*nc),  -1: (1,-1,0,(0,)*nc)},
                  'B': {+1: (0,0,1,(0,)*nc),  -1: (1,0,-1,(0,)*nc)},
@@ -418,6 +418,20 @@ def test_operators():
             pstr = '+' if p == 1 else '-'
             assert np.shape(op(p)(n,a,b,c)) == (op(p).codomain(n,a,b,c)[0],n)
 
+
+def test_operator_composition():
+    print('test_operator_composition')
+    n, a, b = 10, 1, 1
+    rho1, c1 =   [1,0,1], 1
+    rho2, c2 = [1,0,0,3], 2
+    d1, d2 = [len(r)-1 for r in [rho1,rho2]]
+    d, dmax = d1 + d2, max(d1,d2)
+    nc = 2
+
+    factors, c = (rho1,rho2), (c1, c2)
+    names = ['A', 'B', ('C',0), ('C',1), 'D', 'E', 'F', 'G', 'Id', 'N', 'Z']
+    A, B, C1, C2, D, E, F, G, Id, N, Z = [ajacobi.operator(kind, factors) for kind in names]
+
     # Check we can cascade all the embedding operators
     op = A(-1) @ A(+1) @ B(-1) @ B(+1) @ C1(-1) @ C1(+1) @ C2(-1) @ C2(+1)
     Op = op(n,a,b,c)
@@ -443,13 +457,18 @@ def test_operators():
 
 
 def test_mismatching_augmented_weight():
-    print('test_badness')
+    print('test_mismatching_augmented_weight')
     def should_raise(f):
         try:
             f()
             assert False
         except ValueError:
             pass
+    def shouldnt_raise(f):
+        try:
+            f()
+        except ValueError:
+            assert False
 
     rho1 = ([1,0,1],)
     rho2 = ([1,0,2],)
@@ -467,6 +486,14 @@ def test_mismatching_augmented_weight():
     should_raise(lambda: A1(+1) + A2(+1))
     should_raise(lambda: A1(+1) * A2(+1))
 
+    rho1 = ([1,0,1],)
+    rho2 = [[1,0,1]]
+    A1 = ajacobi.operator('A', rho1)
+    A2 = ajacobi.operator('A', rho2)
+    shouldnt_raise(lambda: A1(+1) @ A2(+1))
+    shouldnt_raise(lambda: A1(+1) + A2(+1))
+    shouldnt_raise(lambda: A1(+1) * A2(+1))
+
 
 def main():
     test_mass()
@@ -476,7 +503,8 @@ def main():
     test_rhoprime_multiplication()
     test_differential_operators()
     test_differential_operator_adjoints()
-    test_operators()
+    test_operator_codomains()
+    test_operator_composition()
     test_mismatching_augmented_weight()
     print('ok')
 
