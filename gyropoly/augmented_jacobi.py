@@ -8,10 +8,10 @@ import dedalus_sphere.operators as de_operators
 from dedalus_sphere.operators import infinite_csr
 from . import tools
 
-__all__ = ['AugmentedJacobi', 'AugmentedJacobiOperator', 'operator', 'operators']
+__all__ = ['AugmentedJacobiSystem', 'AugmentedJacobiOperator', 'operator', 'operators']
 
 
-class AugmentedJacobi():
+class AugmentedJacobiSystem():
     dtype, internal = 'float64', 'float128'
 
     def __init__(self, a, b, factor_param_list):
@@ -21,31 +21,31 @@ class AugmentedJacobi():
         self.a, self.b = a, b
 
         factors, params = zip(*factor_param_list)
-        self._augmented_factors, self._augmented_params = factors, params
+        self.__augmented_factors, self.__augmented_params = factors, params
 
         # Augmented parameter index metadata.  The augmented weight is a polynomial if all parameters
         # are non-negative integers.  We have standard Jacobi(a,b) if all parameters are zero.
-        self._is_polynomial = np.all([int(c) == c and c >= 0 for c in self.augmented_params])
-        self._is_unweighted = np.all([c == 0 for c in self.augmented_params])
+        self.__is_polynomial = np.all([int(c) == c and c >= 0 for c in self.augmented_params])
+        self.__is_unweighted = np.all([c == 0 for c in self.augmented_params])
 
         # Augmented weight function is a product of polynomial factors.
         # Compute the total (weighted) degree, the unweighted degree, and check parity.
-        self._polynomial_product = PolynomialProduct(factors, params)
-        self._total_degree = self._polynomial_product.total_degree(weighted=True) if self._is_polynomial else None
-        self._unweighted_degree = self._polynomial_product.total_degree(weighted=False)
-        self._has_even_parity = self.a == self.b and self._polynomial_product.has_even_parity
+        self.__polynomial_product = PolynomialProduct(factors, params)
+        self.__total_degree = self.__polynomial_product.total_degree(weighted=True) if self.is_polynomial else None
+        self.__unweighted_degree = self.__polynomial_product.total_degree(weighted=False)
+        self.__has_even_parity = self.a == self.b and self.__polynomial_product.has_even_parity
 
     @property
     def factors(self):
-        return self._polynomial_product.factors
+        return self.__polynomial_product.factors
 
     @property
     def degrees(self):
-        return self._polynomial_product.degrees
+        return self.__polynomial_product.degrees
 
     @property
     def augmented_params(self):
-        return self._augmented_params
+        return self.__augmented_params
 
     @property
     def params(self):
@@ -57,39 +57,39 @@ class AugmentedJacobi():
 
     @property
     def is_polynomial(self):
-        return self._is_polynomial
+        return self.__is_polynomial
 
     @property
     def total_degree(self):
-        return self._total_degree
+        return self.__total_degree
 
     @property
     def has_even_parity(self):
-        return self._has_even_parity
+        return self.__has_even_parity
 
     @property
     def unweighted_degree(self):
-        return self._unweighted_degree
+        return self.__unweighted_degree
 
     @property
     def is_unweighted(self):
-        return self._is_unweighted
+        return self.__is_unweighted
 
     def apply_arrow(self, da, db, dc):
         if len(dc) != self.num_augmented_factors:
             raise ValueError('Invalid number of parameters')
         a, b = self.a+da, self.b+db
         c = [c+d for c,d in zip(self.augmented_params, dc)]
-        return AugmentedJacobi(a, b, zip(self._augmented_factors, c))
+        return AugmentedJacobiSystem(a, b, zip(self.__augmented_factors, c))
 
     def rho(self, z):
-        return self._polynomial_product.evaluate(z, weighted=False)
+        return self.__polynomial_product.evaluate(z, weighted=False)
 
     def rhoprime(self, z):
-        return self._polynomial_product.derivative(z)
+        return self.__polynomial_product.derivative(z)
 
     def augmented_weight(self, z):
-        return self._polynomial_product.evaluate(z, weighted=True)
+        return self.__polynomial_product.evaluate(z, weighted=True)
 
     def weight(self, z):
         return (1-z)**self.a * (1+z)**self.b * self.augmented_weight(z)
@@ -115,35 +115,35 @@ class AugmentedJacobi():
 class PolynomialProduct():
     def __init__(self, factors, powers=None):
         configs = [_make_poly_config(factor) for factor in factors]
-        self._n = len(configs)
+        self.__n = len(configs)
         if powers is None:
             powers = np.ones(len(configs), dtype=int)
         elif len(powers) != len(factors):
             raise ValueError('powers and factors must be the same length')
-        self._powers = powers
-        self._has_even_parity = np.all([factor['even'] for factor in configs])
-        self._degrees = [factor['degree'] for factor in configs]
-        self._factors = [factor['function'] for factor in configs]
-        self._derivatives = [factor['derivative'] for factor in configs]
+        self.__powers = powers
+        self.__has_even_parity = np.all([factor['even'] for factor in configs])
+        self.__degrees = [factor['degree'] for factor in configs]
+        self.__factors = [factor['function'] for factor in configs]
+        self.__derivatives = [factor['derivative'] for factor in configs]
 
     @property
     def factors(self):
-        return self._factors
+        return self.__factors
 
     @property
     def degrees(self):
-        return self._degrees
+        return self.__degrees
 
     @property
     def powers(self):
-        return self._powers
+        return self.__powers
 
     @property
     def has_even_parity(self):
-        return self._has_even_parity
+        return self.__has_even_parity
 
     def __len__(self):
-        return self._n
+        return self.__n
 
     def evaluate(self, z, weighted=True):
         n = len(self)
@@ -152,7 +152,7 @@ class PolynomialProduct():
 
     def derivative(self, z):
         n, c = len(self), self.powers
-        f, fprime = [[g(z) for g in feval] for feval in [self._factors, self._derivatives]]
+        f, fprime = [[g(z) for g in feval] for feval in [self.__factors, self.__derivatives]]
         products = [np.prod([f[j] for j in range(n) if j != i], axis=0) for i in range(n)]
         return np.sum([c[i]*fprime[i]*products[i] for i in range(n)], axis=0)
 
@@ -937,25 +937,29 @@ class Operator(de_operators.Operator):
         factors = tuple(factors)
         Output = partial(Operator, factors)
         super().__init__(function, codomain, Output=Output)
-        self.factors = factors
+        self.__factors = factors
+
+    @property
+    def factors(self):
+        return self.__factors
 
     @property
     def identity(self):
         return AugmentedJacobiOperator.identity(self.factors)
 
     def __matmul__(self, other):
-        self._check_factors(other)
+        self.__check_factors(other)
         return super().__matmul__(other)
 
     def __add__(self, other):
-        self._check_factors(other)
+        self.__check_factors(other)
         return super().__add__(other)
 
     def __mul__(self, other):
-        self._check_factors(other)
+        self.__check_factors(other)
         return super().__mul__(other)
 
-    def _check_factors(self, other):
+    def __check_factors(self, other):
         if isinstance(other, Operator):
             if self.factors != other.factors:
                 raise ValueError('Each operator must have identical augmented factors')
@@ -963,7 +967,7 @@ class Operator(de_operators.Operator):
 
 class AugmentedJacobiOperator():
     """
-    The base class for primary operators acting on finite row vectors of Generalized Jacobi polynomials.
+    The base class for primary operators acting on finite row vectors of Augmented Jacobi polynomials.
 
     <n,a,b,c,z| = [P(0,a,b,c,z),P(1,a,b,c,z),...,P(n-1,a,b,c,z)]
 
@@ -1044,62 +1048,23 @@ class AugmentedJacobiOperator():
             self.__function = self.__Ci(index)
         else:
             self.__function = getattr(self,f'_AugmentedJacobiOperator__{name}')
-
-        self.factors  = factors
-        self.weight   = PolynomialProduct(factors)
-        self.degree   = self.weight.total_degree(weighted=False)
-        self.dtype    = dtype
-        self.internal = internal
+        self.__factors = factors
+        self.__weight = PolynomialProduct(factors)
+        self.__unweighted_degree = self.weight.total_degree(weighted=False)
+        self.dtype, self.internal = dtype, internal
         self.recurrence_kwargs = recurrence_kwargs
 
-    def __call__(self,p):
-        return Operator(self.factors,*self.__function(p))
+    @property
+    def factors(self):
+        return self.__factors
 
-    def __A(self,p):
-        op = partial(self._dispatch, 'A', p)
-        dn = 1 if p == -1 else 0
-        nc = len(self.weight)
-        return op, AugmentedJacobiCodomain(dn,p,0,(0,)*nc)
+    @property
+    def weight(self):
+        return self.__weight
 
-    def __B(self,p):
-        op = partial(self._dispatch, 'B', p)
-        dn = 1 if p == -1 else 0
-        nc = len(self.weight)
-        return op, AugmentedJacobiCodomain(dn,0,p,(0,)*nc)
-
-    def __Ci(self,i):
-        def __C(p):
-            op = partial(self._dispatch, ('C',i), p)
-            dn = self.weight.degree(i) if p == -1 else 0
-            nc = len(self.weight)
-            dc = np.zeros(nc, dtype=int)
-            dc[i] = p
-            return op, AugmentedJacobiCodomain(dn,0,0,dc)
-        return __C
-
-    def __D(self,p):
-        op = partial(self._dispatch, 'D', p)
-        dn = 1+self.degree if p == -1 else -1
-        nc = len(self.weight)
-        return op, AugmentedJacobiCodomain(dn,p,p,(p,)*nc)
-
-    def __E(self,p):
-        op = partial(self._dispatch, 'E', p)
-        dn = self.degree if p == -1 else 0
-        nc = len(self.weight)
-        return op, AugmentedJacobiCodomain(dn,-p,p,(p,)*nc)
-
-    def __F(self,p):
-        op = partial(self._dispatch, 'F', p)
-        dn = self.degree if p == -1 else 0
-        nc = len(self.weight)
-        return op, AugmentedJacobiCodomain(dn,p,-p,(p,)*nc)
-
-    def __G(self,p):
-        op = partial(self._dispatch, 'G', p)
-        dn = self.degree-1 if p == -1 else 1
-        nc = len(self.weight)
-        return op, AugmentedJacobiCodomain(dn,-p,-p,(p,)*nc)
+    @property
+    def unweighted_degree(self):
+        return self.__unweighted_degree
 
     @staticmethod
     def identity(factors, dtype='float64'):
@@ -1119,13 +1084,62 @@ class AugmentedJacobiOperator():
     @staticmethod
     def recurrence(factors, dtype='float64', internal='float128'):
         def Z(n,a,b,c):
-            system = AugmentedJacobi(a, b, zip(factors,c))
+            system = AugmentedJacobiSystem(a, b, zip(factors,c))
             op = system.recurrence(n, dtype=dtype, internal=internal)
-            return infinite_csr(op) 
+            return infinite_csr(op)
         nc = len(factors)
         return Operator(factors,Z,AugmentedJacobiCodomain(1,0,0,(0,)*nc))
 
-    def _dispatch(self,kind,p,n,a,b,c):
+    def __call__(self,p):
+        return Operator(self.factors,*self.__function(p))
+
+    def __A(self,p):
+        op = partial(self.__dispatch, 'A', p)
+        dn = 1 if p == -1 else 0
+        nc = len(self.weight)
+        return op, AugmentedJacobiCodomain(dn,p,0,(0,)*nc)
+
+    def __B(self,p):
+        op = partial(self.__dispatch, 'B', p)
+        dn = 1 if p == -1 else 0
+        nc = len(self.weight)
+        return op, AugmentedJacobiCodomain(dn,0,p,(0,)*nc)
+
+    def __Ci(self,i):
+        def __C(p):
+            op = partial(self.__dispatch, ('C',i), p)
+            dn = self.weight.degree(i) if p == -1 else 0
+            nc = len(self.weight)
+            dc = np.zeros(nc, dtype=int)
+            dc[i] = p
+            return op, AugmentedJacobiCodomain(dn,0,0,dc)
+        return __C
+
+    def __D(self,p):
+        op = partial(self.__dispatch, 'D', p)
+        dn = 1+self.unweighted_degree if p == -1 else -1
+        nc = len(self.weight)
+        return op, AugmentedJacobiCodomain(dn,p,p,(p,)*nc)
+
+    def __E(self,p):
+        op = partial(self.__dispatch, 'E', p)
+        dn = self.unweighted_degree if p == -1 else 0
+        nc = len(self.weight)
+        return op, AugmentedJacobiCodomain(dn,-p,p,(p,)*nc)
+
+    def __F(self,p):
+        op = partial(self.__dispatch, 'F', p)
+        dn = self.unweighted_degree if p == -1 else 0
+        nc = len(self.weight)
+        return op, AugmentedJacobiCodomain(dn,p,-p,(p,)*nc)
+
+    def __G(self,p):
+        op = partial(self.__dispatch, 'G', p)
+        dn = self.unweighted_degree-1 if p == -1 else 1
+        nc = len(self.weight)
+        return op, AugmentedJacobiCodomain(dn,-p,-p,(p,)*nc)
+
+    def __dispatch(self,kind,p,n,a,b,c):
         if isinstance(kind, tuple):
             if kind[0] == 'C':
                 c_embed = True
@@ -1139,7 +1153,7 @@ class AugmentedJacobiOperator():
             fun = {+1: differential_operator, -1: differential_operator_adjoint}[p]
         else:
             raise ValueError(f'Unknown operator kind: {kind}')
-        system = AugmentedJacobi(a, b, zip(self.factors,c))
+        system = AugmentedJacobiSystem(a, b, zip(self.factors,c))
         op = fun(kind, system, n, dtype=self.dtype, internal=self.internal, **self.recurrence_kwargs)
         return infinite_csr(op)
 

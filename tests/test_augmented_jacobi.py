@@ -5,7 +5,7 @@ import sympy
 from dedalus_sphere import jacobi
 
 from gyropoly import augmented_jacobi as ajacobi
-make_system = ajacobi.AugmentedJacobi
+make_system = ajacobi.AugmentedJacobiSystem
 
 
 def plot_coeff_magnitude(fig, ax, mat, tol):
@@ -20,9 +20,31 @@ def plot_coeff_magnitude(fig, ax, mat, tol):
     fig.colorbar(im, ax=ax)
 
 
+def check_close(a, b, tol, verbose=False):
+    a, b = [np.asarray(m) for m in [a,b]]
+    error = np.max(abs(a-b))
+    if verbose and error > tol:
+        print(f'Error {error} exceeds tolerance {tol}')
+    assert error <= tol
+
+
+def check_raises(f):
+    try:
+        f()
+        assert False
+    except:
+        pass
+
+
+def check_doesnt_raise(f):
+    try:
+        f()
+    except:
+        assert False
+
+
 def test_mass():
-    print('test_mass...')
-    z = sympy.Symbol('z')
+    print('test_mass')
 
     # Test 0: exactly a Jacobi polynomial ( c=0 )
     n, rho, a, b, c = 5, [1,0,1], 1, 1, 0
