@@ -1,6 +1,5 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import sympy
 
 from dedalus_sphere import jacobi
 
@@ -53,21 +52,21 @@ def test_mass():
     assert system.total_degree == 0
     assert system.has_even_parity
     assert system.is_unweighted
-    assert system.mass() == jacobi.mass(a, b)
+    check_close(system.mass(), jacobi.mass(a, b), 0)
 
     Z1 = system.recurrence(n)
     Z2 = jacobi.operator('Z', dtype='float128')(n, a, b).astype('float64')
-    assert np.max(abs(Z1 - Z2)) == 0
+    check_close(Z1, Z2, 0)
 
     z1, w1 = system.quadrature(n)
     z2, w2 = jacobi.quadrature(n, a, b)
-    assert np.max(abs(z1 - z2)) == 0
-    assert np.max(abs(w1 - w2)) == 0
+    check_close(z1, z2, 0)
+    check_close(w1, w2, 0)
 
     z = np.linspace(-1,1,1000)
     P1 = system.polynomials(n, z)
     P2 = jacobi.polynomials(n, a, b, z)
-    assert np.max(abs(P1 - P2)) == 0
+    check_close(P1, P2, 0)
 
     # Test 1
     rho, a, b, c = [1,0,0,3], 1, 1, 1
@@ -78,7 +77,7 @@ def test_mass():
     assert not system.is_unweighted
     mass = system.mass()
     target = 4.0
-    assert abs(mass-target) < 1e-15
+    check_close(mass, target, 1e-15)
  
     # Test 2
     rho, a, b, c = [1,0,0,0,1], 1, 1, 1
@@ -89,7 +88,7 @@ def test_mass():
     assert not system.is_unweighted
     mass = system.mass()
     target = 152/105
-    assert abs(mass-target) < 1e-15
+    check_close(mass, target, 1e-15)
 
     # Test 3
     a, b = 0.5, 0.5
@@ -101,7 +100,7 @@ def test_mass():
     assert not system.is_unweighted
     mass = system.mass(dtype='float128')
     target = 1.6604989151360425
-    assert abs(mass-target) < 1.9e-14
+    check_close(mass, target, 1.9e-14)
 
     # Test 4
     a, b = 0.5, 0.5
@@ -114,7 +113,7 @@ def test_mass():
     assert not system.is_unweighted
     mass = system.mass(dtype='float128')
     target = 17.880080063595035
-    assert abs(mass-target) < 6e-15
+    check_close(mass, target, 6e-15)
 
 
 def test_recurrence():
@@ -123,13 +122,13 @@ def test_recurrence():
     system = make_system(a,b,[(rho,c)])
     ZS = system.recurrence(n, algorithm='stieltjes')
     ZC = system.recurrence(n, algorithm='chebyshev')
-    assert np.max(abs(ZS - ZC)) < 1e-16
+    check_close(ZS, ZC, 1e-16)
 
     n, a, b, rho, c = 10, 1, 1, [1,0,0,3], 0.5
     system = make_system(a,b,[(rho,c)])
     ZS = system.recurrence(n, algorithm='stieltjes')
     ZC = system.recurrence(n, algorithm='chebyshev')
-    assert np.max(abs(ZS - ZC)) < 1e-16
+    check_close(ZS, ZC, 1e-16)
 
     n, a, b = 10, -0.5, -0.5
     rho1, c1 =   [1,0,1], 0.5
@@ -137,7 +136,7 @@ def test_recurrence():
     system = make_system(a,b,[(rho1,c1),(rho2,c2)])
     ZS = system.recurrence(n, algorithm='stieltjes')
     ZC = system.recurrence(n, algorithm='chebyshev')
-    assert np.max(abs(ZS - ZC)) < 5e-14
+    check_close(ZS, ZC, 5e-14)
 
 
 def test_polynomials():
@@ -151,8 +150,9 @@ def test_polynomials():
     # Check mutually orthonormal
     tol = 1e-14
     for i in range(n):
-        assert abs(np.sum(w*P[i]*P[i]) - 1) < tol
-        assert np.all([abs(np.sum(w*P[i]*P[j])) < tol for j in range(i+1,n)])
+        check_close(np.sum(w*P[i]*P[i]), 1, tol)
+        if i < n-1:
+            check_close([np.sum(w*P[i]*P[j]) for j in range(i+1,n)], 0, tol)
 
 
 def test_embedding_operators():
@@ -170,13 +170,7 @@ def test_embedding_operators():
         Q = cosystem.polynomials(n+dn, z, dtype=dtype)
         grid2 = (P * f).T
         grid1 = Q.T @ op
-        error = np.max(abs(grid1-grid2))
-        if error >= tol:
-            print(f'Error {error} exceeds tolerance {tol}')
-        if verbose:
-            print(f'Error = {error}')
-        else:
-            assert error < tol
+        check_close(grid1, grid2, tol, verbose=verbose)
 
     def run_tests(a, b, rhoc, tols, verbose=False):
         system = make_system(a,b,rhoc)
@@ -227,12 +221,12 @@ def test_rhoprime_multiplication():
     print('test_rhoprime_multiplication')
     n, a, b = 10, 1, 1
     rho, c = [1/2,0,1], 3
-    Z, A, B = [ajacobi.operator(kind, [rho]) for kind in ['Z', 'A', 'B']]
+    Z = ajacobi.operator('Z', [rho])
 
     system = make_system(a,b,[(rho,c)])
     op1 = ajacobi.rhoprime_multiplication(system, n)
-    op2 = c*(Z @ A(+1) @ B(+1))(n, a, b, (c,))
-    assert np.max(abs(op2-op1)) < 9.5e-16
+    op2 = c*Z(n, a, b, (c,))
+    check_close(op1, op2, 4.5e-16)
 
     # Test 3
     a, b = 0.5, 0.5
@@ -240,11 +234,11 @@ def test_rhoprime_multiplication():
     rho2, c2 = [1/2,0,3], 2
     nc = 2
     system = make_system(a, b, [(rho1,c1),(rho2,c2)])
-    Z, A, B = [ajacobi.operator(kind, (rho1,rho2)) for kind in ['Z', 'A', 'B']]
+    Z = ajacobi.operator('Z', (rho1,rho2))
 
     op1 = ajacobi.rhoprime_multiplication(system, n)
-    op2 = ((c1*2*(1/2*Z@Z+3) + c2*(2*Z+3)@Z) @ A(+1) @ B(+1))(n, a, b, (c1,c2))
-    assert np.max(abs(op2-op1)) < 2.7e-15
+    op2 = (c1*2*(1/2*Z@Z+3) + c2*(2*Z+3)@Z)(n, a, b, (c1,c2))
+    check_close(op1, op2, 1.8e-15)
 
 
 def test_differential_operators():
@@ -272,13 +266,7 @@ def test_differential_operators():
         cosystem = system.apply_arrow(da,db,dc)
         fcoeff = cosystem.expand(coeffs, zz, dtype=dtype)
         foutz = fout(zz)
-        error = np.max(abs(fcoeff-foutz))
-
-        if verbose:
-            print(f'Error = {error}')
-        if error >= tol:
-            print(f'Error {error} exceeds tolerance {tol}')
-        assert error < tol
+        check_close(fcoeff, foutz, tol, verbose=verbose)
 
     kwargs = {'use_jacobi_quadrature': False}
     diff = lambda kind, system, n: ajacobi.differential_operator(kind, system, n, dtype=dtype, **kwargs)
@@ -349,14 +337,7 @@ def test_differential_operator_adjoints():
         cosystem = system.apply_arrow(da,db,dc)
         fcoeff = cosystem.expand(coeffs, zz, dtype=dtype)
         foutz = fout(zz)
-        error = np.max(abs(fcoeff-foutz))
-
-        if error >= tol:
-            print(f'Error {error} exceeds tolerance {tol}')
-        if verbose:
-            print(f'Error = {error}')
-        else:
-            assert error < tol
+        check_close(fcoeff, foutz, tol, verbose=verbose)
 
     kwargs = {'use_jacobi_quadrature': False}
     diff = lambda kind, system, n: ajacobi.differential_operator_adjoint(kind, system, n, dtype=dtype, **kwargs)
@@ -480,41 +461,30 @@ def test_operator_composition():
 
 def test_mismatching_augmented_weight():
     print('test_mismatching_augmented_weight')
-    def should_raise(f):
-        try:
-            f()
-            assert False
-        except ValueError:
-            pass
-    def shouldnt_raise(f):
-        try:
-            f()
-        except ValueError:
-            assert False
 
     rho1 = ([1,0,1],)
     rho2 = ([1,0,2],)
     A1 = ajacobi.operator('A', rho1)
     A2 = ajacobi.operator('A', rho2)
-    should_raise(lambda: A1(+1) @ A2(+1))
-    should_raise(lambda: A1(+1) + A2(+1))
-    should_raise(lambda: A1(+1) * A2(+1))
+    check_raises(lambda: A1(+1) @ A2(+1))
+    check_raises(lambda: A1(+1) + A2(+1))
+    check_raises(lambda: A1(+1) * A2(+1))
 
     rho1 = ([1,0,1], [1,4])
     rho2 = ([1,0,1],)
     A1 = ajacobi.operator('A', rho1)
     A2 = ajacobi.operator('A', rho2)
-    should_raise(lambda: A1(+1) @ A2(+1))
-    should_raise(lambda: A1(+1) + A2(+1))
-    should_raise(lambda: A1(+1) * A2(+1))
+    check_raises(lambda: A1(+1) @ A2(+1))
+    check_raises(lambda: A1(+1) + A2(+1))
+    check_raises(lambda: A1(+1) * A2(+1))
 
     rho1 = ([1,0,1],)
     rho2 = [[1,0,1]]
     A1 = ajacobi.operator('A', rho1)
     A2 = ajacobi.operator('A', rho2)
-    shouldnt_raise(lambda: A1(+1) @ A2(+1))
-    shouldnt_raise(lambda: A1(+1) + A2(+1))
-    shouldnt_raise(lambda: A1(+1) * A2(+1))
+    check_doesnt_raise(lambda: A1(+1) @ A2(+1))
+    check_doesnt_raise(lambda: A1(+1) + A2(+1))
+    check_doesnt_raise(lambda: A1(+1) * A2(+1))
 
 
 def main():

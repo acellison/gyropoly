@@ -645,19 +645,15 @@ def rhoprime_multiplication(system, n, dtype='float64', internal='float128', **r
     parity = system.has_even_parity
     use_jacobi_quadrature = recurrence_kwargs.pop('use_jacobi_quadrature', False)
 
-    da, db, m = 1, 1, system.unweighted_degree-1
-    dc = np.zeros(system.num_augmented_factors, dtype=int)
-
-    offsets = np.arange(-m,m+3)
+    m = system.unweighted_degree-1
+    offsets = np.arange(-m,m+1)
     if parity:
         offsets = offsets[::2]
-
-    cosystem = system.apply_arrow(da, db, dc)
 
     def fun(z):
         return system.rhoprime(z) * system.polynomials(n, z, dtype=internal, **recurrence_kwargs)
 
-    bands = project(cosystem, n, m, fun, offsets, dtype=internal, use_jacobi_quadrature=use_jacobi_quadrature, **recurrence_kwargs)
+    bands = project(system, n, m, fun, offsets, dtype=internal, use_jacobi_quadrature=use_jacobi_quadrature, **recurrence_kwargs)
     return diags(bands, offsets, shape=(n+m,n), dtype=dtype)
 
 
