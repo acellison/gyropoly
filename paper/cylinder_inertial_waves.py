@@ -413,7 +413,7 @@ def test_side_boundary():
 
 def main():
     m, Lmax, Kmax, alpha, beta = 30, 10, 20, 0, 0
-    radius = 0.5
+    radius = 1.0
     boundary_method = 'tau'
     force_solve = True
 
