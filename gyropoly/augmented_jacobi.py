@@ -898,6 +898,8 @@ def operator(name, factors, dtype='float64', internal='float128', **recurrence_k
         return AugmentedJacobiOperator.recurrence(factors, dtype=dtype, internal=internal)
     if len(factors) == 1 and name == 'C':
         name = ('C', 0)
+    if name == 'rhoprime':
+        return AugmentedJacobiOperator.rhoprime(factors, dtype=dtype, internal=internal)
     return AugmentedJacobiOperator(name, factors, dtype=dtype, internal=internal, **recurrence_kwargs)
 
 
@@ -1086,6 +1088,16 @@ class AugmentedJacobiOperator():
         nc = len(factors)
         return Operator(factors,Z,AugmentedJacobiCodomain(1,0,0,(0,)*nc))
 
+    @staticmethod
+    def rhoprime(factors, dtype='float64', internal='float128'):
+        def R(n,a,b,c):
+            system = AugmentedJacobiSystem(a, b, zip(factors,c))
+            op = rhoprime_multiplication(system, n, dtype=dtype, internal=internal)
+            return infinite_csr(op)
+        nc = len(factors)
+        dn = PolynomialProduct(factors).total_degree(weighted=False)-1
+        return Operator(factors,R,AugmentedJacobiCodomain(dn,0,0,(0,)*nc))
+
     def __call__(self,p):
         return Operator(self.factors,*self.__function(p))
 
@@ -1160,8 +1172,24 @@ class AugmentedJacobiCodomain(de_operators.Codomain):
         dc = tuple(dc)
         super().__init__(*(dn,da,db,dc),Output=Output)
 
+    @property
+    def dn(self):
+        return self[0]
+
+    @property
+    def da(self):
+        return self[1]
+
+    @property
+    def db(self):
+        return self[2]
+
+    @property
+    def dc(self):
+        return self[3]
+
     def __str__(self):
-        s = f'(n->n+{self[0]},a->a+{self[1]},b->b+{self[2]},c->c+{self[3]})'
+        s = f'(n->n+{self.dn},a->a+{self.da},b->b+{self.db},c->c+{self.dc})'
         return s.replace('+0','').replace('+-','-')
 
     def __add__(self,other):
@@ -1180,5 +1208,6 @@ class AugmentedJacobiCodomain(de_operators.Codomain):
     def __or__(self,other):
         if self != other:
             raise TypeError('operators have incompatible codomains.')
-        return self if self[0] >= other[0] else other
+        return self if self.dn >= other.dn else other
+
 

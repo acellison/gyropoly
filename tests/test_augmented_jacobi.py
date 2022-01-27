@@ -27,18 +27,18 @@ def check_close(a, b, tol, verbose=False):
     assert error <= tol
 
 
-def check_raises(f):
+def check_raises(f, e=ValueError):
     try:
         f()
         assert False
-    except:
+    except e:
         pass
 
 
-def check_doesnt_raise(f):
+def check_doesnt_raise(f, e=ValueError):
     try:
         f()
-    except:
+    except e:
         assert False
 
 

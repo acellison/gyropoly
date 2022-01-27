@@ -347,3 +347,17 @@ def clenshaw_summation(f, Z, mass, z, dtype='float64', internal='float128'):
         v[k] = (f[k] + (z-alpha[k])*v[k+1] - bn[k+1]*v[k+2])/bn[k]
     return v[0].reshape(shape).astype(dtype)
 
+
+def remove_zero_rows(mat):
+    """Chuck any identically-zero rows from the matrix"""
+    rows, cols = mat.nonzero()
+    zrows = list(set(range(np.shape(mat)[0])) - set(rows))
+    if not zrows:
+        return mat
+    for z in zrows:
+        i = np.argmax(rows > z)
+        if i > 0:
+            rows[i:] -= 1
+    return sparse.csr_matrix((mat.data, (rows,cols)), shape=(max(rows)+1,np.shape(mat)[1]))
+
+
