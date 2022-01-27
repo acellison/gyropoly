@@ -24,13 +24,16 @@ def scale_to_unity(f):
 
 
 def build_matrices_tau(h, m, Lmax, Nmax, alpha):
+    cylinder_type = 'half'
+    operators = sc.operators(cylinder_type, h, m, Lmax, Nmax)
+
     ncoeff = sc.total_num_coeffs(Lmax, Nmax)
     I = sparse.eye(ncoeff)
     Z = sparse.lil_matrix((ncoeff,ncoeff))
 
     # Bulk Equations
-    G =   sc.gradient(h, m, Lmax, Nmax, alpha=alpha+0)  # alpha   -> alpha+1
-    D = sc.divergence(h, m, Lmax, Nmax, alpha=alpha+1)  # alpha+1 -> alpha+2
+    G = operators('gradient',   alpha=alpha+0)  # alpha   -> alpha+1
+    D = operators('divergence', alpha=alpha+1)  # alpha+1 -> alpha+2
     C = sparse.block_diag([2*I, -2*I, Z])
 
     # Construct the bulk system
@@ -38,27 +41,28 @@ def build_matrices_tau(h, m, Lmax, Nmax, alpha):
     M = -sparse.block_diag([I, I, I, Z])
 
     # Side Boundary Condition: e_{S} \cdot \vec{u} = 0 at s = 1
-    N = sc.normal_component('side', h, m, Lmax, Nmax, alpha=alpha+1)
-    B = sc.boundary('side', h, m, Lmax, Nmax, alpha=alpha+1, sigma=0)
+    N = operators('normal_component', alpha=alpha+1, location='side')
+    B = operators('boundary',         alpha=alpha+1, location='side', sigma=0)
     Z = sparse.lil_matrix((Lmax, ncoeff))
     row1 = sparse.hstack([B @ N, Z])
 
     # Top  Boundary Condition: \hat{n} \cdot \vec{u} = 0 at \eta = 1
-    N = sc.normal_component('top', h, m, Lmax, Nmax, alpha=alpha+1)
-    B = sc.boundary('top', h, m, Lmax, Nmax, alpha=alpha+1, sigma=0)
+    N = operators('normal_component', alpha=alpha+1, location='top')
+    B = operators('boundary',         alpha=alpha+1, location='top', sigma=0)
     Z = sparse.lil_matrix((Nmax, ncoeff))
     row2 = sparse.hstack([B @ N, Z])
 
     # Bottom Boundary Condition: e_{Z} \cdot \vec{u} = 0 at \eta = -1
-    N = sc.normal_component('bottom', h, m, Lmax, Nmax, alpha=alpha+1)
-    B = sc.boundary('bottom', h, m, Lmax, Nmax, alpha=alpha+1, sigma=0)
+    bottom = 'bottom' if cylinder_type == 'half' else 'middle'
+    N = operators('normal_component', alpha=alpha+1, location=bottom)
+    B = operators('boundary',         alpha=alpha+1, location=bottom, sigma=0)
     Z = sparse.lil_matrix((Nmax, ncoeff))
     row3 = sparse.hstack([B @ N, Z])
 
     # Tau projections for enforcing the boundaries
-    col1 = sc.project('side', h, m, Lmax, Nmax, alpha=alpha+0, sigma=+1)[:,:-2]
-    col2 = sc.project('top',  h, m, Lmax, Nmax, alpha=alpha+0, sigma=+1)
-    col3 = sc.project('top',  h, m, Lmax, Nmax, alpha=alpha+0, sigma=0, shift=1)
+    col1 = operators('project', alpha=alpha+0, sigma=+1, location='side')
+    col2 = operators('project', alpha=alpha+0, sigma=+1, location='top')
+    col3 = operators('project', alpha=alpha+0, sigma=0, shift=1, location='top')
     colp = sparse.hstack([col1,col2])
     colz = col3
     col = sparse.bmat([[colp,0*colz],[0*colp,0*colz],[0*colp,colz],[0*colp,0*colz]])

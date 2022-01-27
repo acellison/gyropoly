@@ -2,14 +2,15 @@ import numpy as np
 import scipy.sparse as sparse
 from dedalus_sphere import jacobi
 from . import augmented_jacobi as ajacobi
-from .augmented_jacobi import operators
+from .augmented_jacobi import operators as aj_operators
 
-__all__ = ['coeff_sizes', 'differential_operator', 'gradient', 'divergence', 'scalar_laplacian', 'vector_laplacian', 'curl',
+__all__ = ['Basis', 'total_num_coeffs', 'coeff_sizes', 'operators'
+           'gradient', 'divergence', 'scalar_laplacian', 'vector_laplacian', 'curl',
            'normal_component', 'convert', 'boundary']
 
 
 class Basis():
-    def __init__(self, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', eta=None, t=None, has_m_scaling=True, has_h_scaling=True):
+    def __init__(self, h, m, Lmax, Nmax, alpha, sigma, eta=None, t=None, has_m_scaling=True, has_h_scaling=True, dtype='float64'):
         _check_radial_degree(Lmax, Nmax)
         self.h, self.m, self.Lmax, self.Nmax = h, m, Lmax, Nmax
         self.alpha, self.sigma = alpha, sigma
@@ -172,12 +173,15 @@ def _make_operator(dell, zop, sop, m, Lmax, Nmax, alpha, sigma, Lpad=0, Npad=0):
     return sparse.csr_matrix((opdata, (oprows, opcols)), shape=shape)
 
 
-def differential_operator(delta, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal='float128'):
+def _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal='float128'):
     """
     Construct a raising, lowering or neutral differential operator
 
     Parameters
     ----------
+    cylinder_type : str
+        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
+        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
     delta : integer, in {-1,0,+1}
         Spin weight increment for the operator.  +1 raises, -1 lowers, 0 maintains
     h : np.array
@@ -212,7 +216,7 @@ def differential_operator(delta, h, m, Lmax, Nmax, alpha, sigma, dtype='float64'
         raise ValueError('Cannot lower sigma = -1')
 
     # Construct the fundamental Augmented Jacobi operators
-    ops = operators([h], dtype=internal, internal=internal)    
+    ops = aj_operators([h], dtype=internal, internal=internal)    
     A, B, C, R = [ops(kind) for kind in ['A', 'B', 'C', 'rhoprime']]
     Dz, Da, Db, Dc = [ops(kind) for kind in ['D', 'E', 'F', 'G']]
     Zero = 0*ops('Id')
@@ -234,53 +238,66 @@ def differential_operator(delta, h, m, Lmax, Nmax, alpha, sigma, dtype='float64'
         L0 = Zero
         L1 = A(+1)
         L2 = Zero
+    Ls = L0, L1, L2
 
     # Get the vertical polynomial scale factors for embedding ell -> ell-n
     mods = _get_ell_modifiers(Lmax, alpha, dtype=internal, internal=internal)
 
+    # Set up the composite operators
+    if cylinder_type == 'full':
+        dells = 0, 2
+        scale = 1 if delta == 0 else 2
+    elif cylinder_type == 'half':
+        dells = 0, 1, 2
+        scale = 2
+    else:
+        raise ValueError(f'Unknown cylinder_type {cylinder_type}')
+
     # Construct the composite operators
     make_op = lambda dell, zop, sop: _make_operator(dell, zop, sop, m, Lmax, Nmax, alpha, sigma)
-    ops = [make_op(i, mods[i], L) for i,L in enumerate([L0,L1,L2])]
-    return 2*sum(ops).astype(dtype)
+    ops = [make_op(dell, mods[dell], Ls[dell]) for dell in dells]
+    return scale*sum(ops).astype(dtype)
 
 
-def gradient(h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
-    make_dop = lambda delta: differential_operator(delta, h, m, Lmax, Nmax, alpha, sigma=0, dtype=dtype, internal=internal)
+def gradient(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+    make_dop = lambda delta: _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma=0, dtype=dtype, internal=internal)
     return sparse.vstack([make_dop(delta) for delta in [+1,-1,0]])
 
 
-def divergence(h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
-    make_dop = lambda sigma: differential_operator(-sigma, h, m, Lmax, Nmax, alpha, sigma=sigma, dtype=dtype, internal=internal)
+def divergence(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+    make_dop = lambda sigma: _differential_operator(cylinder_type, -sigma, h, m, Lmax, Nmax, alpha, sigma=sigma, dtype=dtype, internal=internal)
     return sparse.hstack([make_dop(sigma) for sigma in [+1,-1,0]])
 
 
-def curl(h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
-    make_dop = lambda sigma, delta: differential_operator(delta, h, m, Lmax, Nmax, alpha, sigma=sigma, dtype=dtype, internal=internal)
-    Cp = make_dop(+1, 0), make_dop(0, +1)
-    Cm =                  make_dop(0, -1), make_dop(-1, 0)
-    Cz = make_dop(+1,-1),                  make_dop(-1,+1)
-    Z = np.lil_matrix(np.shape(Cp))
-    return 1j * np.bmat([[Cp[0], Cp[1],     Z],
-                         [    Z, Cm[0], Cm[1]],
-                         [Cz[0],     Z, Cz[1]]])
+def curl(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+    ncoeff = total_num_coeffs(Lmax, Nmax)
+    Z = sparse.lil_matrix((ncoeff,ncoeff))
+
+    make_dop = lambda sigma, delta: _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma=sigma, dtype=dtype, internal=internal)
+    Cp =  make_dop(+1, 0),                   -make_dop(0, +1)
+    Cm =                   -make_dop(-1, 0),  make_dop(0, -1)
+    Cz = -make_dop(+1,-1),  make_dop(-1,+1)
+    return 1j * sparse.bmat([[Cp[0], Z,     Cp[1]],
+                             [Z,     Cm[0], Cm[1]],
+                             [Cz[0], Cz[1], Z]])
 
 
-def scalar_laplacian(h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
-    G =   gradient(h, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
-    D = divergence(h, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal)
+def scalar_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+    G =   gradient(cylinder_type, h, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
+    D = divergence(cylinder_type, h, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal)
     return (D @ G).astype(dtype)
 
 
-def vector_laplacian(h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
-    D = divergence(h, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
-    G =   gradient(h, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal)
-    C1 =      curl(h, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
-    C2 =      curl(h, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal)
-    return (G @ D - C2 @ C1).astype(dtype)
+def vector_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+    D = divergence(cylinder_type, h, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
+    G =   gradient(cylinder_type, h, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal)
+    C1 =      curl(cylinder_type, h, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
+    C2 =      curl(cylinder_type, h, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal)
+    return (G @ D - (C2 @ C1).real).astype(dtype)
     
 
-def normal_component(location, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', exact=False):
-    ops = operators([h], dtype=internal, internal=internal)    
+def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, location, dtype='float64', internal='float128', exact=False):
+    ops = aj_operators([h], dtype=internal, internal=internal)    
     B, R, Id = ops('B'), ops('rhoprime'), ops('Id')
     Zero = 0*Id
 
@@ -289,18 +306,24 @@ def normal_component(location, h, m, Lmax, Nmax, alpha, dtype='float64', interna
         Lm = -2 * R @ B(+1)
         Lz = Id
         dn = 1 + R.codomain.dn
+    elif (location, cylinder_type) == ('bottom', 'full'):
+        # If we're at the bottom flip the sign of the z component compared to the top
+        N = normal_component('full', 'top', h, m, Lmax, Nmax, alpha, dtype=dtype, internal=internal, exact=exact).tocsr()
+        n = total_num_coeffs(Lmax, Nmax)
+        N[2*n:3*n,:] = -N[2*n:3*n,:]
+        return N
+    elif (location, cylinder_type) in [('bottom', 'half'), ('middle', 'full')]:
+        Lp = Zero
+        Lm = Zero
+        Lz = -Id
+        dn = 0
     elif location == 'side':
         Lp = 1/2 * B(-1)
         Lm = 1/2 * B(+1)
         Lz = Zero
         dn = 1
-    elif location == 'bottom':
-        Lp = Zero
-        Lm = Zero
-        Lz = -Id
-        dn = 0
     else:
-        raise ValueError(f'Invalid location ({location})')
+        raise ValueError(f'Invalid location ({location}) or cylinder type ({cylinder_type})')
 
     zop = np.ones(Lmax)
     Npad = dn if exact else 0
@@ -309,7 +332,7 @@ def normal_component(location, h, m, Lmax, Nmax, alpha, dtype='float64', interna
     return sparse.hstack([make_op(sigma, L) for sigma, L in [(+1,Lp),(-1,Lm),(0,Lz)]])
 
 
-def boundary(location, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal='float128'):
+def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, location, dtype='float64', internal='float128'):
     zeros = lambda shape: sparse.lil_matrix(shape, dtype=internal)
 
     # Get the number of radial coefficients for each vertical degree
@@ -320,29 +343,48 @@ def boundary(location, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal
     def make_basis(eta=None, t=None, has_h_scaling=False):
         return Basis(h, m, Lmax, Nmax, alpha, sigma, eta=eta, t=t, has_m_scaling=False, has_h_scaling=has_h_scaling, dtype=internal)
 
-    if location in ['top', 'bottom']:
+    # Get the evaluation surface from the location argument
+    if location in ['top', 'middle', 'bottom']:
+        direction = 'eta'
+        coordinate_value = {'top': 1., 'middle': 0., 'bottom': -1.}[location]
+    elif location in ['side']:
+        direction, = 't', 1.
+    elif isinstance(location, str):
+        locs = location.replace(' ', '').split('=')
+        direction, coordinate_value = locs[0], float(locs[1])
+    elif isinstance(location, tuple):
+        direction, coordinate_value = location[0], float(location[1])
+    else:
+        raise ValueError(f'Invalid location (={location})')
+
+    if direction in ['eta', 'η']:
         # Construct the basis, evaluating on the top or bottom boundary
-        basis = make_basis(eta={'top': 1., 'bottom': -1.}[location], has_h_scaling=True)
+        basis = make_basis(eta=coordinate_value, has_h_scaling=True)
         bc = basis.vertical_polynomials
 
         # For each ell we eat the h(t)^{ell} height function by lowering the C parameter
         # ell times.  The highest mode (ell = Lmax-1) is left with C parameter (Lmax-1 + 2*alpha +1).
         # We then raise all C indices to match this highest mode.
-        ops = operators([h], dtype=internal, internal=internal)    
+        ops = aj_operators([h], dtype=internal, internal=internal)    
         C = ops('C')
         radial_params = _radial_jacobi_parameters(m, alpha, sigma)
         make_op = lambda ell: bc[ell] * (C(+1)**(Lmax-1-ell) @ C(-1)**ell)(lengths[ell], *radial_params(ell))
 
-        # Construct the operator
+        # Construct the operator.
+        # If we are in full cylinder geometry evaluating at the middle
+        # then only the even ell polynomials contribute since the odd
+        # ones vanish at z = 0
+        even_only = (coordinate_value, cylinder_type) == (0., 'full')
+        ell_range = range(0,Lmax,2) if even_only else range(Lmax)
         B = zeros((Nmax,ncols))
-        for ell in range(Lmax):
+        for ell in ell_range:
             n, index = lengths[ell], offsets[ell]
             op = make_op(ell)
             B[:np.shape(op)[0],index:index+n] = op
 
-    elif location == 'side':
+    elif direction == 't':
         # Construct the basis, evaluating on the side boundary
-        basis = make_basis(t=1., has_h_scaling=False)
+        basis = make_basis(t=coordinate_value, has_h_scaling=False)
         bc = basis.radial_polynomials
 
         # Construct the operator
@@ -351,13 +393,13 @@ def boundary(location, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal
             n, index = lengths[ell], offsets[ell]
             B[ell,index:index+n] = bc[ell]
     else:
-        raise ValueError(f'Invalid location ({location})')
+        raise ValueError(f'Invalid direction (={direction})')
 
     return B.astype(dtype)
 
 
-def convert(h, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal='float128'):
-    ops = operators([h], dtype=internal, internal=internal)    
+def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal='float128'):
+    ops = aj_operators([h], dtype=internal, internal=internal)    
     A, C = ops('A'), ops('C')
     L0 = A(+1) @ C(+1)**2
     L2 = A(+1) @ C(-1)**2
@@ -367,17 +409,41 @@ def convert(h, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal='float128'
     return (make_op(0, L0) + make_op(2, L2)).astype(dtype)
 
 
-def project(location, h, m, Lmax, Nmax, alpha, sigma, shift=0, dtype='float64', internal='float128'):
-    C = convert(h, m, Lmax, Nmax, alpha, sigma, dtype=dtype, internal=internal)
+def project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, location, shift=0, dtype='float64', internal='float128'):
+    C = convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, dtype=dtype, internal=internal)
     _, offsets = coeff_sizes(Lmax, Nmax)
-    if location in ['top', 'bottom']:
+    if location in ['top', 'middle', 'bottom']:
         offsets = offsets[:-1]
         col = C[:,offsets[-(1+shift)]:]
     elif location == 'side':
         indices = offsets[1:]-1
-        col = sparse.hstack([C[:,indices[ell]-shift:indices[ell]+1] for ell in range(Lmax-2*(1+shift))])
+        col = sparse.hstack([C[:,indices[ell]-shift:indices[ell]+1] for ell in range(Lmax)])
+    elif location == 'all':
+        indices = offsets[1:]-1
+        offsets = offsets[:-1]
+        col1 = sparse.hstack([C[:,indices[ell]-shift:indices[ell]+1] for ell in range(Lmax-2*(1+shift))])
+        col2 = C[:,offsets[-2*(1+shift)]:]
+        col = sparse.hstack([col1,col2])
     else:
         raise ValueError(f'Invalid location ({location})')
     return col
 
 
+def _operator(name, cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', **kwargs):
+    functions = {'gradient': gradient, 'divergence': divergence, 'curl': curl,
+                 'scalar_laplacian': scalar_laplacian, 'vector_laplacian': vector_laplacian,
+                 'normal_component': normal_component, 'boundary': boundary,
+                 'convert': convert, 'project': project}
+    function = functions[name]
+    return function(cylinder_type, h, m, Lmax, Nmax, alpha, dtype=dtype, internal=internal, **kwargs)
+    
+
+def operators(cylinder_type, h, m=None, Lmax=None, Nmax=None, alpha=None, dtype='float64', internal='float128'):
+    def fun(name, mm=m, LL=Lmax, NN=Nmax, aa=alpha, **kwargs):
+        mm = kwargs.pop('m', mm)
+        LL = kwargs.pop('Lmax', LL)
+        NN = kwargs.pop('Nmax', NN)
+        aa = kwargs.pop('alpha', aa)
+        return _operator(name, cylinder_type, h, mm, LL, NN, aa, dtype=dtype, internal=internal, **kwargs)
+    return fun
+    
