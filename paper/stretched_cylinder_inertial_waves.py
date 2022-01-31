@@ -45,13 +45,13 @@ def build_matrices_tau(cylinder_type, h, m, Lmax, Nmax, alpha):
     Z = sparse.lil_matrix((Lmax, ncoeff))
     row1 = sparse.hstack([B @ N, Z])
 
-    # Top  Boundary Condition: \hat{n} \cdot \vec{u} = 0 at \eta = 1
+    # Top  Boundary Condition: \vec{n} \cdot \vec{u} = 0 at z = h(s)
     N = operators('normal_component', alpha=alpha+1, surface='z=h')
     B = operators('boundary',         alpha=alpha+1, surface='z=h', sigma=0)
     Z = sparse.lil_matrix((Nmax, ncoeff))
     row2 = sparse.hstack([B @ N, Z])
 
-    # Bottom Boundary Condition: e_{Z} \cdot \vec{u} = 0 at \eta = -1
+    # Bottom Boundary Condition: -e_{Z} \cdot \vec{u} = 0 at z = 0
     N = operators('normal_component', alpha=alpha+1, surface='z=0')
     B = operators('boundary',         alpha=alpha+1, surface='z=0', sigma=0)
     Z = sparse.lil_matrix((Nmax, ncoeff))
@@ -69,7 +69,8 @@ def build_matrices_tau(cylinder_type, h, m, Lmax, Nmax, alpha):
     colp = sparse.hstack([col1,col2])
     colm = sparse.hstack([col3])
     colz = sparse.hstack([col4,col5])
-    col = sparse.bmat([[colp,0*colm,0*colz],[0*colp,colm,0*colz],[0*colp,0*colm,colz],[0*colp,0*colm,0*colz]])
+    cols = [colp, colm, colz]
+    col = sparse.vstack([sparse.block_diag(cols), 0*sparse.hstack(cols)])
 
     corner = sparse.lil_matrix((np.shape(row)[0], np.shape(col)[1]))
     L = sparse.bmat([[L,  col],[  row,  corner]])

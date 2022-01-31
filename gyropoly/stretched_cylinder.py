@@ -371,10 +371,6 @@ def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, dtype='flo
 
 
 def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', internal='float128'):
-    # FIXME: implement surface='all' that concatenates 'top', ['middle','bottom'] and 'side' boundaries.
-    # The two eta=constant surfaces share operators except for the ell polynomial evaluation, so these
-    # should be reused as an optimization.
-    # FIXME: implement caching of results of operator construction for matching arguments
     _check_cylinder_type(cylinder_type)
     zeros = lambda shape: sparse.lil_matrix(shape, dtype=internal)
 
@@ -396,9 +392,8 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, dtype='floa
             coordinate_value = {'h': 1., '-h': -1., '0': {'full': 0., 'half': -1.}[cylinder_type]}[location]
         elif direction == 's':
             if location == 'S':
-                coordinate_value = 1
+                coordinate_value = 1.
             else:
-                # FIXME: scale by the radius
                 coordinate_value = 2*float(location)**2 - 1
         else:
             raise ValueError(f'Invalid surface coordinate (={direction}')
