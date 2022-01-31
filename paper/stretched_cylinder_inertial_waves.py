@@ -23,8 +23,7 @@ def scale_to_unity(f):
     return f
 
 
-def build_matrices_tau(h, m, Lmax, Nmax, alpha):
-    cylinder_type = 'half'
+def build_matrices_tau(cylinder_type, h, m, Lmax, Nmax, alpha):
     operators = sc.operators(cylinder_type, h, m, Lmax, Nmax)
 
     ncoeff = sc.total_num_coeffs(Lmax, Nmax)
@@ -41,34 +40,37 @@ def build_matrices_tau(h, m, Lmax, Nmax, alpha):
     M = -sparse.block_diag([I, I, I, Z])
 
     # Side Boundary Condition: e_{S} \cdot \vec{u} = 0 at s = 1
-    N = operators('normal_component', alpha=alpha+1, location='side')
-    B = operators('boundary',         alpha=alpha+1, location='side', sigma=0)
+    N = operators('normal_component', alpha=alpha+1, surface='t=1')
+    B = operators('boundary',         alpha=alpha+1, surface='t=1', sigma=0)
     Z = sparse.lil_matrix((Lmax, ncoeff))
     row1 = sparse.hstack([B @ N, Z])
 
     # Top  Boundary Condition: \hat{n} \cdot \vec{u} = 0 at \eta = 1
-    N = operators('normal_component', alpha=alpha+1, location='top')
-    B = operators('boundary',         alpha=alpha+1, location='top', sigma=0)
+    N = operators('normal_component', alpha=alpha+1, surface='z=h')
+    B = operators('boundary',         alpha=alpha+1, surface='z=h', sigma=0)
     Z = sparse.lil_matrix((Nmax, ncoeff))
     row2 = sparse.hstack([B @ N, Z])
 
     # Bottom Boundary Condition: e_{Z} \cdot \vec{u} = 0 at \eta = -1
-    bottom = 'bottom' if cylinder_type == 'half' else 'middle'
-    N = operators('normal_component', alpha=alpha+1, location=bottom)
-    B = operators('boundary',         alpha=alpha+1, location=bottom, sigma=0)
+    N = operators('normal_component', alpha=alpha+1, surface='z=0')
+    B = operators('boundary',         alpha=alpha+1, surface='z=0', sigma=0)
     Z = sparse.lil_matrix((Nmax, ncoeff))
     row3 = sparse.hstack([B @ N, Z])
 
-    # Tau projections for enforcing the boundaries
-    col1 = operators('project', alpha=alpha+0, sigma=+1, location='side')
-    col2 = operators('project', alpha=alpha+0, sigma=+1, location='top')
-    col3 = operators('project', alpha=alpha+0, sigma=0, shift=1, location='top')
-    colp = sparse.hstack([col1,col2])
-    colz = col3
-    col = sparse.bmat([[colp,0*colz],[0*colp,0*colz],[0*colp,colz],[0*colp,0*colz]])
-
-    # Append the boundary conditions and tau projections onto the bulk system
+    # Combine the boundary condition equations into a single matrix
     row = sparse.vstack([row1,row2,row3])
+
+    # Tau projections for enforcing the boundaries
+    col1 = operators('project', alpha=alpha+0, sigma=+1, direction='η')
+    col2 = operators('project', alpha=alpha+0, sigma=+1, direction='t', Lstop=1)
+    col3 = operators('project', alpha=alpha+0, sigma=-1, direction='t')
+    col4 = operators('project', alpha=alpha+0, sigma=0,  direction='η')
+    col5 = operators('project', alpha=alpha+0, sigma=0,  direction='t', Lstop=1)
+    colp = sparse.hstack([col1,col2])
+    colm = sparse.hstack([col3])
+    colz = sparse.hstack([col4,col5])
+    col = sparse.bmat([[colp,0*colm,0*colz],[0*colp,colm,0*colz],[0*colp,0*colm,colz],[0*colp,0*colm,0*colz]])
+
     corner = sparse.lil_matrix((np.shape(row)[0], np.shape(col)[1]))
     L = sparse.bmat([[L,  col],[  row,  corner]])
     M = sparse.bmat([[M,0*col],[0*row,0*corner]])
@@ -83,19 +85,20 @@ def _get_directory(prefix='data'):
     return directory
 
   
-def solve_eigenproblem(omega, h, m, Lmax, Nmax, boundary_method, force_solve=True, alpha=0):
+def solve_eigenproblem(omega, cylinder_type, h, m, Lmax, Nmax, boundary_method, force_solve=True, alpha=0):
     alphastr = '' if alpha == 0 else f'-alpha={alpha}'
 
     directory = _get_directory('data')
-    filename = os.path.join(directory, f'{g_file_prefix}-m={m}-Lmax={Lmax}-Nmax={Nmax}{alphastr}-omega={omega}.pckl')
+    filename = os.path.join(directory, f'{g_file_prefix}-{cylinder_type}_cyl-m={m}-Lmax={Lmax}-Nmax={Nmax}{alphastr}-omega={omega}.pckl')
 
     if force_solve or not os.path.exists(filename):
-        L, M = build_matrices_tau(h, m, Lmax, Nmax, alpha=alpha)
+        L, M = build_matrices_tau(cylinder_type, h, m, Lmax, Nmax, alpha=alpha)
         print('Eigenproblem size: ', np.shape(L))
 
         evalues, evectors = eigsort(L.todense(), M.todense(), profile=True)
 
-        data = {'omega': omega, 'h': h, 'm': m, 'Lmax': Lmax, 'Nmax': Nmax, 'alpha': alpha,
+        data = {'cylinder_type': cylinder_type,
+                'omega': omega, 'h': h, 'm': m, 'Lmax': Lmax, 'Nmax': Nmax, 'alpha': alpha,
                 'boundary_method': boundary_method,
                 'evalues': evalues, 'evectors': evectors}
         with open(filename, 'wb') as file:
@@ -169,7 +172,7 @@ def compare_mode(evalues, evectors, n, k, evalue_targets, roots, bases, boundary
     p = fields['p']
 
     # Compute the analytic_mode and make sure we have the right sign
-    s, eta = basis.s[np.newaxis,:], basis.eta[:,np.newaxis]
+    s, eta = basis.s()[np.newaxis,:], basis.eta[:,np.newaxis]
     zcyl = (eta+1)/2 * basis.height[np.newaxis,:]
     zcart = np.linspace(0,1,len(eta))
     f = analytic_mode(m, n, k, roots=roots, radius=1.)(s,zcart)
@@ -187,6 +190,7 @@ def compare_mode(evalues, evectors, n, k, evalue_targets, roots, bases, boundary
 
 
 def plot_solution(data):
+    cylinder_type = data['cylinder_type']
     h, m, Lmax, Nmax = [data[key] for key in ['h', 'm', 'Lmax', 'Nmax']]
     evalues, evectors = [data[key] for key in ['evalues', 'evectors']]
     boundary_method = data['boundary_method']
@@ -195,8 +199,8 @@ def plot_solution(data):
     s = np.linspace(0,1,400)
     t = 2*s**2-1
     eta = np.linspace(-1,1.,301)
-    pbasis =  sc.Basis(h, m, Lmax, Nmax, alpha=alpha+0, sigma=0,   t=t, eta=eta)
-    vbases = [sc.Basis(h, m, Lmax, Nmax, alpha=alpha+1, sigma=sig, t=t, eta=eta) for sig in [+1,-1,0]]
+    pbasis =  sc.Basis(cylinder_type, h, m, Lmax, Nmax, alpha=alpha+0, sigma=0,   t=t, eta=eta)
+    vbases = [sc.Basis(cylinder_type, h, m, Lmax, Nmax, alpha=alpha+1, sigma=sig, t=t, eta=eta) for sig in [+1,-1,0]]
     bases = {'p': pbasis, 'up': vbases[0], 'um': vbases[1], 'w': vbases[2]}
 
     n, kmax = 3, 7
@@ -220,12 +224,13 @@ def main():
     omega = .001
     h = [omega/(2+omega), 1.]
 
+    cylinder_type = 'half'
     m, Lmax, Nmax, alpha = 30, 10, 30, 0
     boundary_method = 'tau'
     force_solve = False
 
     print(f'm = {m}, Lmax = {Lmax}, Nmax = {Nmax}, alpha = {alpha}, omega = {omega}')
-    data = solve_eigenproblem(omega, h, m, Lmax, Nmax, boundary_method, force_solve=force_solve, alpha=alpha)
+    data = solve_eigenproblem(omega, cylinder_type, h, m, Lmax, Nmax, boundary_method, force_solve=force_solve, alpha=alpha)
     plot_solution(data)
 
 

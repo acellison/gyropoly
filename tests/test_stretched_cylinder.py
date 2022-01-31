@@ -25,7 +25,7 @@ def test_laplacian():
 
 
 def test_normal_component():
-    op = operators('normal_component', location='top')
+    op = operators('normal_component', surface='top')
     fig, ax = plt.subplots()
     ax.spy(op)
 
@@ -48,10 +48,10 @@ def test_boundary():
     #    -> b. Lmax odd  ? chuck last equation from top, bottom, second to last from side
     # 3. Half Cylinder
     #    -> Same as 2b.
-    bottom_location = 'z=0'
-    op1 = operators('boundary', sigma=0, location='z=h')
-    op2 = operators('boundary', sigma=0, location=bottom_location)
-    op3 = operators('boundary', sigma=0, location='t=1')
+    bottom_surface = 'z=0'
+    op1 = operators('boundary', sigma=0, surface='z=h')
+    op2 = operators('boundary', sigma=0, surface=bottom_surface)
+    op3 = operators('boundary', sigma=0, surface='t=1')
     if cylinder_type == 'full' or Lmax%2 == 0:
         op = sparse.vstack([op1[:-1,:],op2[:-1,:],op3[:-1,:]])
     else:
@@ -75,7 +75,7 @@ def test_boundary():
     assert boundary_deficiency == 0
 
     errors = np.zeros((dim,3))
-    bottom_index = 0 if cylinder_type == 'half' or bottom_location == 'z=-h' else len(eta)//2
+    bottom_index = 0 if cylinder_type == 'half' or bottom_surface == 'z=-h' else len(eta)//2
     for i in range(dim):
         f = basis.expand(nullspace[:,i])
         fmax = np.max(abs(f))
@@ -100,13 +100,13 @@ def test_boundary():
 
 
 def test_project():
-    def project(location, shift, halt=0): 
-        return operators('project', sigma=0, location=location, shift=shift, halt=halt)
+    def project(direction, shift, Lstop=0): 
+        return operators('project', sigma=0, direction=direction, shift=shift, Lstop=Lstop)
 
     top_shifts = [1,0]     # size Nmax-(Lmax-2) and Nmax-(Lmax-1), total = 2*Nmax-2*Lmax+3
     side_shifts = [2,1,0]  # total size 3*(Lmax-2) = 3*Lmax-6, top+side = 2*Nmax+Lmax-3 ok
-    opt = [project(location='top', shift=shift) for shift in top_shifts]
-    ops = [project(location='side', shift=shift, halt=2) for shift in side_shifts]
+    opt = [project(direction='η', shift=shift) for shift in top_shifts]
+    ops = [project(direction='t', shift=shift, Lstop=2) for shift in side_shifts]
 
     all_ops = ops + opt
     ns = [np.shape(op)[1] for op in all_ops]
@@ -118,10 +118,10 @@ def test_project():
     plt.spy(op)
 
 if __name__=='__main__':
-#    test_gradient()
-#    test_laplacian()
-#    test_normal_component()
-#    test_boundary()
+    test_gradient()
+    test_laplacian()
+    test_normal_component()
+    test_boundary()
     test_project()
     plt.show()
 

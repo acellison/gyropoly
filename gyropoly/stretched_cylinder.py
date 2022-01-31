@@ -320,45 +320,44 @@ def vector_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', in
     return (G @ D - (C2 @ C1).real).astype(dtype)
     
 
-def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, location, dtype='float64', internal='float128', exact=False):
+def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, dtype='float64', internal='float128', exact=False):
     ops = aj_operators([h], dtype=internal, internal=internal)    
     B, R, Id = ops('B'), ops('rhoprime'), ops('Id')
     Zero = 0*Id
 
-    if location == 'top':
+    if surface in ['top', 'z=h']:
         Lp = -2 * R @ B(-1)
         Lm = -2 * R @ B(+1)
         Lz = Id
         dn = 1 + R.codomain.dn
-    elif (location, cylinder_type) == ('bottom', 'full'):
+    elif cylinder_type == 'full' and surface in ['bottom', 'z=-h']:
         # If we're at the bottom flip the sign of the z component compared to the top
         N = normal_component('full', 'top', h, m, Lmax, Nmax, alpha, dtype=dtype, internal=internal, exact=exact).tocsr()
         n = total_num_coeffs(Lmax, Nmax)
         N[2*n:3*n,:] = -N[2*n:3*n,:]
         return N
-    elif (location, cylinder_type) in [('bottom', 'half'), ('middle', 'full')]:
+    elif (surface, cylinder_type) in [('bottom', 'half'), ('middle', 'full')] or surface == 'z=0':
         Lp = Zero
         Lm = Zero
         Lz = -Id
         dn = 0
-    elif location == 'side':
+    elif surface in ['side', 't=1']:
         Lp = 1/2 * B(-1)
         Lm = 1/2 * B(+1)
         Lz = Zero
         dn = 1
     else:
-        raise ValueError(f'Invalid location ({location}) or cylinder type ({cylinder_type})')
+        raise ValueError(f'Invalid surface ({surface}) or cylinder type ({cylinder_type})')
 
     zop = np.ones(Lmax)
     Npad = dn if exact else 0
     make_op = lambda sigma, sop: _make_operator(0, zop, sop, m, Lmax, Nmax, alpha, sigma, Npad=Npad)
     ops = [make_op(sigma, L) for sigma, L in [(+1,Lp),(-1,Lm),(0,Lz)]]
-    return sparse.hstack([make_op(sigma, L) for sigma, L in [(+1,Lp),(-1,Lm),(0,Lz)]])
+    return sparse.hstack([make_op(sigma, L) for sigma, L in [(+1,Lp),(-1,Lm),(0,Lz)]]).astype(dtype)
 
 
-@decorators.profile
-def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, location, dtype='float64', internal='float128'):
-    # FIXME: implement location='all' that concatenates 'top', ['middle','bottom'] and 'side' boundaries.
+def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', internal='float128'):
+    # FIXME: implement surface='all' that concatenates 'top', ['middle','bottom'] and 'side' boundaries.
     # The two eta=constant surfaces share operators except for the ell polynomial evaluation, so these
     # should be reused as an optimization.
     # FIXME: implement caching of results of operator construction for matching arguments
@@ -372,14 +371,14 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, location, dtype='flo
     def make_basis(eta=None, t=None, has_h_scaling=False):
         return Basis(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, eta=eta, t=t, has_m_scaling=False, has_h_scaling=has_h_scaling, dtype=internal)
 
-    # Get the evaluation surface from the location argument
-    if location in ['top', 'middle', 'bottom']:
+    # Get the evaluation surface from the surface argument
+    if surface in ['top', 'middle', 'bottom']:
         direction = 'eta'
-        coordinate_value = {'top': 1., 'middle': 0., 'bottom': -1.}[location]
-    elif location in ['side']:
-        direction, = 't', 1.
-    elif isinstance(location, str):
-        locs = location.replace(' ', '').split('=')
+        coordinate_value = {'top': 1., 'middle': 0., 'bottom': -1.}[surface]
+    elif surface in ['side']:
+        direction, coordinate_value = 't', 1.
+    elif isinstance(surface, str):
+        locs = surface.replace(' ', '').split('=')
         if locs[0] == 'z':
             direction = 'eta'
             if (locs[1], cylinder_type) == ('-h', 'half'):
@@ -387,10 +386,10 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, location, dtype='flo
             coordinate_value = {'h': 1., '-h': -1., '0': {'full': 0., 'half': -1.}[cylinder_type]}[locs[1]]
         else:
             direction, coordinate_value = locs[0], float(locs[1])
-    elif isinstance(location, tuple):
-        direction, coordinate_value = location[0], float(location[1])
+    elif isinstance(surface, tuple):
+        direction, coordinate_value = surface[0], float(surface[1])
     else:
-        raise ValueError(f'Invalid location (={location})')
+        raise ValueError(f'Invalid surface (={surface})')
 
     if direction in ['eta', 'η']:
         # Construct the basis, evaluating on the top or bottom boundary
@@ -417,7 +416,7 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, location, dtype='flo
             op = make_op(ell)
             B[:np.shape(op)[0],index:index+n] = op
 
-    elif direction == 't':
+    elif direction in ['t', 's']:
         # Construct the basis, evaluating on the side boundary
         basis = make_basis(t=coordinate_value, has_h_scaling=False)
         bc = basis.radial_polynomials
@@ -444,17 +443,18 @@ def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', inte
     return (make_op(0, L0) + make_op(2, L2)).astype(dtype)
 
 
-@decorators.profile
-def project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, location, shift=0, halt=0, dtype='float64', internal='float128'):
+def project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, direction, shift=0, Lstop=0, dtype='float64', internal='float128'):
     C = convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, dtype=dtype, internal=internal)
     _, offsets = coeff_sizes(Lmax, Nmax)
-    if location in ['top', 'middle', 'bottom']:
+    if direction in ['vertical', 'eta', 'η']:
+        # Size Nmax-(Lmax-1-shift), projecting onto all radial coefficients of fixed vertical degree
         col = C[:,offsets[Lmax-shift-1]:offsets[Lmax-shift]]
-    elif location == 'side':
+    elif direction in ['radial', 's', 't']:
+        # Size Lmax-halt, projecting onto all vertical coefficients of fixed total polynomial degree
         indices = offsets[1:]-1
-        col = sparse.hstack([C[:,indices[ell]-shift:indices[ell]-shift+1] for ell in range(Lmax-halt)])
+        col = sparse.hstack([C[:,indices[ell]-shift] for ell in range(Lmax-Lstop)])
     else:
-        raise ValueError(f'Invalid location ({location})')
+        raise ValueError(f'Invalid direction ({direction})')
     return col
 
 
