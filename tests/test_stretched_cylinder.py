@@ -25,7 +25,7 @@ def test_laplacian():
 
 
 def test_normal_component():
-    op = operators('normal_component', surface='top')
+    op = operators('normal_component', surface='z=h')
     fig, ax = plt.subplots()
     ax.spy(op)
 
@@ -48,10 +48,9 @@ def test_boundary():
     #    -> b. Lmax odd  ? chuck last equation from top, bottom, second to last from side
     # 3. Half Cylinder
     #    -> Same as 2b.
-    bottom_surface = 'z=0'
     op1 = operators('boundary', sigma=0, surface='z=h')
-    op2 = operators('boundary', sigma=0, surface=bottom_surface)
-    op3 = operators('boundary', sigma=0, surface='t=1')
+    op2 = operators('boundary', sigma=0, surface='z=0')
+    op3 = operators('boundary', sigma=0, surface='s=S')
     if cylinder_type == 'full' or Lmax%2 == 0:
         op = sparse.vstack([op1[:-1,:],op2[:-1,:],op3[:-1,:]])
     else:
@@ -75,7 +74,7 @@ def test_boundary():
     assert boundary_deficiency == 0
 
     errors = np.zeros((dim,3))
-    bottom_index = 0 if cylinder_type == 'half' or bottom_surface == 'z=-h' else len(eta)//2
+    bottom_index = 0 if cylinder_type == 'half' else len(eta)//2
     for i in range(dim):
         f = basis.expand(nullspace[:,i])
         fmax = np.max(abs(f))
@@ -105,8 +104,8 @@ def test_project():
 
     top_shifts = [1,0]     # size Nmax-(Lmax-2) and Nmax-(Lmax-1), total = 2*Nmax-2*Lmax+3
     side_shifts = [2,1,0]  # total size 3*(Lmax-2) = 3*Lmax-6, top+side = 2*Nmax+Lmax-3 ok
-    opt = [project(direction='η', shift=shift) for shift in top_shifts]
-    ops = [project(direction='t', shift=shift, Lstop=2) for shift in side_shifts]
+    opt = [project(direction='z', shift=shift) for shift in top_shifts]
+    ops = [project(direction='s', shift=shift, Lstop=2) for shift in side_shifts]
 
     all_ops = ops + opt
     ns = [np.shape(op)[1] for op in all_ops]

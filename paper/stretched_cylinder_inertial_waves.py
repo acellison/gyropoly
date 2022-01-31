@@ -40,8 +40,8 @@ def build_matrices_tau(cylinder_type, h, m, Lmax, Nmax, alpha):
     M = -sparse.block_diag([I, I, I, Z])
 
     # Side Boundary Condition: e_{S} \cdot \vec{u} = 0 at s = 1
-    N = operators('normal_component', alpha=alpha+1, surface='t=1')
-    B = operators('boundary',         alpha=alpha+1, surface='t=1', sigma=0)
+    N = operators('normal_component', alpha=alpha+1, surface='s=S')
+    B = operators('boundary',         alpha=alpha+1, surface='s=S', sigma=0)
     Z = sparse.lil_matrix((Lmax, ncoeff))
     row1 = sparse.hstack([B @ N, Z])
 
@@ -61,11 +61,11 @@ def build_matrices_tau(cylinder_type, h, m, Lmax, Nmax, alpha):
     row = sparse.vstack([row1,row2,row3])
 
     # Tau projections for enforcing the boundaries
-    col1 = operators('project', alpha=alpha+0, sigma=+1, direction='η')
-    col2 = operators('project', alpha=alpha+0, sigma=+1, direction='t', Lstop=1)
-    col3 = operators('project', alpha=alpha+0, sigma=-1, direction='t')
-    col4 = operators('project', alpha=alpha+0, sigma=0,  direction='η')
-    col5 = operators('project', alpha=alpha+0, sigma=0,  direction='t', Lstop=1)
+    col1 = operators('project', alpha=alpha+0, sigma=+1, direction='z')
+    col2 = operators('project', alpha=alpha+0, sigma=+1, direction='s', Lstop=1)
+    col3 = operators('project', alpha=alpha+0, sigma=-1, direction='s')
+    col4 = operators('project', alpha=alpha+0, sigma=0,  direction='z')
+    col5 = operators('project', alpha=alpha+0, sigma=0,  direction='s', Lstop=1)
     colp = sparse.hstack([col1,col2])
     colm = sparse.hstack([col3])
     colz = sparse.hstack([col4,col5])
@@ -227,7 +227,7 @@ def main():
     cylinder_type = 'half'
     m, Lmax, Nmax, alpha = 30, 10, 30, 0
     boundary_method = 'tau'
-    force_solve = False
+    force_solve = True
 
     print(f'm = {m}, Lmax = {Lmax}, Nmax = {Nmax}, alpha = {alpha}, omega = {omega}')
     data = solve_eigenproblem(omega, cylinder_type, h, m, Lmax, Nmax, boundary_method, force_solve=force_solve, alpha=alpha)

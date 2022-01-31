@@ -15,6 +15,7 @@ class Basis():
         _check_radial_degree(Lmax, Nmax)
         if cylinder_type not in ['full', 'half']:
             raise ValueError(f"Invalid cylinder_type (={cylinder_type}).  Must be either 'full' or 'half'")
+        _check_cylinder_type(cylinder_type)
         self.cylinder_type = cylinder_type
         self.h, self.m, self.Lmax, self.Nmax = h, m, Lmax, Nmax
         self.alpha, self.sigma = alpha, sigma
@@ -146,6 +147,11 @@ def _check_radial_degree(Lmax, Nmax):
         raise ValueError('Radial degree too small for triangular truncation')
 
 
+def _check_cylinder_type(cylinder_type):
+    if cylinder_type not in ['half', 'full']:
+        raise ValueError(f'Invalid cylinder type ({cylinder_type})')
+
+
 def _radial_size(Nmax, ell):
     return Nmax-ell
 
@@ -228,6 +234,7 @@ def _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma,
     Sparse matrix with differential operator coefficients
 
     """
+    _check_cylinder_type(cylinder_type)
     if alpha <= -1:
         raise ValueError(f'alpha (= {alpha}) must be larger than -1')
     if delta not in [-1,0,+1]:
@@ -284,16 +291,19 @@ def _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma,
 
 
 def gradient(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+    _check_cylinder_type(cylinder_type)
     make_dop = lambda delta: _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma=0, dtype=dtype, internal=internal)
     return sparse.vstack([make_dop(delta) for delta in [+1,-1,0]])
 
 
 def divergence(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+    _check_cylinder_type(cylinder_type)
     make_dop = lambda sigma: _differential_operator(cylinder_type, -sigma, h, m, Lmax, Nmax, alpha, sigma=sigma, dtype=dtype, internal=internal)
     return sparse.hstack([make_dop(sigma) for sigma in [+1,-1,0]])
 
 
 def curl(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+    _check_cylinder_type(cylinder_type)
     ncoeff = total_num_coeffs(Lmax, Nmax)
     Z = sparse.lil_matrix((ncoeff,ncoeff))
 
@@ -307,12 +317,14 @@ def curl(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='floa
 
 
 def scalar_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+    _check_cylinder_type(cylinder_type)
     G =   gradient(cylinder_type, h, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
     D = divergence(cylinder_type, h, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal)
     return (D @ G).astype(dtype)
 
 
 def vector_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+    _check_cylinder_type(cylinder_type)
     D = divergence(cylinder_type, h, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
     G =   gradient(cylinder_type, h, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal)
     C1 =      curl(cylinder_type, h, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
@@ -321,33 +333,35 @@ def vector_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', in
     
 
 def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, dtype='float64', internal='float128', exact=False):
+    _check_cylinder_type(cylinder_type)
+
     ops = aj_operators([h], dtype=internal, internal=internal)    
     B, R, Id = ops('B'), ops('rhoprime'), ops('Id')
     Zero = 0*Id
 
-    if surface in ['top', 'z=h']:
+    if surface == 'z=h':
         Lp = -2 * R @ B(-1)
         Lm = -2 * R @ B(+1)
         Lz = Id
         dn = 1 + R.codomain.dn
-    elif cylinder_type == 'full' and surface in ['bottom', 'z=-h']:
+    elif (cylinder_type, surface) == ('full', 'z=-h'):
         # If we're at the bottom flip the sign of the z component compared to the top
         N = normal_component('full', 'top', h, m, Lmax, Nmax, alpha, dtype=dtype, internal=internal, exact=exact).tocsr()
         n = total_num_coeffs(Lmax, Nmax)
         N[2*n:3*n,:] = -N[2*n:3*n,:]
         return N
-    elif (surface, cylinder_type) in [('bottom', 'half'), ('middle', 'full')] or surface == 'z=0':
+    elif surface == 'z=0':
         Lp = Zero
         Lm = Zero
         Lz = -Id
         dn = 0
-    elif surface in ['side', 't=1']:
+    elif surface == 's=S':
         Lp = 1/2 * B(-1)
         Lm = 1/2 * B(+1)
         Lz = Zero
         dn = 1
     else:
-        raise ValueError(f'Invalid surface ({surface}) or cylinder type ({cylinder_type})')
+        raise ValueError(f'Invalid surface ({surface})')
 
     zop = np.ones(Lmax)
     Npad = dn if exact else 0
@@ -361,6 +375,7 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, dtype='floa
     # The two eta=constant surfaces share operators except for the ell polynomial evaluation, so these
     # should be reused as an optimization.
     # FIXME: implement caching of results of operator construction for matching arguments
+    _check_cylinder_type(cylinder_type)
     zeros = lambda shape: sparse.lil_matrix(shape, dtype=internal)
 
     # Get the number of radial coefficients for each vertical degree
@@ -372,26 +387,25 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, dtype='floa
         return Basis(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, eta=eta, t=t, has_m_scaling=False, has_h_scaling=has_h_scaling, dtype=internal)
 
     # Get the evaluation surface from the surface argument
-    if surface in ['top', 'middle', 'bottom']:
-        direction = 'eta'
-        coordinate_value = {'top': 1., 'middle': 0., 'bottom': -1.}[surface]
-    elif surface in ['side']:
-        direction, coordinate_value = 't', 1.
-    elif isinstance(surface, str):
+    if isinstance(surface, str):
         locs = surface.replace(' ', '').split('=')
-        if locs[0] == 'z':
-            direction = 'eta'
+        direction, location = locs
+        if direction == 'z':
             if (locs[1], cylinder_type) == ('-h', 'half'):
                 raise ValueError('Half cylinder cannot be evaluated at z=-h')
-            coordinate_value = {'h': 1., '-h': -1., '0': {'full': 0., 'half': -1.}[cylinder_type]}[locs[1]]
+            coordinate_value = {'h': 1., '-h': -1., '0': {'full': 0., 'half': -1.}[cylinder_type]}[location]
+        elif direction == 's':
+            if location == 'S':
+                coordinate_value = 1
+            else:
+                # FIXME: scale by the radius
+                coordinate_value = 2*float(location)**2 - 1
         else:
-            direction, coordinate_value = locs[0], float(locs[1])
-    elif isinstance(surface, tuple):
-        direction, coordinate_value = surface[0], float(surface[1])
+            raise ValueError(f'Invalid surface coordinate (={direction}')
     else:
         raise ValueError(f'Invalid surface (={surface})')
 
-    if direction in ['eta', 'η']:
+    if direction == 'z':
         # Construct the basis, evaluating on the top or bottom boundary
         basis = make_basis(eta=coordinate_value, has_h_scaling=True)
         bc = basis.vertical_polynomials
@@ -416,7 +430,7 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, dtype='floa
             op = make_op(ell)
             B[:np.shape(op)[0],index:index+n] = op
 
-    elif direction in ['t', 's']:
+    elif direction == 's':
         # Construct the basis, evaluating on the side boundary
         basis = make_basis(t=coordinate_value, has_h_scaling=False)
         bc = basis.radial_polynomials
@@ -426,13 +440,12 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, dtype='floa
         for ell in range(Lmax):
             n, index = lengths[ell], offsets[ell]
             B[ell,index:index+n] = bc[ell]
-    else:
-        raise ValueError(f'Invalid direction (={direction})')
 
     return B.astype(dtype)
 
 
 def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal='float128'):
+    _check_cylinder_type(cylinder_type)
     ops = aj_operators([h], dtype=internal, internal=internal)    
     A, C = ops('A'), ops('C')
     L0 = A(+1) @ C(+1)**2
@@ -444,12 +457,13 @@ def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', inte
 
 
 def project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, direction, shift=0, Lstop=0, dtype='float64', internal='float128'):
+    _check_cylinder_type(cylinder_type)
     C = convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, dtype=dtype, internal=internal)
     _, offsets = coeff_sizes(Lmax, Nmax)
-    if direction in ['vertical', 'eta', 'η']:
+    if direction == 'z':
         # Size Nmax-(Lmax-1-shift), projecting onto all radial coefficients of fixed vertical degree
         col = C[:,offsets[Lmax-shift-1]:offsets[Lmax-shift]]
-    elif direction in ['radial', 's', 't']:
+    elif direction == 's':
         # Size Lmax-halt, projecting onto all vertical coefficients of fixed total polynomial degree
         indices = offsets[1:]-1
         col = sparse.hstack([C[:,indices[ell]-shift] for ell in range(Lmax-Lstop)])
@@ -460,6 +474,7 @@ def project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, direction, shift=0, L
 
 @decorators.cached
 def _operator(name, cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', **kwargs):
+    _check_cylinder_type(cylinder_type)
     functions = {'gradient': gradient, 'divergence': divergence, 'curl': curl,
                  'scalar_laplacian': scalar_laplacian, 'vector_laplacian': vector_laplacian,
                  'normal_component': normal_component, 'boundary': boundary,
@@ -469,6 +484,7 @@ def _operator(name, cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', int
     
 
 def operators(cylinder_type, h, m=None, Lmax=None, Nmax=None, alpha=None, dtype='float64', internal='float128'):
+    _check_cylinder_type(cylinder_type)
     def fun(name, mm=m, LL=Lmax, NN=Nmax, aa=alpha, **kwargs):
         mm = kwargs.pop('m', mm)
         LL = kwargs.pop('Lmax', LL)
