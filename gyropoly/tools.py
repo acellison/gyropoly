@@ -360,4 +360,3 @@ def remove_zero_rows(mat):
             rows[i:] -= 1
     return sparse.csr_matrix((mat.data, (rows,cols)), shape=(max(rows)+1,np.shape(mat)[1]))
 
-

@@ -3,6 +3,7 @@ import scipy.sparse as sparse
 from dedalus_sphere import jacobi
 from . import augmented_jacobi as ajacobi
 from .augmented_jacobi import operators as aj_operators
+from . import decorators
 
 __all__ = ['Basis', 'total_num_coeffs', 'coeff_sizes', 'operators'
            'gradient', 'divergence', 'scalar_laplacian', 'vector_laplacian', 'curl',
@@ -10,8 +11,11 @@ __all__ = ['Basis', 'total_num_coeffs', 'coeff_sizes', 'operators'
 
 
 class Basis():
-    def __init__(self, h, m, Lmax, Nmax, alpha, sigma, eta=None, t=None, has_m_scaling=True, has_h_scaling=True, dtype='float64'):
+    def __init__(self, cylinder_type, h, m, Lmax, Nmax, alpha, sigma, eta=None, t=None, has_m_scaling=True, has_h_scaling=True, dtype='float64'):
         _check_radial_degree(Lmax, Nmax)
+        if cylinder_type not in ['full', 'half']:
+            raise ValueError(f"Invalid cylinder_type (={cylinder_type}).  Must be either 'full' or 'half'")
+        self.cylinder_type = cylinder_type
         self.h, self.m, self.Lmax, self.Nmax = h, m, Lmax, Nmax
         self.alpha, self.sigma = alpha, sigma
         self.dtype = dtype
@@ -76,6 +80,26 @@ class Basis():
                 index += 1
         return f
 
+    def s(self, t=None):
+        if t is None:
+            if self.t is None:
+                raise ValueError('missing t argument')
+            t = self.t
+        return np.sqrt((1+t)/2)
+
+    def z(self, t=None, eta=None):
+        if t is None:
+            if self.t is None:
+                raise ValueError('missing t argument')
+            t = self.t
+        if eta is None:
+            if self.eta is None:
+                raise ValueError('missing eta argument')
+            eta = self.eta
+        tt, ee = t[np.newaxis,:], eta[:,np.newaxis]
+        ee = ee if self.cylinder_type == 'full' else (ee-1)/2
+        return ee * np.polyval(self.h, tt)
+
     def _make_vertical_polynomials(self, eta):
         if eta is not None:
             self.eta = eta
@@ -84,7 +108,6 @@ class Basis():
     def _make_radial_polynomials(self, t):
         if t is not None:
             self.t = t
-            self.s = np.sqrt((1+t)/2)
             if self.has_m_scaling:
                 prefactor = (1+t)**(self.m + self.sigma)
             else:
@@ -173,6 +196,7 @@ def _make_operator(dell, zop, sop, m, Lmax, Nmax, alpha, sigma, Lpad=0, Npad=0):
     return sparse.csr_matrix((opdata, (oprows, opcols)), shape=shape)
 
 
+@decorators.cached
 def _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal='float128'):
     """
     Construct a raising, lowering or neutral differential operator
@@ -332,7 +356,12 @@ def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, location, dtype='fl
     return sparse.hstack([make_op(sigma, L) for sigma, L in [(+1,Lp),(-1,Lm),(0,Lz)]])
 
 
+@decorators.profile
 def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, location, dtype='float64', internal='float128'):
+    # FIXME: implement location='all' that concatenates 'top', ['middle','bottom'] and 'side' boundaries.
+    # The two eta=constant surfaces share operators except for the ell polynomial evaluation, so these
+    # should be reused as an optimization.
+    # FIXME: implement caching of results of operator construction for matching arguments
     zeros = lambda shape: sparse.lil_matrix(shape, dtype=internal)
 
     # Get the number of radial coefficients for each vertical degree
@@ -341,7 +370,7 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, location, dtype='flo
 
     # Helper function to create the basis polynomials
     def make_basis(eta=None, t=None, has_h_scaling=False):
-        return Basis(h, m, Lmax, Nmax, alpha, sigma, eta=eta, t=t, has_m_scaling=False, has_h_scaling=has_h_scaling, dtype=internal)
+        return Basis(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, eta=eta, t=t, has_m_scaling=False, has_h_scaling=has_h_scaling, dtype=internal)
 
     # Get the evaluation surface from the location argument
     if location in ['top', 'middle', 'bottom']:
@@ -351,7 +380,13 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, location, dtype='flo
         direction, = 't', 1.
     elif isinstance(location, str):
         locs = location.replace(' ', '').split('=')
-        direction, coordinate_value = locs[0], float(locs[1])
+        if locs[0] == 'z':
+            direction = 'eta'
+            if (locs[1], cylinder_type) == ('-h', 'half'):
+                raise ValueError('Half cylinder cannot be evaluated at z=-h')
+            coordinate_value = {'h': 1., '-h': -1., '0': {'full': 0., 'half': -1.}[cylinder_type]}[locs[1]]
+        else:
+            direction, coordinate_value = locs[0], float(locs[1])
     elif isinstance(location, tuple):
         direction, coordinate_value = location[0], float(location[1])
     else:
@@ -409,26 +444,21 @@ def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', inte
     return (make_op(0, L0) + make_op(2, L2)).astype(dtype)
 
 
-def project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, location, shift=0, dtype='float64', internal='float128'):
+@decorators.profile
+def project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, location, shift=0, halt=0, dtype='float64', internal='float128'):
     C = convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, dtype=dtype, internal=internal)
     _, offsets = coeff_sizes(Lmax, Nmax)
     if location in ['top', 'middle', 'bottom']:
-        offsets = offsets[:-1]
-        col = C[:,offsets[-(1+shift)]:]
+        col = C[:,offsets[Lmax-shift-1]:offsets[Lmax-shift]]
     elif location == 'side':
         indices = offsets[1:]-1
-        col = sparse.hstack([C[:,indices[ell]-shift:indices[ell]+1] for ell in range(Lmax)])
-    elif location == 'all':
-        indices = offsets[1:]-1
-        offsets = offsets[:-1]
-        col1 = sparse.hstack([C[:,indices[ell]-shift:indices[ell]+1] for ell in range(Lmax-2*(1+shift))])
-        col2 = C[:,offsets[-2*(1+shift)]:]
-        col = sparse.hstack([col1,col2])
+        col = sparse.hstack([C[:,indices[ell]-shift:indices[ell]-shift+1] for ell in range(Lmax-halt)])
     else:
         raise ValueError(f'Invalid location ({location})')
     return col
 
 
+@decorators.cached
 def _operator(name, cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', **kwargs):
     functions = {'gradient': gradient, 'divergence': divergence, 'curl': curl,
                  'scalar_laplacian': scalar_laplacian, 'vector_laplacian': vector_laplacian,

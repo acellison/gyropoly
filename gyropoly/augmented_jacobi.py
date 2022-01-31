@@ -7,6 +7,7 @@ from scipy.sparse import dia_matrix as banded
 import dedalus_sphere.operators as de_operators
 from dedalus_sphere.operators import infinite_csr
 from . import tools
+from . import decorators
 
 __all__ = ['AugmentedJacobiSystem', 'AugmentedJacobiOperator', 'operator', 'operators']
 
@@ -867,6 +868,7 @@ def differential_operator_adjoint(kind, system, n, dtype='float64', internal='fl
     return diags(bands, offsets, shape=(n+m,n), dtype=dtype)
 
 
+@decorators.cached
 def operator(name, factors, dtype='float64', internal='float128', **recurrence_kwargs):
     """
     Interface to AugmentedJacobiOperator class
@@ -876,8 +878,12 @@ def operator(name, factors, dtype='float64', internal='float128', **recurrence_k
     name : str or tuple
         If str: A, B, D, E, F, G, Id, N, Z (Jacobi operator)
         If tuple: ('C', index) for C embedding operator
-    factors : list
-        Sequence of monomial basis coefficients for augmented polynomial factors
+    factors : tuple
+        Sequence of monomial basis coefficients for augmented polynomial factors.
+        Because this function uses caching, the input factors argument gets converted
+        to a tuple of tuples.  The outer tuple has length equal to the number of
+        augmenting factors while each inner tuple is the monomial coefficients
+        for that corresponding factor.
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -895,11 +901,11 @@ def operator(name, factors, dtype='float64', internal='float128', **recurrence_k
     if name == 'N':
         return AugmentedJacobiOperator.number(factors, dtype=dtype)
     if name == 'Z':
-        return AugmentedJacobiOperator.recurrence(factors, dtype=dtype, internal=internal)
+        return AugmentedJacobiOperator.recurrence(factors, dtype=dtype, internal=internal, **recurrence_kwargs)
     if len(factors) == 1 and name == 'C':
         name = ('C', 0)
     if name == 'rhoprime':
-        return AugmentedJacobiOperator.rhoprime(factors, dtype=dtype, internal=internal)
+        return AugmentedJacobiOperator.rhoprime(factors, dtype=dtype, internal=internal, **recurrence_kwargs)
     return AugmentedJacobiOperator(name, factors, dtype=dtype, internal=internal, **recurrence_kwargs)
 
 
@@ -910,7 +916,7 @@ def operators(factors, dtype='float64', internal='float128', **recurrence_kwargs
 
     Parameters
     ----------
-    factors : list
+    factors : tuple
         Sequence of monomial basis coefficients for augmented polynomial factors
     dtype : data-type, optional
         Desired data-type for the output
@@ -1049,8 +1055,8 @@ class AugmentedJacobiOperator():
         self.__factors = factors
         self.__weight = PolynomialProduct(factors)
         self.__unweighted_degree = self.weight.total_degree(weighted=False)
-        self.dtype, self.internal = dtype, internal
-        self.recurrence_kwargs = recurrence_kwargs
+        self.__dtype, self.__internal = dtype, internal
+        self.__recurrence_kwargs = recurrence_kwargs
 
     @property
     def factors(self):
@@ -1063,6 +1069,14 @@ class AugmentedJacobiOperator():
     @property
     def unweighted_degree(self):
         return self.__unweighted_degree
+
+    @property
+    def dtype(self):
+        return self.__dtype
+
+    @property
+    def internal(self):
+        return self.__internal
 
     @staticmethod
     def identity(factors, dtype='float64'):
@@ -1080,19 +1094,21 @@ class AugmentedJacobiOperator():
         return Operator(factors,N,AugmentedJacobiCodomain(0,0,0,(0,)*nc))
 
     @staticmethod
-    def recurrence(factors, dtype='float64', internal='float128'):
+    def recurrence(factors, dtype='float64', internal='float128', **recurrence_kwargs):
+        @decorators.cached
         def Z(n,a,b,c):
             system = AugmentedJacobiSystem(a, b, zip(factors,c))
-            op = system.recurrence(n, dtype=dtype, internal=internal)
+            op = system.recurrence(n, dtype=dtype, internal=internal, **recurrence_kwargs)
             return infinite_csr(op)
         nc = len(factors)
         return Operator(factors,Z,AugmentedJacobiCodomain(1,0,0,(0,)*nc))
 
     @staticmethod
-    def rhoprime(factors, dtype='float64', internal='float128'):
+    def rhoprime(factors, dtype='float64', internal='float128', **recurrence_kwargs):
+        @decorators.cached
         def R(n,a,b,c):
             system = AugmentedJacobiSystem(a, b, zip(factors,c))
-            op = rhoprime_multiplication(system, n, dtype=dtype, internal=internal)
+            op = rhoprime_multiplication(system, n, dtype=dtype, internal=internal, **recurrence_kwargs)
             return infinite_csr(op)
         nc = len(factors)
         dn = PolynomialProduct(factors).total_degree(weighted=False)-1
@@ -1147,6 +1163,7 @@ class AugmentedJacobiOperator():
         nc = len(self.weight)
         return op, AugmentedJacobiCodomain(dn,-p,-p,(p,)*nc)
 
+    @decorators.cached
     def __dispatch(self,kind,p,n,a,b,c):
         if isinstance(kind, tuple):
             if kind[0] == 'C':
@@ -1162,7 +1179,7 @@ class AugmentedJacobiOperator():
         else:
             raise ValueError(f'Unknown operator kind: {kind}')
         system = AugmentedJacobiSystem(a, b, zip(self.factors,c))
-        op = fun(kind, system, n, dtype=self.dtype, internal=self.internal, **self.recurrence_kwargs)
+        op = fun(kind, system, n, dtype=self.dtype, internal=self.internal, **self.__recurrence_kwargs)
         return infinite_csr(op)
 
 

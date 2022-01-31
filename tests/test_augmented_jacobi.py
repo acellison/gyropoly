@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from dedalus_sphere import jacobi
 
 from gyropoly import augmented_jacobi as ajacobi
+from gyropoly.decorators import profile
 make_system = ajacobi.AugmentedJacobiSystem
 
 
@@ -485,6 +486,24 @@ def test_mismatching_augmented_weight():
     check_doesnt_raise(lambda: A1(+1) @ A2(+1))
     check_doesnt_raise(lambda: A1(+1) + A2(+1))
     check_doesnt_raise(lambda: A1(+1) * A2(+1))
+
+
+def profile_cache():
+    rho = [(1,0,1)]
+    n,a,b,c = 200, 1, 1, 3
+    
+    @profile
+    def build(C, Z):
+        return (Z @ C(-1)**2 @ C(+1)**2)(n,a,b,(c,))
+
+    Z1 = ajacobi.operator('Z', rho)
+    C1 = ajacobi.operator('C', rho)
+    for i in range(3):
+        build(C1, Z1)
+    Z2 = ajacobi.operator('Z', rho)
+    C2 = ajacobi.operator('C', rho)
+    for i in range(3):
+        build(C2, Z2)
 
 
 def main():
