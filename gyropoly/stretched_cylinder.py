@@ -384,8 +384,7 @@ def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, dtype='flo
     _check_cylinder_type(cylinder_type)
 
     ops = aj_operators([h], dtype=internal, internal=internal)
-    B, Id = ops('B'), ops('Id')
-    R = ops('rhoprime', weighted=False)
+    B, R, Id = ops('B'), ops('rhoprime', weighted=False), ops('Id')
     Zero = 0*Id
 
     if surface == 'z=h':
@@ -494,8 +493,8 @@ def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', inte
     _check_cylinder_type(cylinder_type)
     ops = aj_operators([h], dtype=internal, internal=internal)    
     A, C = ops('A'), ops('C')
-    L0 = A(+1) @ C(+1)**2
-    L2 = A(+1) @ C(-1)**2
+    L0 =  A(+1) @ C(+1)**2
+    L2 = -A(+1) @ C(-1)**2
     mods = _get_ell_modifiers(Lmax, alpha, dtype=internal, internal=internal)
 
     make_op = lambda dell, sop: _make_operator(dell, mods[dell], sop, m, Lmax, Nmax, alpha, sigma)

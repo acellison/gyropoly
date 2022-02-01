@@ -10,8 +10,15 @@ Omega = 1.
 h = [Omega/(2+Omega), 1.]
 m, Lmax, Nmax = 3, 4, 10
 alpha = 1.
-cylinder_type = 'full'
+cylinder_type = 'half'
 operators = sc.operators(cylinder_type, h, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha)
+
+
+def plotfield(s, z, f, fig=None, ax=None):
+    if fig is None or ax is None:
+        fig, ax = plt.subplots()
+    im = ax.pcolormesh(s, z, f, shading='gouraud')
+    fig.colorbar(im, ax=ax)
 
 
 def create_scalar_basis(Lmax, Nmax, alpha, t, eta):
@@ -28,10 +35,36 @@ def test_gradient():
     ax.spy(op)
 
 
+def test_divergence():
+    op = operators('divergence')
+    fig, ax = plt.subplots()
+    ax.spy(op)
+
+
 def test_laplacian():
     op = operators('vector_laplacian')
     fig, ax = plt.subplots()
     ax.spy(op)
+
+
+def test_convert():
+    op = operators('convert', sigma=0)
+
+    ncoeff = sc.total_num_coeffs(Lmax, Nmax)
+    c = 2*np.random.rand(ncoeff) - 1
+    d = op @ c
+
+    t = np.linspace(-1,1,100)
+    eta = np.linspace(-1,1,101)
+    basis0 = create_scalar_basis(Lmax, Nmax, alpha,   t, eta)
+    basis1 = create_scalar_basis(Lmax, Nmax, alpha+1, t, eta)
+    s, z = basis0.s(), basis0.z()
+
+    f = basis0.expand(c)
+    g = basis1.expand(d)
+
+    error = f-g
+    assert np.max(abs(error)) < 1e-13
 
 
 def test_ndot_top():
@@ -60,11 +93,11 @@ def test_ndot_top():
     up, um, w = [vector_basis[key].expand(coeffs) for key,coeffs in [('up', Cp), ('um', Cm), ('w', Cz)]]
     u = 1/np.sqrt(2) * (up + um)
     hp = np.polyval(np.polyder(scalar_basis.h), t)
-    ndotu_grid = -2*np.sqrt(2) * hp * np.sqrt(1+t) * u + w
+    ndotu_grid = -2*np.sqrt(2*(1+t)) * hp * u + w
 
     # Compute the error
     error = ndotu - ndotu_grid
-    assert np.max(abs(error)) < 5e-14
+    assert np.max(abs(error)) < 1e-13
 
 
 def test_ndot_bottom():
@@ -220,9 +253,11 @@ def test_project():
 
 if __name__=='__main__':
 #    test_gradient()
+#    test_divergence()
 #    test_laplacian()
-    test_normal_component()
-    test_boundary()
-    test_project()
+    test_convert()
+#    test_normal_component()
+#    test_boundary()
+#    test_project()
     plt.show()
 

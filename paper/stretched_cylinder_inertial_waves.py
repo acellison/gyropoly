@@ -188,7 +188,7 @@ def _get_directory(prefix='data'):
     return directory
 
   
-def solve_eigenproblem(omega, cylinder_type, h, m, Lmax, Nmax, boundary_method, force_solve=True, alpha=0):
+def solve_eigenproblem(omega, cylinder_type, h, m, Lmax, Nmax, force_solve=True, alpha=0):
     alphastr = '' if alpha == 0 else f'-alpha={alpha}'
 
     directory = _get_directory('data')
@@ -202,7 +202,6 @@ def solve_eigenproblem(omega, cylinder_type, h, m, Lmax, Nmax, boundary_method, 
 
         data = {'cylinder_type': cylinder_type,
                 'omega': omega, 'h': h, 'm': m, 'Lmax': Lmax, 'Nmax': Nmax, 'alpha': alpha,
-                'boundary_method': boundary_method,
                 'evalues': evalues, 'evectors': evectors}
         with open(filename, 'wb') as file:
             pickle.dump(data, file)
@@ -256,7 +255,7 @@ def expand_evector(evector, bases, names='all', return_boundary_errors=False, ve
         top = np.max(abs(ndotu))
 
     if verbose and not np.all(np.isnan([top,bot,side])):
-        print(f'Boundary errors: top = {top}, bottom = {bot}, side = {side}')
+        print(f'Boundary errors: top = {top:1.4e}, bottom = {bot:1.4e}, side = {side:1.4e}')
 
     fields = {'u': u, 'v': v, 'w': w, 'p': p}
     if return_boundary_errors:
@@ -264,7 +263,7 @@ def expand_evector(evector, bases, names='all', return_boundary_errors=False, ve
     return fields
 
 
-def plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, bases, boundary_method, fig=None, ax=None):
+def plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, bases, fig=None, ax=None):
     fields = expand_evector(evectors[:,index], bases, names='all')
 
     fieldname = 'p'
@@ -278,7 +277,7 @@ def plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, bases, bound
     return fig, ax
 
 
-def compare_mode(evalues, evectors, n, k, evalue_targets, roots, bases, boundary_method, plot=False):
+def compare_mode(evalues, evectors, n, k, evalue_targets, roots, bases, plot=False):
     field = 'p'
     basis = bases[field]
     m, Lmax, Nmax = basis.m, basis.Lmax, basis.Nmax
@@ -317,22 +316,22 @@ def plot_solution(data):
     cylinder_type = data['cylinder_type']
     h, m, Lmax, Nmax = [data[key] for key in ['h', 'm', 'Lmax', 'Nmax']]
     evalues, evectors = [data[key] for key in ['evalues', 'evectors']]
-    boundary_method = data['boundary_method']
     alpha = data.pop('alpha', 0)
 
     t = np.linspace(-1,1,400)
-    eta = np.linspace(-1,1.,301)
+    etamin = -1 if cylinder_type == 'half' else 0
+    eta = np.linspace(etamin,1.,301)
     bases = create_bases(cylinder_type, h, m, Lmax, Nmax, alpha, t, eta)
 
     n, kmax = 3, 7
     evalue_targets, roots = analytic_eigenvalues(m, n, kmax+1, maxiter=20, radius=1.)
     for k in range(kmax//2, kmax+1):
         plot = k == kmax//2
-        compare_mode(evalues, evectors, n, k, evalue_targets, roots, bases, boundary_method, plot=plot)
+        compare_mode(evalues, evectors, n, k, evalue_targets, roots, bases, plot=plot)
 
 
     def onpick(index):
-        return plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, bases, boundary_method)
+        return plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, bases)
 
     fig, ax = plot_spectrum(evalues, onpick=onpick)
     ax.set_xlim([-2.1,2.1])
@@ -341,16 +340,15 @@ def plot_solution(data):
 
 
 def main():
-    omega = .001
+    omega = 0.01
     h = [omega/(2+omega), 1.]
 
     cylinder_type = 'half'
     m, Lmax, Nmax, alpha = 30, 10, 30, 0
-    boundary_method = 'tau'
-    force_solve = True
+    force_solve = False
 
     print(f'm = {m}, Lmax = {Lmax}, Nmax = {Nmax}, alpha = {alpha}, omega = {omega}')
-    data = solve_eigenproblem(omega, cylinder_type, h, m, Lmax, Nmax, boundary_method, force_solve=force_solve, alpha=alpha)
+    data = solve_eigenproblem(omega, cylinder_type, h, m, Lmax, Nmax, force_solve=force_solve, alpha=alpha)
     plot_solution(data)
 
 
