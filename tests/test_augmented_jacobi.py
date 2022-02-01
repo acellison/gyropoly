@@ -218,6 +218,13 @@ def test_embedding_operators():
                                             'A-': 5e-16, 'B-': 3e-16, 'C-': [5e-16,2e-15]})
 
 
+    # Test 4: Stretched Cylinder Polynomials
+    m, alpha, sigma, ell = 10, 1, 1, 0
+    a, b, rho, c = alpha, m+sigma, [1/3,1], 2*ell+2*alpha+1
+    run_tests(a, b, [(rho,c)], {'A+': 8e-15, 'B+': 2e-14, 'C+': [4e-15],
+                                'A-': 8e-15, 'B-': 2e-14, 'C-': [8e-15]})
+
+
 def test_rhoprime_multiplication():
     print('test_rhoprime_multiplication')
     n, a, b = 10, 1, 1

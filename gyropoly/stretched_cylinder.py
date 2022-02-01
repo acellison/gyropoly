@@ -12,55 +12,125 @@ __all__ = ['Basis', 'total_num_coeffs', 'coeff_sizes', 'operators'
 
 class Basis():
     def __init__(self, cylinder_type, h, m, Lmax, Nmax, alpha, sigma, eta=None, t=None, has_m_scaling=True, has_h_scaling=True, dtype='float64'):
-        _check_radial_degree(Lmax, Nmax)
-        if cylinder_type not in ['full', 'half']:
-            raise ValueError(f"Invalid cylinder_type (={cylinder_type}).  Must be either 'full' or 'half'")
         _check_cylinder_type(cylinder_type)
-        self.cylinder_type = cylinder_type
-        self.h, self.m, self.Lmax, self.Nmax = h, m, Lmax, Nmax
-        self.alpha, self.sigma = alpha, sigma
-        self.dtype = dtype
+        _check_radial_degree(Lmax, Nmax)
+        self.__cylinder_type = cylinder_type
+        self.__h, self.__m, self.__Lmax, self.__Nmax = h, m, Lmax, Nmax
+        self.__alpha, self.__sigma = alpha, sigma
+        self.__dtype = dtype
 
         # Get the number of coefficients including truncation
-        self.num_coeffs = total_num_coeffs(Lmax, Nmax)
+        self.__num_coeffs = total_num_coeffs(Lmax, Nmax)
 
         # Construct the radial polynomial systems
-        self.systems = [ajacobi.AugmentedJacobiSystem(alpha, m+sigma, [(h,2*ell+2*alpha+1)]) for ell in range(Lmax)]
+        self.__systems = [ajacobi.AugmentedJacobiSystem(alpha, m+sigma, [(h,2*ell+2*alpha+1)]) for ell in range(Lmax)]
 
         # Construct the polynomials if eta and t are not None
-        self.has_m_scaling, self.has_h_scaling = has_m_scaling, has_h_scaling
-        self.P, self.Q = None, None
+        self.__has_m_scaling, self.__has_h_scaling = has_m_scaling, has_h_scaling
+        self.__P, self.__Q, self.__t, self.__eta = (None,)*4
         self._make_vertical_polynomials(eta)
         self._make_radial_polynomials(t)
 
     @property
+    def cylinder_type(self):
+        return self.__cylinder_type
+
+    @property
+    def h(self):
+        return self.__h
+
+    @property
+    def m(self):
+        return self.__m
+
+    @property
+    def Lmax(self):
+        return self.__Lmax
+
+    @property
+    def Nmax(self):
+        return self.__Nmax
+
+    @property
+    def alpha(self):
+        return self.__alpha
+
+    @property
+    def sigma(self):
+        return self.__sigma
+
+    @property
+    def dtype(self):
+        return self.__dtype
+
+    @property
+    def num_coeffs(self):
+        return self.__num_coeffs
+
+    @property
+    def has_m_scaling(self):
+        return self.__has_m_scaling
+
+    @property
+    def has_h_scaling(self):
+        return self.__has_h_scaling
+
+    @property
     def vertical_polynomials(self):
-        return self.P
+        return self.__P
 
     @property
     def radial_polynomials(self):
-        return self.Q
+        return self.__Q
 
-    def vertical_polynomial(self, ell, eta=None):
+    @property
+    def t(self):
+        return self.__t
+
+    @property
+    def eta(self):
+        return self.__eta
+
+    @decorators.cached
+    def s(self):
+        t = self.t
+        if t is None:
+            raise ValueError('Basis constructed without valid t coordinate')
+        return np.sqrt((1+t)/2)
+
+    @decorators.cached
+    def z(self):
+        t, eta = self.t, self.eta
+        if t is None:
+            raise ValueError('Basis constructed without valid t coordinate')
+        if eta is None:
+            raise ValueError('Basis constructed without valid eta coordinate')
+        tt, ee = t[np.newaxis,:], eta[:,np.newaxis]
+        ee = ee if self.cylinder_type == 'full' else (ee+1)/2
+        return ee * np.polyval(self.h, tt)
+
+    def vertical_polynomial(self, ell):
         if ell >= self.Lmax:
             raise ValueError(f'ell (={ell}) index exceeds maximum Lmax-1 (={self.Lmax-1})')
-        self._make_vertical_polynomials(eta)
-        if self.P is None:
-            raise ValueError('Never constructed the vertical polynomials.  Did you mean to call this with eta?')
-        return self.P[ell]
+        P = self.vertical_polynomials
+        if P is None:
+            raise ValueError('Basis constructed without eta argument')
+        return P[ell]
 
-    def radial_polynomial(self, ell, k, t=None):
+    def radial_polynomial(self, ell, k):
         if ell >= self.Lmax:
             raise ValueError(f'ell (={ell}) index exceeds maximum Lmax-1 (={self.Lmax-1})')
         if k >= _radial_size(self.Nmax, ell):
-            raise ValueError(f'k (={k}) index exceeds maximum Nmax-ell-1 (={_radial_size(self.Nmax, ell)})')
-        if self.Q is None:
-            raise ValueError('Never constructed the radial polynomials.  Did you mean to call this with t?')
-        return self.Q[ell][k]
+            raise ValueError(f'k (={k}) index exceeds maximum Nmax-ell-1 (={_radial_size(self.Nmax, ell)-1})')
+        Q = self.radial_polynomials
+        if Q is None:
+            raise ValueError('Basis constructed without t argument')
+        return Q[ell][k]
 
     def expand(self, coeffs):
         # Ensure we already constructed our basis functions
-        if self.P is None or self.Q is None:
+        P, Q = self.vertical_polynomials, self.radial_polynomials
+        if P is None or Q is None:
             raise ValueError('Never constructed the polynomial basis')
 
         # Check the coefficient size matches the basis
@@ -74,57 +144,30 @@ class Basis():
         # Iterate through each basis function, adding in its weighted contribution
         index = 0
         for ell in range(self.Lmax):
-            Pl = self.P[ell]
             for k in range(_radial_size(self.Nmax, ell)):
-                Qlk = self.Q[ell][k]
-                f += coeffs[index] * Pl[:,np.newaxis] * Qlk[np.newaxis,:]
+                f += coeffs[index] * P[ell][:,np.newaxis] * Q[ell][k][np.newaxis,:]
                 index += 1
         return f
 
-    def s(self, t=None):
-        if t is None:
-            if self.t is None:
-                raise ValueError('missing t argument')
-            t = self.t
-        return np.sqrt((1+t)/2)
-
-    def z(self, t=None, eta=None):
-        if t is None:
-            if self.t is None:
-                raise ValueError('missing t argument')
-            t = self.t
-        if eta is None:
-            if self.eta is None:
-                raise ValueError('missing eta argument')
-            eta = self.eta
-        tt, ee = t[np.newaxis,:], eta[:,np.newaxis]
-        ee = ee if self.cylinder_type == 'full' else (ee-1)/2
-        return ee * np.polyval(self.h, tt)
-
     def _make_vertical_polynomials(self, eta):
         if eta is not None:
-            self.eta = eta
-            self.P = jacobi.polynomials(self.Lmax, self.alpha, self.alpha, eta, dtype=self.dtype)
+            self.__eta = eta
+            self.__P = jacobi.polynomials(self.Lmax, self.alpha, self.alpha, eta, dtype=self.dtype)
 
     def _make_radial_polynomials(self, t):
         if t is not None:
-            self.t = t
+            self.__t = t
             if self.has_m_scaling:
-                prefactor = (1+t)**(self.m + self.sigma)
+                prefactor = (1+t)**((self.m + self.sigma)/2)
             else:
-                prefactor = (1+t)**self.sigma
+                prefactor = (1+t)**(self.sigma/2)
             if self.has_h_scaling:
                 ht = np.polyval(self.h, t)
             else:
                 ht = 1.
-            self.height = ht
-            poly = lambda ell: self.systems[ell].polynomials(_radial_size(self.Nmax, ell), t, dtype=self.dtype)
-            self.Q = [prefactor * ht**ell * poly(ell) for ell,system in enumerate(self.systems)]
-
-
-def _radial_jacobi_parameters(m, alpha, sigma, ell=None):
-    fn = lambda l: (alpha, m+sigma, (2*l+2*alpha+1,))
-    return fn(ell) if ell is not None else fn
+            systems = self.__systems
+            polys = lambda ell: systems[ell].polynomials(_radial_size(self.Nmax, ell), t, dtype=self.dtype)
+            self.__Q = [prefactor * ht**ell * polys(ell) for ell,system in enumerate(systems)]
 
 
 def _get_ell_modifiers(Lmax, alpha, dtype='float64', internal='float128'):
@@ -168,6 +211,11 @@ def coeff_sizes(Lmax, Nmax):
 
 def total_num_coeffs(Lmax, Nmax):
     return coeff_sizes(Lmax, Nmax)[1][-1]
+
+
+def _radial_jacobi_parameters(m, alpha, sigma, ell=None):
+    fn = lambda l: (alpha, m+sigma, (2*l+2*alpha+1,))
+    return fn(ell) if ell is not None else fn
 
 
 def _make_operator(dell, zop, sop, m, Lmax, Nmax, alpha, sigma, Lpad=0, Npad=0):
@@ -335,8 +383,9 @@ def vector_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', in
 def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, dtype='float64', internal='float128', exact=False):
     _check_cylinder_type(cylinder_type)
 
-    ops = aj_operators([h], dtype=internal, internal=internal)    
-    B, R, Id = ops('B'), ops('rhoprime'), ops('Id')
+    ops = aj_operators([h], dtype=internal, internal=internal)
+    B, Id = ops('B'), ops('Id')
+    R = ops('rhoprime', weighted=False)
     Zero = 0*Id
 
     if surface == 'z=h':
@@ -344,7 +393,9 @@ def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, dtype='flo
         Lm = -2 * R @ B(+1)
         Lz = Id
         dn = 1 + R.codomain.dn
-    elif (cylinder_type, surface) == ('full', 'z=-h'):
+    elif surface == 'z=-h':
+        if cylinder_type != 'full':
+                raise ValueError('Half cylinder cannot be evaluated at z=-h')
         # If we're at the bottom flip the sign of the z component compared to the top
         N = normal_component('full', 'top', h, m, Lmax, Nmax, alpha, dtype=dtype, internal=internal, exact=exact).tocsr()
         n = total_num_coeffs(Lmax, Nmax)
@@ -365,9 +416,9 @@ def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, dtype='flo
 
     zop = np.ones(Lmax)
     Npad = dn if exact else 0
-    make_op = lambda sigma, sop: _make_operator(0, zop, sop, m, Lmax, Nmax, alpha, sigma, Npad=Npad)
+    make_op = lambda sigma, sop: _make_operator(0, zop, sop, m, Lmax, Nmax, alpha, sigma, Npad=Npad).astype(dtype)
     ops = [make_op(sigma, L) for sigma, L in [(+1,Lp),(-1,Lm),(0,Lz)]]
-    return sparse.hstack([make_op(sigma, L) for sigma, L in [(+1,Lp),(-1,Lm),(0,Lz)]]).astype(dtype)
+    return sparse.hstack(ops)
 
 
 def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', internal='float128'):
@@ -461,7 +512,8 @@ def project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, direction, shift=0, L
     elif direction == 's':
         # Size Lmax-halt, projecting onto all vertical coefficients of fixed total polynomial degree
         indices = offsets[1:]-1
-        col = sparse.hstack([C[:,indices[ell]-shift] for ell in range(Lmax-Lstop)])
+        Lend = Lmax+Lstop if Lstop <= 0 else Lstop
+        col = sparse.hstack([C[:,indices[ell]-shift] for ell in range(Lend)])
     else:
         raise ValueError(f'Invalid direction ({direction})')
     return col
