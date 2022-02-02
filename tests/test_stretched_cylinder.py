@@ -25,20 +25,118 @@ def create_scalar_basis(Lmax, Nmax, alpha, t, eta):
     return sc.Basis(cylinder_type, h, m, Lmax, Nmax, alpha=alpha, sigma=0, eta=eta, t=t)
 
 
-def create_vector_bases(Lmax, Nmax, alpha, t, eta):
+def create_vector_basis(Lmax, Nmax, alpha, t, eta):
     return {key: sc.Basis(cylinder_type, h, m, Lmax, Nmax, alpha=alpha, sigma=s, eta=eta, t=t) for key, s in [('up', +1), ('um', -1), ('w', 0)]}
 
 
+def dZ(f, s, eta, h):
+    deta = np.gradient(f, eta, axis=0)
+    scale = 2 if cylinder_type == 'half' else 1
+    return scale/h[np.newaxis,:] * deta
+
+
+def dS(f, s, eta, h, dhdt):
+    deta, ds = np.gradient(f, eta, s)
+    if cylinder_type == 'half':
+        eta = 1+eta
+    return ds - 4*s*(dhdt/h)[np.newaxis,:] * eta[:,np.newaxis] * deta
+
+
+def dPhi(f, m):
+    return 1j*m * f
+
+
 def test_gradient():
+    # Build the operator
     op = operators('gradient')
-    fig, ax = plt.subplots()
-    ax.spy(op)
+
+    # Apply the operator in coefficient space
+    ncoeff = sc.total_num_coeffs(Lmax, Nmax)
+    c = 2*np.random.rand(ncoeff) - 1
+    d = op @ c
+
+    # Build the bases
+    ns, neta = 4000, 401
+    s = np.linspace(0,1,ns+1)[1:]
+    t = 2*s**2-1
+    eta = np.linspace(-1,1,neta)
+    scalar_basis = create_scalar_basis(Lmax, Nmax, alpha,   t, eta)
+    vector_basis = create_vector_basis(Lmax, Nmax, alpha+1, t, eta)
+
+    # Expand the scalar field and compute its gradient with finite differences
+    f = scalar_basis.expand(c)
+    hs = np.polyval(scalar_basis.h, t)
+    dhdt = np.polyval(np.polyder(scalar_basis.h), t)
+
+    ugrid = dS(f, s, eta, hs, dhdt)
+    vgrid = 1/s * dPhi(f, m)
+    wgrid = dZ(f, s, eta, hs)
+
+    # Expand the result of the operator in grid space
+    Up, Um, W = [d[i*ncoeff:(i+1)*ncoeff] for i in range(3)]
+    up, um, w = [vector_basis[key].expand(coeffs) for key,coeffs in [('up', Up), ('um', Um), ('w', W)]]
+    u =   1/np.sqrt(2) * (up + um)
+    v = -1j/np.sqrt(2) * (up - um)
+
+    # Compute Errors
+    def check(field, grid, name, tol):
+        sz, ez = ns//20, neta//10
+        f, g = [a[ez:-ez,sz:-sz] for a in [field, grid]]
+        error = np.max(abs(f-g))
+        if error > tol:
+            print(f'Maximum interior error for {name}: {error}')
+        assert error <= tol
+
+    check(u, ugrid, 'u', 1e-2)
+    check(w, wgrid, 'w', 1e-3)
+    assert np.max(abs(v-vgrid)) < 1e-11
 
 
 def test_divergence():
+    # Build the operator
     op = operators('divergence')
-    fig, ax = plt.subplots()
-    ax.spy(op)
+
+    # Apply the operator in coefficient space
+    ncoeff = sc.total_num_coeffs(Lmax, Nmax)
+    c = 2*np.random.rand(3*ncoeff) - 1
+    d = op @ c
+
+    # Build the bases
+    ns, neta = 4000, 401
+    s = np.linspace(0,1,ns+1)[1:]
+    t = 2*s**2-1
+    eta = np.linspace(-1,1,neta)
+    vector_basis = create_vector_basis(Lmax, Nmax, alpha,   t, eta)
+    scalar_basis = create_scalar_basis(Lmax, Nmax, alpha+1, t, eta)
+
+    # Expand the vector field and compute its divergence with finite differences
+    Up, Um, W = [c[i*ncoeff:(i+1)*ncoeff] for i in range(3)]
+    up, um, w = [vector_basis[key].expand(coeffs) for key,coeffs in [('up', Up), ('um', Um), ('w', W)]]
+    u =   1/np.sqrt(2) * (up + um)
+    v = -1j/np.sqrt(2) * (up - um)
+
+    hs = np.polyval(scalar_basis.h, t)
+    dhdt = np.polyval(np.polyder(scalar_basis.h), t)
+
+    du = dS(u, s, eta, hs, dhdt) + 1/s * u
+    dv = 1/s * dPhi(v, m)
+    dw = dZ(w, s, eta, hs)
+
+    grid = du + dv + dw
+
+    # Expand the result of the operator in grid space
+    f = scalar_basis.expand(d)
+
+    # Compute Errors
+    def check(field, grid, name, tol):
+        sz, ez = ns//20, neta//10
+        f, g = [a[ez:-ez,sz:-sz] for a in [field, grid]]
+        error = np.max(abs(f-g))
+        if error > tol:
+            print(f'Maximum interior error for {name}: {error}')
+        assert error <= tol
+
+    check(f, grid, 'divergence', 1e-2)
 
 
 def test_laplacian():
@@ -82,7 +180,7 @@ def test_ndot_top():
     t = np.linspace(-1,1,100)
     eta = np.linspace(-1,1,101)
     scalar_basis = create_scalar_basis(Lmax, Nmax+dn, alpha, t, eta)
-    vector_basis = create_vector_bases(Lmax, Nmax,    alpha, t, eta)
+    vector_basis = create_vector_basis(Lmax, Nmax,    alpha, t, eta)
     s, z = scalar_basis.s(), scalar_basis.z()
 
     # Evaluate the operator output in the scalar basis
@@ -112,7 +210,7 @@ def test_ndot_bottom():
     t = np.linspace(-1,1,100)
     eta = np.linspace(-1,1,101)
     scalar_basis = create_scalar_basis(Lmax, Nmax, alpha, t, eta)
-    vector_basis = create_vector_bases(Lmax, Nmax, alpha, t, eta)
+    vector_basis = create_vector_basis(Lmax, Nmax, alpha, t, eta)
     s, z = scalar_basis.s(), scalar_basis.z()
 
     # Evaluate the operator output in the scalar basis
@@ -143,7 +241,7 @@ def test_ndot_side():
     t = np.linspace(-1,1,100)
     eta = np.linspace(-1,1,101)
     scalar_basis = create_scalar_basis(Lmax, Nmax+dn, alpha, t, eta)
-    vector_basis = create_vector_bases(Lmax, Nmax,    alpha, t, eta)
+    vector_basis = create_vector_basis(Lmax, Nmax,    alpha, t, eta)
     s, z = scalar_basis.s(), scalar_basis.z()
 
     # Evaluate the operator output in the scalar basis
@@ -247,17 +345,14 @@ def test_project():
     n = sum(ns)
     assert n == 2*Nmax+Lmax-3
 
-    op = sparse.hstack(all_ops)
-    fig, ax = plt.subplots()
-    plt.spy(op)
 
 if __name__=='__main__':
-#    test_gradient()
-#    test_divergence()
+    test_gradient()
+    test_divergence()
 #    test_laplacian()
     test_convert()
-#    test_normal_component()
-#    test_boundary()
-#    test_project()
+    test_normal_component()
+    test_boundary()
+    test_project()
     plt.show()
 

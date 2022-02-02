@@ -148,8 +148,6 @@ def build_matrices_tau(cylinder_type, h, m, Lmax, Nmax, alpha):
     row = build_boundary(cylinder_type, h, m, Lmax, Nmax, alpha)['combined']
 
     # Tau projections for enforcing the boundaries
-    """
-    # Pretty good!
     col1 = operators('project', alpha=alpha, sigma=+1, direction='s')
     col2 = operators('project', alpha=alpha, sigma=-1, direction='z')
     col3 = operators('project', alpha=alpha, sigma=-1, direction='s', Lstop=-1)
@@ -158,18 +156,6 @@ def build_matrices_tau(cylinder_type, h, m, Lmax, Nmax, alpha):
     colp = sparse.hstack([col1])
     colm = sparse.hstack([col2,col3])
     colz = sparse.hstack([col4,col5])
-    """
-    # Quite good!
-#    col1 = operators('project', alpha=alpha, sigma=+1, direction='s', Lstop=-1)
-#    col2 = operators('project', alpha=alpha, sigma=-1, direction='s')
-    col1 = operators('project', alpha=alpha, sigma=+1, direction='s')
-    col2 = operators('project', alpha=alpha, sigma=-1, direction='s', Lstop=-1)
-    col3 = operators('project', alpha=alpha, sigma=0,  direction='z')
-    col4 = operators('project', alpha=alpha, sigma=0,  direction='z', shift=1)
-    col5 = operators('project', alpha=alpha, sigma=0,  direction='s', Lstop=-2)
-    colp = sparse.hstack([col1])
-    colm = sparse.hstack([col2])
-    colz = sparse.hstack([col3,col4,col5])
 
     cols = [colp, colm, colz]
     col = sparse.vstack([sparse.block_diag(cols), 0*sparse.hstack(cols)])
@@ -329,7 +315,6 @@ def plot_solution(data):
         plot = k == kmax//2
         compare_mode(evalues, evectors, n, k, evalue_targets, roots, bases, plot=plot)
 
-
     def onpick(index):
         return plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, bases)
 
@@ -340,12 +325,12 @@ def plot_solution(data):
 
 
 def main():
-    omega = 0.01
+    omega = 0.1
     h = [omega/(2+omega), 1.]
 
     cylinder_type = 'half'
     m, Lmax, Nmax, alpha = 30, 10, 30, 0
-    force_solve = False
+    force_solve = True
 
     print(f'm = {m}, Lmax = {Lmax}, Nmax = {Nmax}, alpha = {alpha}, omega = {omega}')
     data = solve_eigenproblem(omega, cylinder_type, h, m, Lmax, Nmax, force_solve=force_solve, alpha=alpha)

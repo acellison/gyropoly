@@ -296,9 +296,9 @@ def _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma,
 
     # Construct the fundamental Augmented Jacobi operators
     ops = aj_operators([h], dtype=internal, internal=internal)    
-    A, B, C, R = [ops(kind) for kind in ['A', 'B', 'C', 'rhoprime']]
+    A, B, C = [ops(kind) for kind in ['A', 'B', 'C']]
+    R = ops('rhoprime', weighted=False)
     Dz, Da, Db, Dc = [ops(kind) for kind in ['D', 'E', 'F', 'G']]
-    Zero = 0*ops('Id')
 
     # Construct the radial part of the operators.  
     # L<n> is the operator that maps vertical index ell to ell-n
@@ -314,9 +314,9 @@ def _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma,
         L2 = - C(-1) @ Da(-1)
     else:
         # Neutral operator
-        L0 = Zero
+        L0 = 0
         L1 = A(+1)
-        L2 = Zero
+        L2 = 0
     Ls = L0, L1, L2
 
     # Get the vertical polynomial scale factors for embedding ell -> ell-n
@@ -331,6 +331,9 @@ def _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma,
         scale = 2
     else:
         raise ValueError(f'Unknown cylinder_type {cylinder_type}')
+
+    # Neutral operator has just the ell->ell-1 component
+    if delta == 0: dells = (1,)
 
     # Construct the composite operators
     make_op = lambda dell, zop, sop: _make_operator(dell, zop, sop, m, Lmax, Nmax, alpha, sigma)
