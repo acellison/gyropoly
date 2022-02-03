@@ -63,13 +63,13 @@ def build_projections(cylinder_type, h, m, Lmax, Nmax, alpha, exact=False):
     operators = sc.operators(cylinder_type, h, m, Lmax, Nmax)
 
     col1 = operators('project', alpha=alpha, sigma=+1, direction='s')
-    col2 = operators('project', alpha=alpha, sigma=-1, direction='z')
-    col3 = operators('project', alpha=alpha, sigma=-1, direction='s', Lstop=-1)
-    col4 = operators('project', alpha=alpha, sigma=0,  direction='z')
-    col5 = operators('project', alpha=alpha, sigma=0,  direction='s', Lstop=-1)
+    col2 = operators('project', alpha=alpha, sigma=-1, direction='s')
+    col3 = operators('project', alpha=alpha, sigma=0,  direction='s', Lstop=-2)
+    col4 = operators('project', alpha=alpha, sigma=0,  direction='z', shift=1)
+    col5 = operators('project', alpha=alpha, sigma=0,  direction='z')
     colp = col1
-    colm = sparse.hstack([col2,col3])
-    colz = sparse.hstack([col4,col5])
+    colm = col2
+    colz = sparse.hstack([col3,col4,col5])
     cols = [colp, colm, colz]
     return sparse.vstack([sparse.block_diag(cols), 0*sparse.hstack(cols)])
 
@@ -91,7 +91,7 @@ def build_matrices_tau(cylinder_type, h, m, Lmax, Nmax, alpha):
     M = -sparse.block_diag([I, I, I, Z])
 
     # Build the combined boundary condition
-    row = build_boundary(cylinder_type, h, m, Lmax, Nmax, alpha)['combined']
+    row = build_boundary(cylinder_type, h, m, Lmax, Nmax, alpha, exact=True)['combined']
 
     # Tau projections for enforcing the boundaries
     col = build_projections(cylinder_type, h, m, Lmax, Nmax, alpha)
