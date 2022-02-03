@@ -14,6 +14,13 @@ cylinder_type = 'half'
 operators = sc.operators(cylinder_type, h, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha)
 
 
+def check_close(value, target, tol):
+    error = np.max(abs(value-target))
+    if error > tol:
+        print(f'Error {error:1.4e} exceeds tolerance {tol}')
+    assert error <= tol
+
+
 def plotfield(s, z, f, fig=None, ax=None):
     if fig is None or ax is None:
         fig, ax = plt.subplots()
@@ -79,17 +86,14 @@ def test_gradient():
     v = -1j/np.sqrt(2) * (up - um)
 
     # Compute Errors
-    def check(field, grid, name, tol):
+    def check(field, grid, tol):
         sz, ez = ns//20, neta//10
         f, g = [a[ez:-ez,sz:-sz] for a in [field, grid]]
-        error = np.max(abs(f-g))
-        if error > tol:
-            print(f'Maximum interior error for {name}: {error}')
-        assert error <= tol
+        check_close(f, g, tol)
 
-    check(u, ugrid, 'u', 1e-2)
-    check(w, wgrid, 'w', 1e-3)
-    assert np.max(abs(v-vgrid)) < 1e-11
+    check(u, ugrid, 1e-2)
+    check(w, wgrid, 1e-3)
+    check_close(v, vgrid, 1e-11)
 
 
 def test_divergence():
@@ -128,41 +132,29 @@ def test_divergence():
     f = scalar_basis.expand(d)
 
     # Compute Errors
-    def check(field, grid, name, tol):
+    def check(field, grid, tol):
         sz, ez = ns//20, neta//10
         f, g = [a[ez:-ez,sz:-sz] for a in [field, grid]]
-        error = np.max(abs(f-g))
-        if error > tol:
-            print(f'Maximum interior error for {name}: {error}')
-        assert error <= tol
+        check_close(f, g, tol)
 
-    check(f, grid, 'divergence', 1e-2)
+    check(f, grid, 1e-2)
+
+
+def test_curl():
+    pass
+
+
+def test_scalar_laplacian():
+    pass
+
+
+def test_vector_laplacian():
+    pass
 
 
 def test_laplacian():
-    op = operators('vector_laplacian')
-    fig, ax = plt.subplots()
-    ax.spy(op)
-
-
-def test_convert():
-    op = operators('convert', sigma=0)
-
-    ncoeff = sc.total_num_coeffs(Lmax, Nmax)
-    c = 2*np.random.rand(ncoeff) - 1
-    d = op @ c
-
-    t = np.linspace(-1,1,100)
-    eta = np.linspace(-1,1,101)
-    basis0 = create_scalar_basis(Lmax, Nmax, alpha,   t, eta)
-    basis1 = create_scalar_basis(Lmax, Nmax, alpha+1, t, eta)
-    s, z = basis0.s(), basis0.z()
-
-    f = basis0.expand(c)
-    g = basis1.expand(d)
-
-    error = f-g
-    assert np.max(abs(error)) < 1e-13
+    test_scalar_laplacian()
+    test_vector_laplacian()
 
 
 def test_ndot_top():
@@ -194,8 +186,7 @@ def test_ndot_top():
     ndotu_grid = -2*np.sqrt(2*(1+t)) * hp * u + w
 
     # Compute the error
-    error = ndotu - ndotu_grid
-    assert np.max(abs(error)) < 1e-13
+    check_close(ndotu, ndotu_grid, 2e-13)
 
 
 def test_ndot_bottom():
@@ -222,8 +213,7 @@ def test_ndot_bottom():
     ndotu_grid = -w
 
     # Compute the error
-    error = ndotu - ndotu_grid
-    assert np.max(abs(error)) < 1e-16
+    check_close(ndotu, ndotu_grid, 1e-16)
 
 
 def test_ndot_side():
@@ -254,7 +244,7 @@ def test_ndot_side():
 
     # Compute the error
     error = ndotu - ndotu_grid
-    assert np.max(abs(error)) < 1e-13
+    check_close(ndotu, ndotu_grid, 1e-13)
 
 
 def test_normal_component():
@@ -314,7 +304,7 @@ def test_boundary():
         errors[i,:] = [np.max(abs(a))/fmax for a in [f[-1,:], f[bottom_index,:], f[:,-1]]]
     max_error = np.max(abs(errors))
     print(f'Worst case relative boundary error: {max_error:1.4e}')
-    assert max_error < 1e-13
+    check_close(max_error, 0, 1e-13)
 
     plot_field = False
     if plot_field:
@@ -329,6 +319,25 @@ def test_boundary():
         fig.colorbar(im, ax=plot_axes[0])
         plot_axes[1].semilogy(abs(coeffs))
         plt.show()
+
+
+def test_convert():
+    op = operators('convert', sigma=0)
+
+    ncoeff = sc.total_num_coeffs(Lmax, Nmax)
+    c = 2*np.random.rand(ncoeff) - 1
+    d = op @ c
+
+    t = np.linspace(-1,1,100)
+    eta = np.linspace(-1,1,101)
+    basis0 = create_scalar_basis(Lmax, Nmax, alpha,   t, eta)
+    basis1 = create_scalar_basis(Lmax, Nmax, alpha+1, t, eta)
+    s, z = basis0.s(), basis0.z()
+
+    f = basis0.expand(c)
+    g = basis1.expand(d)
+
+    check_close(f, g, 1e-13)
 
 
 def test_project():
@@ -349,10 +358,11 @@ def test_project():
 if __name__=='__main__':
     test_gradient()
     test_divergence()
+#    test_curl()
 #    test_laplacian()
-    test_convert()
     test_normal_component()
     test_boundary()
+    test_convert()
     test_project()
     plt.show()
 

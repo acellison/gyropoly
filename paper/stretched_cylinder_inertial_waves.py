@@ -59,73 +59,19 @@ def build_boundary(cylinder_type, h, m, Lmax, Nmax, alpha, exact=False):
     return {'s=S': row1, 'z=h': row2, 'z=0': row3, 'combined': row}
 
 
-def test_boundary():
-    omega = .001
-    h = [omega/(2+omega), 1.]
+def build_projections(cylinder_type, h, m, Lmax, Nmax, alpha, exact=False):
+    operators = sc.operators(cylinder_type, h, m, Lmax, Nmax)
 
-    cylinder_type = 'full'
-    m, Lmax, Nmax, alpha = 30, 10, 30, 0
-
-    # Build the boundary operators
-    boundary = build_boundary(cylinder_type, h, m, Lmax, Nmax, alpha, exact=True)
-
-    evaluate_side = True
-    evaluate_top = True
-    evaluate_bottom = True
-
-    if evaluate_side:
-        surface = 's=S'
-        op = boundary[surface]
-        nullspace = sp.linalg.null_space(op.todense())
-
-        t, eta = np.array([1.]), np.linspace(-1,1,101)
-        bases = create_bases(cylinder_type, h, m, Lmax, Nmax, alpha, t, eta)
-
-        dim = np.shape(nullspace)[1]
-        errors = np.zeros(dim)
-        for i in range(dim):
-            evector = nullspace[:,i]
-            ncoeff = bases['p'].num_coeffs
-            fields, boundary_errors = expand_evector(evector, bases, names='all', return_boundary_errors=True, verbose=False)
-            errors[i] = boundary_errors[surface]
-        print(f'Max boundary surface {surface} error = ', max(errors))
-        assert max(errors) < 2e-11
-
-    if evaluate_top:
-        surface = 'z=h'
-        op = boundary[surface]
-        nullspace = sp.linalg.null_space(op.todense())
-
-        t, eta = np.linspace(-1,1,101), np.array([1.])
-        bases = create_bases(cylinder_type, h, m, Lmax, Nmax, alpha, t, eta)
-
-        dim = np.shape(nullspace)[1]
-        errors = np.zeros(dim)
-        for i in range(dim):
-            evector = nullspace[:,i]
-            ncoeff = bases['p'].num_coeffs
-            fields, boundary_errors = expand_evector(evector, bases, names='all', return_boundary_errors=True, verbose=False)
-            errors[i] = boundary_errors[surface]
-        print(f'Max boundary surface {surface} error = ', max(errors))
-        assert max(errors) < 3e-12
-
-    if evaluate_bottom:
-        surface = 'z=0'
-        op = boundary[surface]
-        nullspace = sp.linalg.null_space(op.todense())
-
-        t, eta = np.linspace(-1,1,101), np.array([0. if cylinder_type == 'full' else -1.])
-        bases = create_bases(cylinder_type, h, m, Lmax, Nmax, alpha, t, eta)
-
-        dim = np.shape(nullspace)[1]
-        errors = np.zeros(dim)
-        for i in range(dim):
-            evector = nullspace[:,i]
-            ncoeff = bases['p'].num_coeffs
-            fields, boundary_errors = expand_evector(evector, bases, names='all', return_boundary_errors=True, verbose=False)
-            errors[i] = boundary_errors[surface]
-        print(f'Max boundary surface {surface} error = ', max(errors))
-        assert max(errors) < 2e-13
+    col1 = operators('project', alpha=alpha, sigma=+1, direction='s')
+    col2 = operators('project', alpha=alpha, sigma=-1, direction='z')
+    col3 = operators('project', alpha=alpha, sigma=-1, direction='s', Lstop=-1)
+    col4 = operators('project', alpha=alpha, sigma=0,  direction='z')
+    col5 = operators('project', alpha=alpha, sigma=0,  direction='s', Lstop=-1)
+    colp = col1
+    colm = sparse.hstack([col2,col3])
+    colz = sparse.hstack([col4,col5])
+    cols = [colp, colm, colz]
+    return sparse.vstack([sparse.block_diag(cols), 0*sparse.hstack(cols)])
 
 
 def build_matrices_tau(cylinder_type, h, m, Lmax, Nmax, alpha):
@@ -148,18 +94,9 @@ def build_matrices_tau(cylinder_type, h, m, Lmax, Nmax, alpha):
     row = build_boundary(cylinder_type, h, m, Lmax, Nmax, alpha)['combined']
 
     # Tau projections for enforcing the boundaries
-    col1 = operators('project', alpha=alpha, sigma=+1, direction='s')
-    col2 = operators('project', alpha=alpha, sigma=-1, direction='z')
-    col3 = operators('project', alpha=alpha, sigma=-1, direction='s', Lstop=-1)
-    col4 = operators('project', alpha=alpha, sigma=0,  direction='z')
-    col5 = operators('project', alpha=alpha, sigma=0,  direction='s', Lstop=-1)
-    colp = sparse.hstack([col1])
-    colm = sparse.hstack([col2,col3])
-    colz = sparse.hstack([col4,col5])
+    col = build_projections(cylinder_type, h, m, Lmax, Nmax, alpha)
 
-    cols = [colp, colm, colz]
-    col = sparse.vstack([sparse.block_diag(cols), 0*sparse.hstack(cols)])
-
+    # Concatenate the boundary conditions and projections onto the system
     corner = sparse.lil_matrix((np.shape(row)[0], np.shape(col)[1]))
     L = sparse.bmat([[L,  col],[  row,  corner]])
     M = sparse.bmat([[M,0*col],[0*row,0*corner]])
@@ -249,16 +186,28 @@ def expand_evector(evector, bases, names='all', return_boundary_errors=False, ve
     return fields
 
 
+def plotfield(f, s, z, fig, ax, colorbar=False):
+    im = ax.pcolormesh(s, z, f, shading='gouraud')
+    if colorbar:
+        fig.colorbar(im, ax=ax)
+    lw = 1
+    plotline = lambda ss,zz: ax.plot(ss, zz, 'k', linewidth=lw)
+    plotline(s, z[-1,:])
+    if z[0,0] == 0.: plotline(s, z[ 0,:])
+    if s[0]   == 0.: plotline([s[0],s[0]],[z[0,0],z[-1,0]])
+    if s[1]   == 1.: plotline([s[-1],s[-1]],[z[0,-1],z[-1,-1]])
+
 def plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, bases, fig=None, ax=None):
     fields = expand_evector(evectors[:,index], bases, names='all')
 
     fieldname = 'p'
     basis = bases[fieldname]
     s, z = basis.s(), basis.z()
+    ht = np.polyval(basis.h, basis.t)
 
     if fig is None or ax is None:
         fig, ax = plt.subplots()
-    im = ax.pcolormesh(s, z, fields[fieldname])
+    plotfield(fields[fieldname], s, z, fig, ax)
     fig.show()
     return fig, ax
 
@@ -279,12 +228,13 @@ def compare_mode(evalues, evectors, n, k, evalue_targets, roots, bases, plot=Fal
 
     # Compute the analytic_mode and make sure we have the right sign
     s, zcyl = basis.s(), basis.z()
+    ht = np.polyval(basis.h, basis.t)
     zcart = np.linspace(0,1,np.shape(zcyl)[0])
     f = analytic_mode(m, n, k, roots=roots, radius=1.)(s,zcart)
 
     if plot:
         fig, ax = plt.subplots(1,2,figsize=plt.figaspect(1/2))
-        ax[0].pcolormesh(s, zcyl, p, shading='gouraud')
+        plotfield(p, s, zcyl, fig, ax[0])
         ax[1].pcolormesh(s, zcart, f)
         ax[0].set_title(f'Computed Mode, (m,n,k) = ({m},{n},{k})')
         ax[1].set_title(f'Analytic Mode, (m,n,k) = ({m},{n},{k})')
@@ -324,8 +274,50 @@ def plot_solution(data):
     plt.show()
 
 
+def test_boundary():
+    omega = 1.
+    h = [omega/(2+omega), 1.]
+
+    cylinder_type = 'half'
+    m, Lmax, Nmax, alpha = 10, 10, 30, 0
+
+    # Build the boundary operators
+    boundary = build_boundary(cylinder_type, h, m, Lmax, Nmax, alpha, exact=True)
+
+    evaluate_side = True
+    evaluate_top = True
+    evaluate_bottom = True
+
+    def compute_errors(surface, t, eta):
+        bases = create_bases(cylinder_type, h, m, Lmax, Nmax, alpha, t, eta)
+        ncoeff = bases['p'].num_coeffs
+        nullspace = sp.linalg.null_space(boundary[surface].todense())
+        dim = np.shape(nullspace)[1]
+        errors = np.zeros(dim)
+        for i in range(dim):
+            _, boundary_errors = expand_evector(nullspace[:,i], bases, names='all', return_boundary_errors=True, verbose=False)
+            errors[i] = boundary_errors[surface]
+        print(f'Max boundary surface {surface} error = ', max(errors))
+        return errors
+
+    if evaluate_side:
+        t, eta = np.array([1.]), np.linspace(-1,1,101)
+        errors = compute_errors('s=S', t, eta)
+        assert max(errors) < 5e-12
+
+    if evaluate_top:
+        t, eta = np.linspace(-1,1,101), np.array([1.])
+        errors = compute_errors('z=h', t, eta)
+        assert max(errors) < 6e-12
+
+    if evaluate_bottom:
+        t, eta = np.linspace(-1,1,101), np.array([0. if cylinder_type == 'full' else -1.])
+        errors = compute_errors('z=0', t, eta)
+        assert max(errors) < 6e-14
+
+
 def main():
-    omega = 0.1
+    omega = .1
     h = [omega/(2+omega), 1.]
 
     cylinder_type = 'half'
@@ -338,6 +330,6 @@ def main():
 
 
 if __name__=='__main__':
-    main()
 #    test_boundary()
+    main()
 
