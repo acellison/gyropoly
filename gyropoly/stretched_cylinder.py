@@ -1,3 +1,4 @@
+from functools import partial
 import numpy as np
 import scipy.sparse as sparse
 from dedalus_sphere import jacobi
@@ -11,7 +12,7 @@ __all__ = ['Basis', 'total_num_coeffs', 'coeff_sizes', 'operators'
 
 
 class Basis():
-    def __init__(self, cylinder_type, h, m, Lmax, Nmax, alpha, sigma, eta=None, t=None, has_m_scaling=True, has_h_scaling=True, dtype='float64'):
+    def __init__(self, cylinder_type, h, m, Lmax, Nmax, alpha, sigma=0, eta=None, t=None, has_m_scaling=True, has_h_scaling=True, dtype='float64'):
         _check_cylinder_type(cylinder_type)
         _check_radial_degree(Lmax, Nmax)
         self.__cylinder_type = cylinder_type
@@ -93,45 +94,34 @@ class Basis():
 
     @decorators.cached
     def s(self):
-        t = self.t
-        if t is None:
-            raise ValueError('Basis constructed without valid t coordinate')
-        return np.sqrt((1+t)/2)
+        self._check_constructed(check_Q=True)
+        return np.sqrt((1+self.t)/2)
 
     @decorators.cached
     def z(self):
-        t, eta = self.t, self.eta
-        if t is None:
-            raise ValueError('Basis constructed without valid t coordinate')
-        if eta is None:
-            raise ValueError('Basis constructed without valid eta coordinate')
-        tt, ee = t[np.newaxis,:], eta[:,np.newaxis]
+        self._check_constructed(check_P=True, check_Q=True)
+        tt, ee = self.t[np.newaxis,:], self.eta[:,np.newaxis]
         ee = ee if self.cylinder_type == 'full' else (ee+1)/2
         return ee * np.polyval(self.h, tt)
 
     def vertical_polynomial(self, ell):
-        if ell >= self.Lmax:
-            raise ValueError(f'ell (={ell}) index exceeds maximum Lmax-1 (={self.Lmax-1})')
-        P = self.vertical_polynomials
-        if P is None:
-            raise ValueError('Basis constructed without eta argument')
-        return P[ell]
+        self._check_degree(ell)
+        self._check_constructed(check_P=True)
+        return self.vertical_polynomials[ell]
 
     def radial_polynomial(self, ell, k):
-        if ell >= self.Lmax:
-            raise ValueError(f'ell (={ell}) index exceeds maximum Lmax-1 (={self.Lmax-1})')
-        if k >= _radial_size(self.Nmax, ell):
-            raise ValueError(f'k (={k}) index exceeds maximum Nmax-ell-1 (={_radial_size(self.Nmax, ell)-1})')
-        Q = self.radial_polynomials
-        if Q is None:
-            raise ValueError('Basis constructed without t argument')
-        return Q[ell][k]
+        self._check_degree(ell, k)
+        self._check_constructed(check_Q=True)
+        return self.radial_polynomials[ell][k]
+
+    def mode(self, ell, k):
+        self._check_degree(ell, k)
+        self._check_constructed(check_P=True, check_Q=True)
+        return self._mode_unchecked(ell, k)
 
     def expand(self, coeffs):
         # Ensure we already constructed our basis functions
-        P, Q = self.vertical_polynomials, self.radial_polynomials
-        if P is None or Q is None:
-            raise ValueError('Never constructed the polynomial basis')
+        self._check_constructed(check_P=True, check_Q=True)
 
         # Check the coefficient size matches the basis
         if len(coeffs) != self.num_coeffs:
@@ -145,9 +135,25 @@ class Basis():
         index = 0
         for ell in range(self.Lmax):
             for k in range(_radial_size(self.Nmax, ell)):
-                f += coeffs[index] * P[ell][:,np.newaxis] * Q[ell][k][np.newaxis,:]
+                f += coeffs[index] * self._mode_unchecked(ell, k)
                 index += 1
         return f
+
+    def _mode_unchecked(self, ell, k):
+        P, Q = self.vertical_polynomials, self.radial_polynomials
+        return P[ell][:,np.newaxis] * Q[ell][k][np.newaxis,:]
+
+    def _check_constructed(self, check_P=False, check_Q=False):
+        if check_P and self.vertical_polynomials is None:
+            raise ValueError('Basis constructed without eta argument')
+        if check_Q and self.radial_polynomials is None:
+            raise ValueError('Basis constructed without t argument')
+
+    def _check_degree(self, ell, k=None):
+        if ell >= self.Lmax:
+            raise ValueError(f'ell (={ell}) index exceeds maximum Lmax-1 (={self.Lmax-1})')
+        if k is not None and k >= _radial_size(self.Nmax, ell):
+            raise ValueError(f'k (={k}) index exceeds maximum Nmax-ell-1 (={_radial_size(self.Nmax, ell)-1})')
 
     def _make_vertical_polynomials(self, eta):
         if eta is not None:
@@ -541,4 +547,66 @@ def operators(cylinder_type, h, m=None, Lmax=None, Nmax=None, alpha=None, dtype=
         aa = kwargs.pop('alpha', aa)
         return _operator(name, cylinder_type, h, mm, LL, NN, aa, dtype=dtype, internal=internal, **kwargs)
     return fun
-    
+
+
+def resize(mat, Lin, Nin, Lout, Nout):
+    """Reshape the matrix from codomain size (Lin,Nin) to size (Lout,Nout).
+       This appends and deletes rows as necessary without touching the columns.
+       Nin and Nout are functions of ell and return the number of radial coefficients
+       for each vertical degree"""
+    nlengths_in,  offsets_in = coeff_sizes(Lin, Nin)
+    nlengths_out, offsets_out = coeff_sizes(Lout, Nout)
+    nintotal, nouttotal = offsets_in[-1], offsets_out[-1]
+
+    # Check if all sizes match.  If so, just return the input matrix
+    if Lin == Lout and all(np.asarray(nlengths_in) == np.asarray(nlengths_out)):
+        return mat
+
+    # Check the number of rows matches the input (Lin, Nin) dimensions
+    nrows, ncols = np.shape(mat)
+    if not nintotal == nrows:
+        raise ValueError('Incorrect size')
+
+    # Extract the nonzero entries of the input matrix
+    if not isinstance(mat, sparse.csr_matrix):
+        mat = mat.tocsr()
+    rows, cols = mat.nonzero()
+
+    # If we have the zero matrix just return a zero matrix
+    if len(rows) == 0:
+        return sparse.lil_matrix((nouttotal, ncols))
+
+    # Build up the resized operator
+    oprows, opcols, opdata = [], [], []
+    L = min(Lin,Lout)
+    inoffset, dn = 0, 0
+    for ell in range(L):
+        nin, nout = nlengths_in[ell], nlengths_out[ell]
+        n = min(nin,nout)
+
+        indices = np.where(np.logical_and(inoffset <= rows, rows < inoffset+n))
+        if len(indices[0]) != 0:
+            r, c = rows[indices], cols[indices]
+            oprows += (r+dn).tolist()
+            opcols += c.tolist()
+            opdata += np.asarray(mat[r,c]).ravel().tolist()
+
+        dn += nout-nin
+        inoffset += nin
+
+    result = sparse.csr_matrix((opdata,(oprows,opcols)), shape=(nouttotal,ncols), dtype=mat.dtype)
+
+    return result
+
+
+def plotfield(s, z, f, fig, ax, colorbar=True, title=None, cmap='RdBu_r'):
+    lw, eps = 0.8, .012
+    ax.plot(s, z[-1,:]*(1+eps), 'k', linewidth=lw)
+
+    im = ax.pcolormesh(s, z, f, shading='gouraud', cmap=cmap)
+    if colorbar:
+        fig.colorbar(im, ax=ax)
+    if title is not None:
+        ax.set_title(title)
+
+

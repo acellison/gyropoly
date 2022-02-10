@@ -33,8 +33,7 @@ def build_boundary(cylinder_type, h, m, Lmax, Nmax, alpha, exact=False):
         operators1 = sc.operators(cylinder_type, h, m, Lmax, Nmax+1)
         Nmax1 = Nmax+1
     else:
-        operators1 = operators
-        Nmax1 = Nmax
+        operators1, Nmax1 = operators, Nmax
 
     # Side Boundary Condition: e_{S} \cdot \vec{u} = 0 at s = 1
     N = operators ('normal_component', alpha=alpha+1, surface='s=S', exact=exact)
@@ -67,8 +66,8 @@ def build_projections(cylinder_type, h, m, Lmax, Nmax, alpha, exact=False):
     col3 = operators('project', alpha=alpha, sigma=0,  direction='s', Lstop=-2)
     col4 = operators('project', alpha=alpha, sigma=0,  direction='z', shift=1)
     col5 = operators('project', alpha=alpha, sigma=0,  direction='z')
-    colp = col1
-    colm = col2
+    colp = sparse.hstack([col1])
+    colm = sparse.hstack([col2])
     colz = sparse.hstack([col3,col4,col5])
     cols = [colp, colm, colz]
     return sparse.vstack([sparse.block_diag(cols), 0*sparse.hstack(cols)])
@@ -186,17 +185,6 @@ def expand_evector(evector, bases, names='all', return_boundary_errors=False, ve
     return fields
 
 
-def plotfield(f, s, z, fig, ax, colorbar=False):
-    im = ax.pcolormesh(s, z, f, shading='gouraud')
-    if colorbar:
-        fig.colorbar(im, ax=ax)
-    lw = 1
-    plotline = lambda ss,zz: ax.plot(ss, zz, 'k', linewidth=lw)
-    plotline(s, z[-1,:])
-    if z[0,0] == 0.: plotline(s, z[ 0,:])
-    if s[0]   == 0.: plotline([s[0],s[0]],[z[0,0],z[-1,0]])
-    if s[1]   == 1.: plotline([s[-1],s[-1]],[z[0,-1],z[-1,-1]])
-
 def plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, bases, fig=None, ax=None):
     fields = expand_evector(evectors[:,index], bases, names='all')
 
@@ -207,7 +195,7 @@ def plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, bases, fig=N
 
     if fig is None or ax is None:
         fig, ax = plt.subplots()
-    plotfield(fields[fieldname], s, z, fig, ax)
+    sc.plotfield(s, z, fields[fieldname], fig, ax, colorbar=False)
     fig.show()
     return fig, ax
 
@@ -234,8 +222,8 @@ def compare_mode(evalues, evectors, n, k, evalue_targets, roots, bases, plot=Fal
 
     if plot:
         fig, ax = plt.subplots(1,2,figsize=plt.figaspect(1/2))
-        plotfield(p, s, zcyl, fig, ax[0])
-        ax[1].pcolormesh(s, zcart, f)
+        sc.plotfield(s, zcyl, p, fig, ax[0], colorbar=False)
+        ax[1].pcolormesh(s, zcart, f, cmap='RdBu_r')
         ax[0].set_title(f'Computed Mode, (m,n,k) = ({m},{n},{k})')
         ax[1].set_title(f'Analytic Mode, (m,n,k) = ({m},{n},{k})')
         for a in ax:
@@ -259,10 +247,11 @@ def plot_solution(data):
     eta = np.linspace(etamin,1.,301)
     bases = create_bases(cylinder_type, h, m, Lmax, Nmax, alpha, t, eta)
 
-    n, kmax = 3, 7
+    n, kmax = 3, 6
     evalue_targets, roots = analytic_eigenvalues(m, n, kmax+1, maxiter=20, radius=1.)
     for k in range(kmax//2, kmax+1):
-        plot = k == kmax//2
+#        plot = k == kmax//2
+        plot = True
         compare_mode(evalues, evectors, n, k, evalue_targets, roots, bases, plot=plot)
 
     def onpick(index):
@@ -317,12 +306,12 @@ def test_boundary():
 
 
 def main():
-    omega = .1
+    omega = .05
     h = [omega/(2+omega), 1.]
 
     cylinder_type = 'half'
-    m, Lmax, Nmax, alpha = 30, 10, 30, 0
-    force_solve = True
+    m, Lmax, Nmax, alpha = 14, 16, 24, 0
+    force_solve = False
 
     print(f'm = {m}, Lmax = {Lmax}, Nmax = {Nmax}, alpha = {alpha}, omega = {omega}')
     data = solve_eigenproblem(omega, cylinder_type, h, m, Lmax, Nmax, force_solve=force_solve, alpha=alpha)
