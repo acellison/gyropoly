@@ -10,12 +10,14 @@ Omega = 1.
 h = [Omega/(2+Omega), 1.]
 m, Lmax, Nmax = 3, 4, 10
 alpha = 1.
-cylinder_type = 'half'
+cylinder_type = 'full'
 operators = sc.operators(cylinder_type, h, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha)
 
 
-def check_close(value, target, tol):
+def check_close(value, target, tol, verbose=False):
     error = np.max(abs(value-target))
+    if verbose:
+        print(f'Error {error:1.4e}')
     if error > tol:
         print(f'Error {error:1.4e} exceeds tolerance {tol}')
     assert error <= tol
@@ -189,7 +191,7 @@ def test_ndot_top():
     check_close(ndotu, ndotu_grid, 2e-13)
 
 
-def test_ndot_bottom():
+def test_ndot_xy_plane():
     op = operators('normal_component', surface='z=0')
 
     # Construct the coefficient vector and apply the operator
@@ -214,6 +216,40 @@ def test_ndot_bottom():
 
     # Compute the error
     check_close(ndotu, ndotu_grid, 1e-16)
+
+
+def test_ndot_bottom():
+    if cylinder_type != 'full':
+        raise ValueError('z=-h not in half domain')
+    # Build the operator
+    exact = True
+    dn = 1 if exact else 0
+    op = operators('normal_component', surface='z=-h', exact=exact)
+
+    # Construct the coefficient vector and apply the operator
+    ncoeff = sc.total_num_coeffs(Lmax, Nmax)
+    c = 2*np.random.rand(3*ncoeff) - 1
+    d = op @ c
+
+    # Construct the bases
+    t = np.linspace(-1,1,100)
+    eta = np.linspace(-1,1,101)
+    scalar_basis = create_scalar_basis(Lmax, Nmax+dn, alpha, t, eta)
+    vector_basis = create_vector_basis(Lmax, Nmax,    alpha, t, eta)
+    s, z = scalar_basis.s(), scalar_basis.z()
+
+    # Evaluate the operator output in the scalar basis
+    ndotu = scalar_basis.expand(d)
+
+    # Compute the normal component in grid space
+    Cp, Cm, Cz = [c[i*ncoeff:(i+1)*ncoeff] for i in range(3)]
+    up, um, w = [vector_basis[key].expand(coeffs) for key,coeffs in [('up', Cp), ('um', Cm), ('w', Cz)]]
+    u = 1/np.sqrt(2) * (up + um)
+    hp = np.polyval(np.polyder(scalar_basis.h), t)
+    ndotu_grid = -2*np.sqrt(2*(1+t)) * hp * u - w
+
+    # Compute the error
+    check_close(ndotu, ndotu_grid, 1e-13)
 
 
 def test_ndot_side():
@@ -249,7 +285,9 @@ def test_ndot_side():
 
 def test_normal_component():
     test_ndot_top()
-    test_ndot_bottom()
+    test_ndot_xy_plane()
+    if cylinder_type == 'full':
+        test_ndot_bottom()
     test_ndot_side()
 
 
