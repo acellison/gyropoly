@@ -175,7 +175,7 @@ class PolynomialProduct():
 
 def _make_poly_config(coeffs):
     # coeffs are monomial-basis list of coefficients
-    if not isinstance(coeffs, (tuple,list)):
+    if not isinstance(coeffs, (tuple,list,np.ndarray)):
         raise ValueError('coeffs must be a list')
     if len(coeffs) < 2:
         raise ValueError('polynomial must have degree at least one')
