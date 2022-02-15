@@ -601,6 +601,7 @@ def resize(mat, Lin, Nin, Lout, Nout):
 
 def plotfield(s, z, f, fig, ax, colorbar=True, title=None, cmap='RdBu_r'):
     lw, eps = 0.8, .012
+    ax.plot(s, z[ 0,:]*(1+eps), 'k', linewidth=lw)
     ax.plot(s, z[-1,:]*(1+eps), 'k', linewidth=lw)
 
     im = ax.pcolormesh(s, z, f, shading='gouraud', cmap=cmap)
