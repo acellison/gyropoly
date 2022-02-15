@@ -405,9 +405,9 @@ def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, dtype='flo
         if cylinder_type != 'full':
                 raise ValueError('Half cylinder cannot be evaluated at z=-h')
         # If we're at the bottom flip the sign of the z component compared to the top
-        N = normal_component('full', 'top', h, m, Lmax, Nmax, alpha, dtype=dtype, internal=internal, exact=exact).tocsr()
+        N = normal_component('full', h, m, Lmax, Nmax, alpha, surface='z=h', dtype=dtype, internal=internal, exact=exact).tocsr()
         n = total_num_coeffs(Lmax, Nmax)
-        N[2*n:3*n,:] = -N[2*n:3*n,:]
+        N[:,2*n:3*n] = -N[:,2*n:3*n]
         return N
     elif surface == 'z=0':
         Lp = Zero
