@@ -176,7 +176,7 @@ class Basis():
             self.__Q = [prefactor * ht**ell * polys(ell) for ell,system in enumerate(systems)]
 
 
-def _get_ell_modifiers(Lmax, alpha, dtype='float64', internal='float128'):
+def _get_ell_modifiers(Lmax, alpha, dtype='float64', internal='float128', adjoint=False):
     """Returns gamma, beta, delta such that
             P_l^{(alpha,alpha)}(z) 
                 =   gamma_l P_l^{(alpha+1,alpha+1)}(z)
@@ -186,8 +186,9 @@ def _get_ell_modifiers(Lmax, alpha, dtype='float64', internal='float128'):
                 = beta_l P_{l-1}^{(alpha+1,alpha+1)}(z)
     """
     A, B, D = [jacobi.operator(kind, dtype=internal) for kind in ['A', 'B', 'D']]
-    op = (D(+1) + A(+1) @ B(+1))(Lmax, alpha, alpha).astype(dtype)
-    diags = [op.diagonal(index) for index in [0,1,2]]
+    p = -1 if adjoint else +1
+    op = (D(p) + A(p) @ B(p))(Lmax, alpha, alpha).astype(dtype)
+    diags = [op.diagonal(index*p) for index in [0,1,2]]
     return diags[0], diags[1], -diags[2]
 
 
@@ -498,16 +499,30 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, dtype='floa
     return B.astype(dtype)
 
 
-def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal='float128'):
+def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal='float128', adjoint=False):
+    """
+    Convert alpha to alpha + (+1 if not adjoint else -1).
+    The adjoint operator lowers alpha by multiplying the field in grid space by
+        B(t, eta) = (1-eta**2) * (1-t) * h(t)**2
+    This has the effect of both lowering alpha and causing the field to vanish on
+    the boundary of the domain.  For h(t) a linear function of t the codomain of
+    the adjoint operator converts (Lmax, Nmax) -> (Lmax+2, Nmax+3)
+    """
     _check_cylinder_type(cylinder_type)
     ops = aj_operators([h], dtype=internal, internal=internal)    
     A, C = ops('A'), ops('C')
-    L0 =  A(+1) @ C(+1)**2
-    L2 = -A(+1) @ C(-1)**2
-    mods = _get_ell_modifiers(Lmax, alpha, dtype=internal, internal=internal)
+    if adjoint:
+        p, dell = -1, -2
+        Lpad, Npad = 2, 1 + 2*C(-1).codomain.dn
+    else:
+        p, dell = +1, +2
+        Lpad, Npad = 0, 0
+    L0 =  A(p) @ C( p)**2
+    L2 = -A(p) @ C(-p)**2
+    mods = _get_ell_modifiers(Lmax, alpha, dtype=internal, internal=internal, adjoint=adjoint)
 
-    make_op = lambda dell, sop: _make_operator(dell, mods[dell], sop, m, Lmax, Nmax, alpha, sigma)
-    return (make_op(0, L0) + make_op(2, L2)).astype(dtype)
+    make_op = lambda dell, sop: _make_operator(dell, mods[abs(dell)], sop, m, Lmax, Nmax, alpha, sigma, Lpad=Lpad, Npad=Npad)
+    return (make_op(0, L0) + make_op(2*p, L2)).astype(dtype)
 
 
 def project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, direction, shift=0, Lstop=0, dtype='float64', internal='float128'):
