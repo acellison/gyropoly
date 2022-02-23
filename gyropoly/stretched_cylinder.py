@@ -499,7 +499,7 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, dtype='floa
     return B.astype(dtype)
 
 
-def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal='float128', adjoint=False):
+def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal='float128', adjoint=False, ntimes=1, exact=True):
     """
     Convert alpha to alpha + (+1 if not adjoint else -1).
     The adjoint operator lowers alpha by multiplying the field in grid space by
@@ -509,6 +509,9 @@ def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', inte
     the adjoint operator converts (Lmax, Nmax) -> (Lmax+2, Nmax+3)
     """
     _check_cylinder_type(cylinder_type)
+    if ntimes > 1 and adjoint:
+        raise ValueError('Lowering alpha more than once not supported')
+
     ops = aj_operators([h], dtype=internal, internal=internal)    
     A, C = ops('A'), ops('C')
     if adjoint:
@@ -522,7 +525,18 @@ def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', inte
     mods = _get_ell_modifiers(Lmax, alpha, dtype=internal, internal=internal, adjoint=adjoint)
 
     make_op = lambda dell, sop: _make_operator(dell, mods[abs(dell)], sop, m, Lmax, Nmax, alpha, sigma, Lpad=Lpad, Npad=Npad)
-    return (make_op(0, L0) + make_op(2*p, L2)).astype(dtype)
+    op = (make_op(0, L0) + make_op(2*p, L2))
+
+    if ntimes > 1:
+        C = convert(cylinder_type, h, m, Lmax, Nmax, alpha+1, sigma, dtype=internal, internal='float128', adjoint=False, ntimes=ntimes-1)
+        op = C @ op
+
+    op = op.astype(dtype)
+
+    if adjoint and not exact:
+        op = resize(op, Lmax+2, Nmax+3, Lmax, Nmax)
+
+    return op
 
 
 def project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, direction, shift=0, Lstop=0, dtype='float64', internal='float128'):

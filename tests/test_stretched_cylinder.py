@@ -292,7 +292,7 @@ def rank_deficiency(mat):
     return np.shape(mat)[0] - rank
 
 
-def test_boundary(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
+def test_boundary_combination(cylinder_type, h, m, Lmax, Nmax, alpha, operators, bottom):
     # The three boundary operators have linearly dependent rows.  There are three cases:
     # 1. Full Cylinder, evaluating at z=0
     #    -> chuck the last equation from each surface evaluation operator
@@ -301,8 +301,9 @@ def test_boundary(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
     #    -> b. Lmax odd  ? chuck last equation from top, bottom, second to last from side
     # 3. Half Cylinder
     #    -> Same as 2b.
+    bottom = 'z=-h' if cylinder_type == 'full' else 'z=0'
     op1 = operators('boundary', sigma=0, surface='z=h')
-    op2 = operators('boundary', sigma=0, surface='z=0')
+    op2 = operators('boundary', sigma=0, surface=bottom)
     op3 = operators('boundary', sigma=0, surface='s=S')
     if cylinder_type == 'full' or Lmax%2 == 0:
         op = sparse.vstack([op1[:-1,:],op2[:-1,:],op3[:-1,:]])
@@ -323,7 +324,7 @@ def test_boundary(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
     assert boundary_deficiency == 0
 
     errors = np.zeros((dim,3))
-    bottom_index = 0 if cylinder_type == 'half' else len(eta)//2
+    bottom_index = len(eta)//2 if bottom == 'z=0' and cylinder_type == 'full' else 0
     for i in range(dim):
         f = basis.expand(nullspace[:,i])
         fmax = np.max(abs(f))
@@ -331,37 +332,34 @@ def test_boundary(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
     max_error = np.max(abs(errors))
     check_close(max_error, 0, 2e-14)
 
-    plot_field = False
-    if plot_field:
-        which = 0
-        coeffs = nullspace[:,which]
-        f = basis.expand(coeffs)
-        s, z = basis.s(), basis.z()
 
-        # Plot the field
-        fig, plot_axes = plt.subplots(1,2,figsize=plt.figaspect(1/2))
-        im = plot_axes[0].pcolormesh(s, z, f, shading='gouraud')
-        fig.colorbar(im, ax=plot_axes[0])
-        plot_axes[1].semilogy(abs(coeffs))
-        plt.show()
+def test_boundary(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
+    test_boundary_combination(cylinder_type, h, m, Lmax, Nmax, alpha, operators, bottom='z=0')
+    if cylinder_type == 'full':
+        test_boundary_combination(cylinder_type, h, m, Lmax, Nmax, alpha, operators, bottom='z=-h')
 
 
 def test_convert(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
-    op = operators('convert', sigma=0)
+    op1 = operators('convert', sigma=0)
+    op2 = operators('convert', sigma=0, ntimes=3)
 
     ncoeff = sc.total_num_coeffs(Lmax, Nmax)
     c = 2*np.random.rand(ncoeff) - 1
-    d = op @ c
+    d1 = op1 @ c
+    d2 = op2 @ c
 
     t = np.linspace(-1,1,100)
     eta = np.linspace(-1,1,101)
     basis0 = create_scalar_basis(cylinder_type, h, m, Lmax, Nmax, alpha,   t, eta)
     basis1 = create_scalar_basis(cylinder_type, h, m, Lmax, Nmax, alpha+1, t, eta)
+    basis2 = create_scalar_basis(cylinder_type, h, m, Lmax, Nmax, alpha+3, t, eta)
 
     f = basis0.expand(c)
-    g = basis1.expand(d)
+    g1 = basis1.expand(d1)
+    g2 = basis2.expand(d2)
 
-    check_close(f, g, 9e-14)
+    check_close(f, g1, 9e-14)
+    check_close(f, g2, 6e-13)
 
 
 def test_convert_adjoint(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
