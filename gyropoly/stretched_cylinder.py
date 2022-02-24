@@ -241,16 +241,19 @@ def _get_ell_modifiers(Lmax, alpha, dtype='float64', internal='float128', adjoin
 
 
 def _check_radial_degree(Lmax, Nmax):
+    """Ensure we can triangular truncate with the given maximum degree"""
     if Nmax < Lmax:
         raise ValueError('Radial degree too small for triangular truncation')
 
 
 def _check_cylinder_type(cylinder_type):
+    """Check for a valid cylinder type"""
     if cylinder_type not in ['half', 'full']:
         raise ValueError(f'Invalid cylinder type ({cylinder_type})')
 
 
 def _radial_size(Nmax, ell):
+    """Get the triangular truncation size for a given ell"""
     return Nmax-ell
 
 
@@ -305,6 +308,7 @@ def total_num_coeffs(Lmax, Nmax):
 
 
 def _radial_jacobi_parameters(m, alpha, sigma, ell=None):
+    """Get the Augmented Jacobi parameters for the given (m, alpha, sigma, ell)"""
     fn = lambda l: (alpha, m+sigma, (2*l+2*alpha+1,))
     return fn(ell) if ell is not None else fn
 
@@ -936,12 +940,12 @@ def project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, direction, shift=0, L
 
 @decorators.cached
 def _operator(name, cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', **kwargs):
-    _check_cylinder_type(cylinder_type)
-    functions = {'gradient': gradient, 'divergence': divergence, 'curl': curl,
-                 'scalar_laplacian': scalar_laplacian, 'vector_laplacian': vector_laplacian,
-                 'normal_component': normal_component, 'boundary': boundary,
-                 'convert': convert, 'project': project}
-    function = functions[name]
+    """Operator dispatch function with caching of results"""
+    valid_names = ['gradient', 'divergence', 'curl', 'scalar_laplacian', 'vector_laplacian',
+                   'normal_component', 'boundary', 'convert', 'project']
+    if name not in valid_names:
+        raise ValueError(f'Invalid operator name {name}')
+    function = eval(name)
     return function(cylinder_type, h, m, Lmax, Nmax, alpha, dtype=dtype, internal=internal, **kwargs)
     
 
