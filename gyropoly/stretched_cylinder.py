@@ -3,7 +3,6 @@ import numpy as np
 import scipy.sparse as sparse
 from dedalus_sphere import jacobi
 from . import augmented_jacobi as ajacobi
-from .augmented_jacobi import operators as aj_operators
 from . import decorators
 
 __all__ = ['Basis', 'total_num_coeffs', 'coeff_sizes', 'operators'
@@ -21,8 +20,8 @@ class Basis():
     and σ is the spin weight.  The polynomials P_{l}(η) and Q_{k}(t) are specially designed
     orthogonal polynomials so that the basis functions are orthonormal under a weighted version
     of the geometric volume integral induced by the stretched coordinates.  The vertical polynomials
-    are standard Jacobi polynomials P_{l}^{α,α}(η) while the radial polynomials are augmented
-    Jacobi polynomials Q_{k}^{α,m+σ,2*l+2*α+1}(t).  That is, they are orthonormal with weight
+    are standard Jacobi polynomials P_{l}^{α,α}(η) orthonormal with weight (1-η**2)**α.  The radial
+    polynomials are augmented Jacobi polynomials Q_{k}^{α,m+σ,2*l+2*α+1}(t) orthonormal with weight
         w(t) = (1-t)**α * (1+t)**(m+σ) * h(t)**(2*l+2*α+1)
 
     Parameters
@@ -49,8 +48,9 @@ class Basis():
         If False, remove the (1+t)**(m/2) factor from basis function evaluation
     has_h_scaling : bool, optional
         If False, remove the h(t)**l factor from basis function evaluation
-    dtype : str
+    dtype : str, optional
         Data type for evaluation of the basis functions
+
     """
     def __init__(self, cylinder_type, h, m, Lmax, Nmax, alpha, sigma=0, eta=None, t=None, has_m_scaling=True, has_h_scaling=True, dtype='float64'):
         _check_cylinder_type(cylinder_type)
@@ -386,7 +386,7 @@ def _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma,
         raise ValueError('Cannot lower sigma = -1')
 
     # Construct the fundamental Augmented Jacobi operators
-    ops = aj_operators([h], dtype=internal, internal=internal)    
+    ops = ajacobi.operators([h], dtype=internal, internal=internal)
     A, B, C = [ops(kind) for kind in ['A', 'B', 'C']]
     R = ops('rhoprime', weighted=False)
     Dz, Da, Db, Dc = [ops(kind) for kind in ['D', 'E', 'F', 'G']]
@@ -660,7 +660,7 @@ def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, exact=Fals
     """
     _check_cylinder_type(cylinder_type)
 
-    ops = aj_operators([h], dtype=internal, internal=internal)
+    ops = ajacobi.operators([h], dtype=internal, internal=internal)
     B, R, Id = ops('B'), ops('rhoprime', weighted=False), ops('Id')
     Zero = 0*Id
 
@@ -774,7 +774,7 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, dtype='floa
         # For each ell we eat the h(t)^{ell} height function by lowering the C parameter
         # ell times.  The highest mode (ell = Lmax-1) is left with C parameter (Lmax-1 + 2*alpha +1).
         # We then raise all C indices to match this highest mode.
-        ops = aj_operators([h], dtype=internal, internal=internal)    
+        ops = ajacobi.operators([h], dtype=internal, internal=internal)
         C = ops('C')
         radial_params = _radial_jacobi_parameters(m, alpha, sigma)
         make_op = lambda ell: bc[ell] * (C(+1)**(Lmax-1-ell) @ C(-1)**ell)(lengths[ell], *radial_params(ell))
@@ -852,7 +852,7 @@ def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=Fal
     if ntimes > 1 and adjoint:
         raise ValueError('Lowering alpha more than once not supported')
 
-    ops = aj_operators([h], dtype=internal, internal=internal)    
+    ops = ajacobi.operators([h], dtype=internal, internal=internal)
     A, C = ops('A'), ops('C')
     if adjoint:
         p, dell = -1, -2
