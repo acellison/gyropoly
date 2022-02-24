@@ -7,11 +7,51 @@ from .augmented_jacobi import operators as aj_operators
 from . import decorators
 
 __all__ = ['Basis', 'total_num_coeffs', 'coeff_sizes', 'operators'
-           'gradient', 'divergence', 'scalar_laplacian', 'vector_laplacian', 'curl',
-           'normal_component', 'convert', 'boundary']
+           'gradient', 'divergence', 'curl', 'scalar_laplacian', 'vector_laplacian',
+           'normal_component', 'convert', 'boundary', 'project',
+           'resize', 'plotfield']
 
 
 class Basis():
+    """
+    Stretched Cylinder basis functions for evaluating functions in the stretched cylinder domain.
+    For a given height function z=η*h(t) the basis functions take the form
+        Ψ_{m,l,k}(t,φ,η) = exp(1i*m*φ) * (1+t)**((m+σ)/2) * h(t)**l P_{l}(η) Q_{k}(t),
+    where (m,l,k) is the mode index, (t,φ,η) are the natural stretched cylindrical coordinates,
+    and σ is the spin weight.  The polynomials P_{l}(η) and Q_{k}(t) are specially designed
+    orthogonal polynomials so that the basis functions are orthonormal under a weighted version
+    of the geometric volume integral induced by the stretched coordinates.  The vertical polynomials
+    are standard Jacobi polynomials P_{l}^{α,α}(η) while the radial polynomials are augmented
+    Jacobi polynomials Q_{k}^{α,m+σ,2*l+2*α+1}(t).  That is, they are orthonormal with weight
+        w(t) = (1-t)**α * (1+t)**(m+σ) * h(t)**(2*l+2*α+1)
+
+    Parameters
+    ----------
+    cylinder_type : str, one of {'full', 'half'}
+        A full cylinder is symmetric about z=0 (z ϵ [-h(t), h(t)]) while a half cylinder has domain z ϵ [0, h(t)]
+    h : list
+        Polynomial coefficients for the height function h(t) in terms of the variable t = 2*s**2-1
+    m : int
+        Azimuthal wavenumber
+    Lmax : int
+        Number of vertical modes in truncated expansion such that 0 <= ell < Lmax
+    Nmax : int
+        Number of radial modes in truncated expansion such that 0 <= n < Nmax
+    alpha : float > -1
+        Hierarchy parameter for the basis functions
+    sigma : int, one of {-1, 0, +1}
+        Spin weight of the basis functions.  Non-zero spin weights are used to decompose vector fields
+    eta : np.ndarray
+        Vertical coordinate for evaluating the basis functions
+    t : np.ndarray
+        Radial coordinate for evaluating the basis functions
+    has_m_scaling : bool, optional
+        If False, remove the (1+t)**(m/2) factor from basis function evaluation
+    has_h_scaling : bool, optional
+        If False, remove the h(t)**l factor from basis function evaluation
+    dtype : str
+        Data type for evaluation of the basis functions
+    """
     def __init__(self, cylinder_type, h, m, Lmax, Nmax, alpha, sigma=0, eta=None, t=None, has_m_scaling=True, has_h_scaling=True, dtype='float64'):
         _check_cylinder_type(cylinder_type)
         _check_radial_degree(Lmax, Nmax)
@@ -94,32 +134,38 @@ class Basis():
 
     @decorators.cached
     def s(self):
+        """Compute the cylindrical radial coordinate s from t"""
         self._check_constructed(check_Q=True)
         return np.sqrt((1+self.t)/2)
 
     @decorators.cached
     def z(self):
+        """Compute the cylindrical vertical coordinate z from t and eta"""
         self._check_constructed(check_P=True, check_Q=True)
         tt, ee = self.t[np.newaxis,:], self.eta[:,np.newaxis]
         ee = ee if self.cylinder_type == 'full' else (ee+1)/2
         return ee * np.polyval(self.h, tt)
 
     def vertical_polynomial(self, ell):
+        """Get the vertical polynomial of degree ell"""
         self._check_degree(ell)
         self._check_constructed(check_P=True)
         return self.vertical_polynomials[ell]
 
     def radial_polynomial(self, ell, k):
+        """Get the radial polynomial of degree k corresponding to vertical degree ell"""
         self._check_degree(ell, k)
         self._check_constructed(check_Q=True)
         return self.radial_polynomials[ell][k]
 
     def mode(self, ell, k):
+        """Get the mode with index (ell, k)"""
         self._check_degree(ell, k)
         self._check_constructed(check_P=True, check_Q=True)
         return self._mode_unchecked(ell, k)
 
     def expand(self, coeffs):
+        """Evaluate a field in grid space from its spectral coefficients"""
         # Ensure we already constructed our basis functions
         self._check_constructed(check_P=True, check_Q=True)
 
@@ -177,13 +223,15 @@ class Basis():
 
 
 def _get_ell_modifiers(Lmax, alpha, dtype='float64', internal='float128', adjoint=False):
-    """Returns gamma, beta, delta such that
-            P_l^{(alpha,alpha)}(z) 
-                =   gamma_l P_l^{(alpha+1,alpha+1)}(z)
-                  - delta_l P_{l-2}^{(alpha+1,alpha+1)}(z)
-        and
-            d/dz P_l^{(alpha,alpha)}(z) 
-                = beta_l P_{l-1}^{(alpha+1,alpha+1)}(z)
+    """
+    Returns gamma, beta, delta such that
+        P_l^{(alpha,alpha)}(z) 
+            = gamma_l * P_l^{(alpha+1,alpha+1)}(z) - delta_l * P_{l-2}^{(alpha+1,alpha+1)}(z)
+    and
+        d/dz P_l^{(alpha,alpha)}(z) 
+            = beta_l * P_{l-1}^{(alpha+1,alpha+1)}(z)
+
+    If adjoint is True, computes the lowering version of the above operators.
     """
     A, B, D = [jacobi.operator(kind, dtype=internal) for kind in ['A', 'B', 'D']]
     p = -1 if adjoint else +1
@@ -207,16 +255,52 @@ def _radial_size(Nmax, ell):
 
 
 def coeff_sizes(Lmax, Nmax):
-    """Return the number of radial coefficients for each vertical degree,
-       and the offsets for indexing into a coefficient vector for the first
-       radial mode of each vertical degree"""
+    """
+    Return the number of radial coefficients for each vertical degree,
+    and the offsets for indexing into a coefficient vector for the first
+    radial mode of each vertical degree.  Triangular truncation yields
+    the radial size dependency N(ell) = Nmax-ell
+
+    Parameters
+    ----------
+    Lmax : int
+        Maximum vertical degree of input basis
+    Nmax : int
+        Maximum radial degree of input basis
+
+    Returns
+    -------
+    lengths : np.ndarray
+        Array of radial coefficient sizes for each vertical degree
+    offsets : np.ndarray
+        Array of offset indices into a coefficient vector for the
+        start of radial coefficients each vertical degree
+
+    """
     _check_radial_degree(Lmax, Nmax)
-    lengths = [_radial_size(Nmax, ell) for ell in range(Lmax)]
+    lengths = np.array([_radial_size(Nmax, ell) for ell in range(Lmax)])
     offsets = np.append(0, np.cumsum(lengths))
     return lengths, offsets
 
 
 def total_num_coeffs(Lmax, Nmax):
+    """
+    Return the total number of coefficients in an expansion truncated
+    with Lmax vertical modes and Nmax radial modes.  Due to triangular
+    truncation of the basis functions this is not simply equal to Lmax*Nmax,
+
+    Parameters
+    ----------
+    Lmax : int
+        Maximum vertical degree of input basis
+    Nmax : int
+        Maximum radial degree of input basis
+
+    Returns
+    -------
+    Total number of coefficients for the given truncation degrees
+
+    """
     return coeff_sizes(Lmax, Nmax)[1][-1]
 
 
@@ -271,13 +355,13 @@ def _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma,
         Spin weight increment for the operator.  +1 raises, -1 lowers, 0 maintains
     h : np.array
         List of polynomial coefficients for the height function h(t = 2*s**2-1)
-    Lmax : integer
+    Lmax : int
         Maximum vertical degree of input basis
-    Nmax : integer
+    Nmax : int
         Maximum radial degree of input basis
     alpha : float > -1
         Input basis hierarchy parameter.  Output basis has alpha->alpha+1
-    sigma : float, in {-1,0,1}
+    sigma : int, one of {-1, 0, 1}
         Input basis spin weight.  Output basis has sigma->sigma+delta
     dtype : data-type, optional
         Desired data-type for the output
@@ -349,18 +433,102 @@ def _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma,
 
 
 def gradient(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+    """
+    Construct the gradient operator acting on a scalar field
+
+    Parameters
+    ----------
+    cylinder_type : str
+        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
+        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
+    h : np.array
+        List of polynomial coefficients for the height function h(t = 2*s**2-1)
+    m : int
+        Azimuthal wavenumber
+    Lmax : int
+        Maximum vertical degree of input basis
+    Nmax : int
+        Maximum radial degree of input basis
+    alpha : float > -1
+        Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+
+    Returns
+    -------
+    Sparse matrix with gradient operator coefficients
+
+    """
     _check_cylinder_type(cylinder_type)
     make_dop = lambda delta: _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma=0, dtype=dtype, internal=internal)
     return sparse.vstack([make_dop(delta) for delta in [+1,-1,0]])
 
 
 def divergence(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+    """
+    Construct the divergence operator acting on a vector field
+
+    Parameters
+    ----------
+    cylinder_type : str
+        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
+        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
+    h : np.array
+        List of polynomial coefficients for the height function h(t = 2*s**2-1)
+    m : int
+        Azimuthal wavenumber
+    Lmax : int
+        Maximum vertical degree of input basis
+    Nmax : int
+        Maximum radial degree of input basis
+    alpha : float > -1
+        Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+
+    Returns
+    -------
+    Sparse matrix with divergence operator coefficients
+
+    """
     _check_cylinder_type(cylinder_type)
     make_dop = lambda sigma: _differential_operator(cylinder_type, -sigma, h, m, Lmax, Nmax, alpha, sigma=sigma, dtype=dtype, internal=internal)
     return sparse.hstack([make_dop(sigma) for sigma in [+1,-1,0]])
 
 
 def curl(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+    """
+    Construct the curl operator acting on a vector field
+
+    Parameters
+    ----------
+    cylinder_type : str
+        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
+        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
+    h : np.array
+        List of polynomial coefficients for the height function h(t = 2*s**2-1)
+    m : int
+        Azimuthal wavenumber
+    Lmax : int
+        Maximum vertical degree of input basis
+    Nmax : int
+        Maximum radial degree of input basis
+    alpha : float > -1
+        Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+
+    Returns
+    -------
+    Sparse matrix with curl operator coefficients
+
+    """
     _check_cylinder_type(cylinder_type)
     ncoeff = total_num_coeffs(Lmax, Nmax)
     Z = sparse.lil_matrix((ncoeff,ncoeff))
@@ -375,6 +543,34 @@ def curl(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='floa
 
 
 def scalar_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+    """
+    Construct the Laplacian operator acting on a scalar field
+
+    Parameters
+    ----------
+    cylinder_type : str
+        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
+        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
+    h : np.array
+        List of polynomial coefficients for the height function h(t = 2*s**2-1)
+    m : int
+        Azimuthal wavenumber
+    Lmax : int
+        Maximum vertical degree of input basis
+    Nmax : int
+        Maximum radial degree of input basis
+    alpha : float > -1
+        Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+
+    Returns
+    -------
+    Sparse matrix with Laplacian operator coefficients
+
+    """
     _check_cylinder_type(cylinder_type)
     G =   gradient(cylinder_type, h, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
     D = divergence(cylinder_type, h, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal)
@@ -382,6 +578,34 @@ def scalar_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', in
 
 
 def vector_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+    """
+    Construct the Laplacian operator acting on a vector field
+
+    Parameters
+    ----------
+    cylinder_type : str
+        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
+        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
+    h : np.array
+        List of polynomial coefficients for the height function h(t = 2*s**2-1)
+    m : int
+        Azimuthal wavenumber
+    Lmax : int
+        Maximum vertical degree of input basis
+    Nmax : int
+        Maximum radial degree of input basis
+    alpha : float > -1
+        Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+
+    Returns
+    -------
+    Sparse matrix with Laplacian operator coefficients
+
+    """
     _check_cylinder_type(cylinder_type)
     D = divergence(cylinder_type, h, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
     G =   gradient(cylinder_type, h, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal)
@@ -390,7 +614,50 @@ def vector_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', in
     return (G @ D - (C2 @ C1).real).astype(dtype)
     
 
-def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, dtype='float64', internal='float128', exact=False):
+def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, exact=False, dtype='float64', internal='float128'):
+    """
+    Construct the normal dot operator acting on a vector field.  For the basis functions to behave
+    properly this multiplies by the non-normalized normal component at the specified surface.
+    The surface must be one of {'z=h', 'z=-h', 'z=0' or 's=S'}.
+    When 'z=h' or 'z=-h', the field is dotted with 
+        n_{±} = ∇(± z + h(t)) = ± e_{z} - 2*(2*(1+t))**0.5 * h'(t) * e_{S}.
+    When 'z=0' the field is dotted with -e_{Z}.
+    When 's=S' the field is dotted with S * e_{S}
+
+    Parameters
+    ----------
+    cylinder_type : str
+        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
+        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
+    h : np.array
+        List of polynomial coefficients for the height function h(t = 2*s**2-1)
+    m : int
+        Azimuthal wavenumber
+    Lmax : int
+        Maximum vertical degree of input basis
+    Nmax : int
+        Maximum radial degree of input basis
+    alpha : float > -1
+        Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    surface : str, one of {'z=h', 'z=-h', 'z=0', 's=S'}
+        Surface for evaluation of the normal component of the vector field.
+        If cylinder_type is 'half', 'z=-h' is not valid since it is outside the domain.
+    exact : bool
+        If True, pads the output of the operator appropriately for the bandwidth growth
+        caused by multiplication by the surface.  
+            For 's=S',            Nmax -> Nmax+1
+            For 'z=h' and 'z=-h', Nmax -> Nmax+degree(h)
+            For 'z=0',            Nmax -> Nmax
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+
+    Returns
+    -------
+    Sparse matrix with normal dot operator coefficients
+
+    """
     _check_cylinder_type(cylinder_type)
 
     ops = aj_operators([h], dtype=internal, internal=internal)
@@ -431,6 +698,45 @@ def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, dtype='flo
 
 
 def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', internal='float128'):
+    """
+    Construct the boundary evaluation operator acting on a scalar field or component of a vector field
+
+    Parameters
+    ----------
+    cylinder_type : str
+        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
+        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
+    h : np.array
+        List of polynomial coefficients for the height function h(t = 2*s**2-1)
+    m : int
+        Azimuthal wavenumber
+    Lmax : int
+        Maximum vertical degree of input basis
+    Nmax : int
+        Maximum radial degree of input basis
+    alpha : float > -1
+        Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    sigma : int, one of {-1, 0, +1}
+        Spin weight
+    surface : str, one of {'z=h', 'z=-h', 'z=0', 's=S'}
+        Surface for evaluation of the normal component of the vector field.
+        If cylinder_type is 'half', 'z=-h' is not valid since it is outside the domain.
+    exact : bool
+        If True, pads the output of the operator appropriately for the bandwidth growth
+        caused by multiplication by the surface.  
+            For 's=S',            Nmax -> Nmax+1
+            For 'z=h' and 'z=-h', Nmax -> Nmax+degree(h)
+            For 'z=0',            Nmax -> Nmax
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+
+    Returns
+    -------
+    Sparse matrix with boundary evaluation operator coefficients
+
+    """
     _check_cylinder_type(cylinder_type)
     zeros = lambda shape: sparse.lil_matrix(shape, dtype=internal)
 
@@ -499,14 +805,48 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, dtype='floa
     return B.astype(dtype)
 
 
-def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal='float128', adjoint=False, ntimes=1, exact=True):
+def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exact=True, dtype='float64', internal='float128'):
     """
-    Convert alpha to alpha + (+1 if not adjoint else -1).
+    Convert alpha to alpha + (ntimes if not adjoint else -1).
     The adjoint operator lowers alpha by multiplying the field in grid space by
         B(t, eta) = (1-eta**2) * (1-t) * h(t)**2
     This has the effect of both lowering alpha and causing the field to vanish on
     the boundary of the domain.  For h(t) a linear function of t the codomain of
     the adjoint operator converts (Lmax, Nmax) -> (Lmax+2, Nmax+3)
+
+    Parameters
+    ----------
+    cylinder_type : str
+        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
+        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
+    h : np.array
+        List of polynomial coefficients for the height function h(t = 2*s**2-1)
+    m : int
+        Azimuthal wavenumber
+    Lmax : int
+        Maximum vertical degree of input basis
+    Nmax : int
+        Maximum radial degree of input basis
+    alpha : float > -1
+        Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    sigma : int, one of {-1, 0, +1}
+        Spin weight
+    ntimes : int, optional
+        Number of times to convert alpha up, so that alpha -> alpha + ntimes
+    adjoint : bool, optional
+        If True, multiply by the boundary polynomial to lower alpha
+    exact : bool, optional
+        If adjoint is True, pads the output of the operator appropriately for the bandwidth growth
+        caused by multiplication by B(t, eta):  (Lmax, Nmax) -> (Lmax+2, Nmax+3)
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+
+    Returns
+    -------
+    Sparse matrix with conversion operator coefficients
+
     """
     _check_cylinder_type(cylinder_type)
     if ntimes > 1 and adjoint:
@@ -540,6 +880,44 @@ def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', inte
 
 
 def project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, direction, shift=0, Lstop=0, dtype='float64', internal='float128'):
+    """
+    Project modes with parameter alpha onto highest modes with parameter alpha+1.
+    This is used to implement tau corrections equations when enforcing boundary conditions.
+
+    Parameters
+    ----------
+    cylinder_type : str
+        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
+        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
+    h : np.array
+        List of polynomial coefficients for the height function h(t = 2*s**2-1)
+    m : int
+        Azimuthal wavenumber
+    Lmax : int
+        Maximum vertical degree of input basis
+    Nmax : int
+        Maximum radial degree of input basis
+    alpha : float > -1
+        Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    sigma : int, one of {-1, 0, +1}
+        Spin weight
+    direction : str, one of {'s', 'z'}
+        If 's', project onto highest radial modes
+        If 'z', project onto highest vertical modes
+    shift : int, optional
+        Distance from highest mode for projection
+    Lstop : int, optional
+        Final vertical mode when performing radial projection
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+
+    Returns
+    -------
+    Sparse matrix with projection operator coefficients
+
+    """
     _check_cylinder_type(cylinder_type)
     C = convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, dtype=dtype, internal=internal)
     _, offsets = coeff_sizes(Lmax, Nmax)
@@ -568,21 +946,67 @@ def _operator(name, cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', int
     
 
 def operators(cylinder_type, h, m=None, Lmax=None, Nmax=None, alpha=None, dtype='float64', internal='float128'):
+    """
+    Bind common arguments to an operator dispatcher so that they can be specified once instead
+    of each time we construct a different operator.
+
+    Parameters
+    ----------
+    cylinder_type : str
+        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
+        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
+    h : np.array
+        List of polynomial coefficients for the height function h(t = 2*s**2-1)
+    m : int, optional
+        Azimuthal wavenumber
+    Lmax : int, optional
+        Maximum vertical degree of input basis
+    Nmax : int, optional
+        Maximum radial degree of input basis
+    alpha : float > -1, optional
+        Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+
+    Returns
+    -------
+    Operator dispatch function with bound arguments.  The function takes the form
+        dispatch(name, **kwargs),
+    where name is the name of the operator function and kwargs are additional arguments
+    to pass to the function.
+
+    """
     _check_cylinder_type(cylinder_type)
-    def fun(name, mm=m, LL=Lmax, NN=Nmax, aa=alpha, **kwargs):
-        mm = kwargs.pop('m', mm)
-        LL = kwargs.pop('Lmax', LL)
-        NN = kwargs.pop('Nmax', NN)
-        aa = kwargs.pop('alpha', aa)
+    def dispatcher(name, **kwargs):
+        mm = kwargs.pop('m', m)
+        LL = kwargs.pop('Lmax', Lmax)
+        NN = kwargs.pop('Nmax', Nmax)
+        aa = kwargs.pop('alpha', alpha)
         return _operator(name, cylinder_type, h, mm, LL, NN, aa, dtype=dtype, internal=internal, **kwargs)
-    return fun
+    return dispatcher
 
 
 def resize(mat, Lin, Nin, Lout, Nout):
-    """Reshape the matrix from codomain size (Lin,Nin) to size (Lout,Nout).
-       This appends and deletes rows as necessary without touching the columns.
-       Nin and Nout are functions of ell and return the number of radial coefficients
-       for each vertical degree"""
+    """
+    Reshape the matrix from codomain size (Lin,Nin) to size (Lout,Nout).
+    This appends and deletes rows as necessary without touching the columns.
+
+    Parameters
+    ----------
+    mat : scipy.sparse matrix
+        Sparse matrix to resize
+    Lin, Nin : int
+        Corresponding maximal degrees of the input matrix
+    Lout, Nout : int
+        Desirred maximal degrees of the output matrix
+
+    Returns
+    -------
+    Sparse matrix with resized to desired maximal degrees
+
+    """
     nlengths_in,  offsets_in = coeff_sizes(Lin, Nin)
     nlengths_out, offsets_out = coeff_sizes(Lout, Nout)
     nintotal, nouttotal = offsets_in[-1], offsets_out[-1]
@@ -629,6 +1053,30 @@ def resize(mat, Lin, Nin, Lout, Nout):
 
 
 def plotfield(s, z, f, fig, ax, colorbar=True, title=None, cmap='RdBu_r'):
+    """
+    Plot the field expressed in the stretched cylindrical coordinates
+
+    Parameters
+    ----------
+    s : np.ndarray
+        Radial coordinate
+    z : np.ndarray
+        Vertical coordinates.  Must be two-dimensional, with vertical coordinate
+        the first dimension and radial coordinate the second
+    f : np.ndarray
+        Function values to plot.  Must have same shape as z    
+    fig : matplotlib.pyplot.Figure
+        Figure object to plot
+    ax : matplotlib.pyplot.Axes
+        Axes object to plot
+    colorbar : bool, optional
+        If True, add a colorbar next to the plot axes
+    title : str, optionakl
+        Title for the axes
+    cmap : str, optional
+        Colormap specifier
+        
+    """
     lw, eps = 0.8, .012
     ax.plot(s, z[ 0,:]*(1+eps), 'k', linewidth=lw)
     ax.plot(s, z[-1,:]*(1+eps), 'k', linewidth=lw)
