@@ -270,7 +270,7 @@ def expand_evector(evector, bases, boundary_method, names='all', verbose=True):
 
 
 def plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, boundary_method, bases, fig=None, ax=None):
-    fields = expand_evector(evectors[:,index], bases, boundary_method, names='all')
+    fields = expand_evector(evectors[:,index], bases, boundary_method, names=['p'])
 
     fieldname = 'p'
     basis = bases[fieldname]
@@ -314,9 +314,8 @@ def plot_solution(data):
 
 def main():
 #    cylinder_type, m, Lmax, Nmax, Ekman, alpha = 'full', 14, 40, 160, 1e-5, 0
-    cylinder_type, m, Lmax, Nmax, Ekman, alpha = 'half', 14, 40, 160, 1e-5, 0
-#    cylinder_type, m, Lmax, Nmax, Ekman, alpha = 'full', 30, 80, 160, 1e-6, 0
-    omega = 1
+    cylinder_type, m, Lmax, Nmax, Ekman, alpha = 'half', 14, 40, 300, 1e-5, 0
+    omega = 2
     symmetric_domain, boundary_method = True, 'galerkin'
     force_construct, force_solve = False, False
 
