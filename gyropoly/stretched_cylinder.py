@@ -1086,6 +1086,9 @@ def plotfield(s, z, f, fig, ax, colorbar=True, title=None, cmap='RdBu_r'):
     ax.plot(s, z[-1,:]*(1+eps), 'k', linewidth=lw)
 
     im = ax.pcolormesh(s, z, f, shading='gouraud', cmap=cmap)
+    ax.set_aspect('equal')
+    ax.set_xlabel('s')
+    ax.set_ylabel('z')
     if colorbar:
         fig.colorbar(im, ax=ax)
     if title is not None:
