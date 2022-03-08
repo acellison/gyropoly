@@ -40,6 +40,8 @@ class Basis():
         Hierarchy parameter for the basis functions
     sigma : int, one of {-1, 0, +1}
         Spin weight of the basis functions.  Non-zero spin weights are used to decompose vector fields
+    radius : float, optional
+        Bounding radius of the cylinder
     eta : np.ndarray
         Vertical coordinate for evaluating the basis functions
     t : np.ndarray
@@ -52,19 +54,22 @@ class Basis():
         Data type for evaluation of the basis functions
 
     """
-    def __init__(self, cylinder_type, h, m, Lmax, Nmax, alpha, sigma=0, eta=None, t=None, has_m_scaling=True, has_h_scaling=True, dtype='float64'):
+    def __init__(self, cylinder_type, h, m, Lmax, Nmax, alpha, sigma=0, radius=1., eta=None, t=None, has_m_scaling=True, has_h_scaling=True, dtype='float64'):
         _check_cylinder_type(cylinder_type)
         _check_radial_degree(Lmax, Nmax)
         self.__cylinder_type = cylinder_type
         self.__h, self.__m, self.__Lmax, self.__Nmax = h, m, Lmax, Nmax
         self.__alpha, self.__sigma = alpha, sigma
         self.__dtype = dtype
+        self.__radius = radius
 
         # Get the number of coefficients including truncation
         self.__num_coeffs = total_num_coeffs(Lmax, Nmax)
 
         # Construct the radial polynomial systems
-        self.__systems = [ajacobi.AugmentedJacobiSystem(alpha, m+sigma, [(h,2*ell+2*alpha+1)]) for ell in range(Lmax)]
+        make_radial_params = _radial_jacobi_parameters(m, alpha=alpha, sigma=sigma)
+        radial_params = [make_radial_params(ell) for ell in range(Lmax)]
+        self.__systems = [ajacobi.AugmentedJacobiSystem(a, b, [(h,c[0])]) for a,b,c in radial_params]
 
         # Construct the polynomials if eta and t are not None
         self.__has_m_scaling, self.__has_h_scaling = has_m_scaling, has_h_scaling
@@ -99,6 +104,10 @@ class Basis():
     @property
     def sigma(self):
         return self.__sigma
+
+    @property
+    def radius(self):
+        return self.__radius
 
     @property
     def dtype(self):
@@ -136,7 +145,7 @@ class Basis():
     def s(self):
         """Compute the cylindrical radial coordinate s from t"""
         self._check_constructed(check_Q=True)
-        return np.sqrt((1+self.t)/2)
+        return self.radius*np.sqrt((1+self.t)/2)
 
     @decorators.cached
     def z(self):
@@ -222,7 +231,7 @@ class Basis():
             self.__Q = [prefactor * ht**ell * polys(ell) for ell,system in enumerate(systems)]
 
 
-def _get_ell_modifiers(Lmax, alpha, dtype='float64', internal='float128', adjoint=False):
+def _get_ell_modifiers(Lmax, alpha, adjoint=False, dtype='float64', internal='float128'):
     """
     Returns gamma, beta, delta such that
         P_l^{(alpha,alpha)}(z) 
@@ -346,7 +355,7 @@ def _make_operator(dell, zop, sop, m, Lmax, Nmax, alpha, sigma, Lpad=0, Npad=0):
 
 
 @decorators.cached
-def _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal='float128'):
+def _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma, radius=1., dtype='float64', internal='float128'):
     """
     Construct a raising, lowering or neutral differential operator
 
@@ -367,6 +376,8 @@ def _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma,
         Input basis hierarchy parameter.  Output basis has alpha->alpha+1
     sigma : int, one of {-1, 0, 1}
         Input basis spin weight.  Output basis has sigma->sigma+delta
+    radius : float, optional
+        Bounding radius of the cylinder
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -420,12 +431,14 @@ def _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma,
     # Set up the composite operators
     if cylinder_type == 'full':
         dells = 0, 2
-        scale = 1 if delta == 0 else 2
+        zscale = 1 if delta == 0 else 2
     elif cylinder_type == 'half':
         dells = 0, 1, 2
-        scale = 2
+        zscale = 2
     else:
         raise ValueError(f'Unknown cylinder_type {cylinder_type}')
+    sscale = 1. if delta == 0 else 1./radius
+    scale = zscale * sscale
 
     # Neutral operator has just the ell->ell-1 component
     if delta == 0: dells = (1,)
@@ -436,7 +449,7 @@ def _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma,
     return scale*sum(ops).astype(dtype)
 
 
-def gradient(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+def gradient(cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., dtype='float64', internal='float128'):
     """
     Construct the gradient operator acting on a scalar field
 
@@ -455,6 +468,8 @@ def gradient(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='
         Maximum radial degree of input basis
     alpha : float > -1
         Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    radius : float, optional
+        Bounding radius of the cylinder
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -466,11 +481,11 @@ def gradient(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='
 
     """
     _check_cylinder_type(cylinder_type)
-    make_dop = lambda delta: _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma=0, dtype=dtype, internal=internal)
+    make_dop = lambda delta: _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma=0, radius=radius, dtype=dtype, internal=internal)
     return sparse.vstack([make_dop(delta) for delta in [+1,-1,0]])
 
 
-def divergence(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+def divergence(cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., dtype='float64', internal='float128'):
     """
     Construct the divergence operator acting on a vector field
 
@@ -489,6 +504,8 @@ def divergence(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal
         Maximum radial degree of input basis
     alpha : float > -1
         Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    radius : float, optional
+        Bounding radius of the cylinder
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -500,11 +517,11 @@ def divergence(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal
 
     """
     _check_cylinder_type(cylinder_type)
-    make_dop = lambda sigma: _differential_operator(cylinder_type, -sigma, h, m, Lmax, Nmax, alpha, sigma=sigma, dtype=dtype, internal=internal)
+    make_dop = lambda sigma: _differential_operator(cylinder_type, -sigma, h, m, Lmax, Nmax, alpha, sigma=sigma, radius=radius, dtype=dtype, internal=internal)
     return sparse.hstack([make_dop(sigma) for sigma in [+1,-1,0]])
 
 
-def curl(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+def curl(cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., dtype='float64', internal='float128'):
     """
     Construct the curl operator acting on a vector field
 
@@ -523,6 +540,8 @@ def curl(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='floa
         Maximum radial degree of input basis
     alpha : float > -1
         Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    radius : float, optional
+        Bounding radius of the cylinder
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -537,7 +556,7 @@ def curl(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='floa
     ncoeff = total_num_coeffs(Lmax, Nmax)
     Z = sparse.lil_matrix((ncoeff,ncoeff))
 
-    make_dop = lambda sigma, delta: _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma=sigma, dtype=dtype, internal=internal)
+    make_dop = lambda sigma, delta: _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma=sigma, radius=radius, dtype=dtype, internal=internal)
     Cp =  make_dop(+1, 0),                   -make_dop(0, +1)
     Cm =                   -make_dop(-1, 0),  make_dop(0, -1)
     Cz = -make_dop(+1,-1),  make_dop(-1,+1)
@@ -546,7 +565,7 @@ def curl(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='floa
                              [Cz[0], Cz[1], Z]])
 
 
-def scalar_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+def scalar_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., dtype='float64', internal='float128'):
     """
     Construct the Laplacian operator acting on a scalar field
 
@@ -565,6 +584,8 @@ def scalar_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', in
         Maximum radial degree of input basis
     alpha : float > -1
         Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    radius : float, optional
+        Bounding radius of the cylinder
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -576,12 +597,12 @@ def scalar_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', in
 
     """
     _check_cylinder_type(cylinder_type)
-    G =   gradient(cylinder_type, h, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
-    D = divergence(cylinder_type, h, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal)
+    G =   gradient(cylinder_type, h, m, Lmax, Nmax, alpha,   radius=radius, dtype=internal, internal=internal)
+    D = divergence(cylinder_type, h, m, Lmax, Nmax, alpha+1, radius=radius, dtype=internal, internal=internal)
     return (D @ G).astype(dtype)
 
 
-def vector_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+def vector_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., dtype='float64', internal='float128'):
     """
     Construct the Laplacian operator acting on a vector field
 
@@ -600,6 +621,8 @@ def vector_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', in
         Maximum radial degree of input basis
     alpha : float > -1
         Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    radius : float, optional
+        Bounding radius of the cylinder
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -611,14 +634,14 @@ def vector_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', in
 
     """
     _check_cylinder_type(cylinder_type)
-    D = divergence(cylinder_type, h, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
-    G =   gradient(cylinder_type, h, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal)
-    C1 =      curl(cylinder_type, h, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
-    C2 =      curl(cylinder_type, h, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal)
+    D = divergence(cylinder_type, h, m, Lmax, Nmax, alpha,   radius=radius, dtype=internal, internal=internal)
+    G =   gradient(cylinder_type, h, m, Lmax, Nmax, alpha+1, radius=radius, dtype=internal, internal=internal)
+    C1 =      curl(cylinder_type, h, m, Lmax, Nmax, alpha,   radius=radius, dtype=internal, internal=internal)
+    C2 =      curl(cylinder_type, h, m, Lmax, Nmax, alpha+1, radius=radius, dtype=internal, internal=internal)
     return (G @ D - (C2 @ C1).real).astype(dtype)
     
 
-def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, exact=False, dtype='float64', internal='float128'):
+def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, radius=1., exact=False, dtype='float64', internal='float128'):
     """
     Construct the normal dot operator acting on a vector field.  For the basis functions to behave
     properly this multiplies by the non-normalized normal component at the specified surface.
@@ -646,7 +669,9 @@ def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, exact=Fals
     surface : str, one of {'z=h', 'z=-h', 'z=0', 's=S'}
         Surface for evaluation of the normal component of the vector field.
         If cylinder_type is 'half', 'z=-h' is not valid since it is outside the domain.
-    exact : bool
+    radius : float, optional
+        Bounding radius of the cylinder
+    exact : bool, optional
         If True, pads the output of the operator appropriately for the bandwidth growth
         caused by multiplication by the surface.  
             For 's=S',            Nmax -> Nmax+1
@@ -669,15 +694,15 @@ def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, exact=Fals
     Zero = 0*Id
 
     if surface == 'z=h':
-        Lp = -2 * R @ B(-1)
-        Lm = -2 * R @ B(+1)
+        Lp = -2/radius * R @ B(-1)
+        Lm = -2/radius * R @ B(+1)
         Lz = Id
         dn = 1 + R.codomain.dn
     elif surface == 'z=-h':
         if cylinder_type != 'full':
                 raise ValueError('Half cylinder cannot be evaluated at z=-h')
         # If we're at the bottom flip the sign of the z component compared to the top
-        N = normal_component('full', h, m, Lmax, Nmax, alpha, surface='z=h', dtype=dtype, internal=internal, exact=exact).tocsr()
+        N = normal_component('full', h, m, Lmax, Nmax, alpha, surface='z=h', radius=radius, exact=exact, dtype=dtype, internal=internal).tocsr()
         n = total_num_coeffs(Lmax, Nmax)
         N[:,2*n:3*n] = -N[:,2*n:3*n]
         return N
@@ -687,8 +712,8 @@ def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, exact=Fals
         Lz = -Id
         dn = 0
     elif surface == 's=S':
-        Lp = 1/2 * B(-1)
-        Lm = 1/2 * B(+1)
+        Lp = radius/2 * B(-1)
+        Lm = radius/2 * B(+1)
         Lz = Zero
         dn = 1
     else:
@@ -701,7 +726,7 @@ def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, exact=Fals
     return sparse.hstack(ops)
 
 
-def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', internal='float128'):
+def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, radius=1., dtype='float64', internal='float128'):
     """
     Construct the boundary evaluation operator acting on a scalar field or component of a vector field
 
@@ -725,12 +750,8 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, dtype='floa
     surface : str, one of {'z=h', 'z=-h', 'z=0', 's=S'}
         Surface for evaluation of the normal component of the vector field.
         If cylinder_type is 'half', 'z=-h' is not valid since it is outside the domain.
-    exact : bool
-        If True, pads the output of the operator appropriately for the bandwidth growth
-        caused by multiplication by the surface.  
-            For 's=S',            Nmax -> Nmax+1
-            For 'z=h' and 'z=-h', Nmax -> Nmax+degree(h)
-            For 'z=0',            Nmax -> Nmax
+    radius : float, optional
+        Bounding radius of the cylinder
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -750,7 +771,7 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, dtype='floa
 
     # Helper function to create the basis polynomials
     def make_basis(eta=None, t=None, has_h_scaling=False):
-        return Basis(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, eta=eta, t=t, has_m_scaling=False, has_h_scaling=has_h_scaling, dtype=internal)
+        return Basis(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, radius=radius, eta=eta, t=t, has_m_scaling=False, has_h_scaling=has_h_scaling, dtype=internal)
 
     # Get the evaluation surface from the surface argument
     if isinstance(surface, str):
@@ -809,7 +830,7 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, dtype='floa
     return B.astype(dtype)
 
 
-def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exact=True, dtype='float64', internal='float128'):
+def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, radius=1., ntimes=1, adjoint=False, exact=True, dtype='float64', internal='float128'):
     """
     Convert alpha to alpha + (ntimes if not adjoint else -1).
     The adjoint operator lowers alpha by multiplying the field in grid space by
@@ -835,6 +856,8 @@ def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=Fal
         Input basis hierarchy parameter.  Output basis has alpha->alpha+1
     sigma : int, one of {-1, 0, +1}
         Spin weight
+    radius : float, optional
+        Bounding radius of the cylinder
     ntimes : int, optional
         Number of times to convert alpha up, so that alpha -> alpha + ntimes
     adjoint : bool, optional
@@ -872,7 +895,7 @@ def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=Fal
     op = (make_op(0, L0) + make_op(2*p, L2))
 
     if ntimes > 1:
-        C = convert(cylinder_type, h, m, Lmax, Nmax, alpha+1, sigma, dtype=internal, internal='float128', adjoint=False, ntimes=ntimes-1)
+        C = convert(cylinder_type, h, m, Lmax, Nmax, alpha+1, sigma, radius=radius, dtype=internal, internal='float128', adjoint=False, ntimes=ntimes-1)
         op = C @ op
 
     op = op.astype(dtype)
@@ -883,7 +906,7 @@ def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=Fal
     return op
 
 
-def project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, direction, shift=0, Lstop=0, dtype='float64', internal='float128'):
+def project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, direction, radius=1., shift=0, Lstop=0, dtype='float64', internal='float128'):
     """
     Project modes with parameter alpha onto highest modes with parameter alpha+1.
     This is used to implement tau corrections equations when enforcing boundary conditions.
@@ -908,6 +931,8 @@ def project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, direction, shift=0, L
     direction : str, one of {'s', 'z'}
         If 's', project onto highest radial modes
         If 'z', project onto highest vertical modes
+    radius : float, optional
+        Bounding radius of the cylinder
     shift : int, optional
         Distance from highest mode for projection
     Lstop : int, optional
@@ -923,7 +948,7 @@ def project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, direction, shift=0, L
 
     """
     _check_cylinder_type(cylinder_type)
-    C = convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, dtype=dtype, internal=internal)
+    C = convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, radius=radius, dtype=dtype, internal=internal)
     _, offsets = coeff_sizes(Lmax, Nmax)
     if direction == 'z':
         # Size Nmax-(Lmax-1-shift), projecting onto all radial coefficients of fixed vertical degree
@@ -939,17 +964,17 @@ def project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, direction, shift=0, L
 
 
 @decorators.cached
-def _operator(name, cylinder_type, h, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', **kwargs):
+def _operator(name, cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., dtype='float64', internal='float128', **kwargs):
     """Operator dispatch function with caching of results"""
     valid_names = ['gradient', 'divergence', 'curl', 'scalar_laplacian', 'vector_laplacian',
                    'normal_component', 'boundary', 'convert', 'project']
     if name not in valid_names:
         raise ValueError(f'Invalid operator name {name}')
     function = eval(name)
-    return function(cylinder_type, h, m, Lmax, Nmax, alpha, dtype=dtype, internal=internal, **kwargs)
+    return function(cylinder_type, h, m, Lmax, Nmax, alpha, radius=radius, dtype=dtype, internal=internal, **kwargs)
     
 
-def operators(cylinder_type, h, m=None, Lmax=None, Nmax=None, alpha=None, dtype='float64', internal='float128'):
+def operators(cylinder_type, h, m=None, Lmax=None, Nmax=None, alpha=None, radius=1., dtype='float64', internal='float128'):
     """
     Bind common arguments to an operator dispatcher so that they can be specified once instead
     of each time we construct a different operator.
@@ -969,6 +994,8 @@ def operators(cylinder_type, h, m=None, Lmax=None, Nmax=None, alpha=None, dtype=
         Maximum radial degree of input basis
     alpha : float > -1, optional
         Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    radius : float, optional
+        Bounding radius of the cylinder
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -988,7 +1015,8 @@ def operators(cylinder_type, h, m=None, Lmax=None, Nmax=None, alpha=None, dtype=
         LL = kwargs.pop('Lmax', Lmax)
         NN = kwargs.pop('Nmax', Nmax)
         aa = kwargs.pop('alpha', alpha)
-        return _operator(name, cylinder_type, h, mm, LL, NN, aa, dtype=dtype, internal=internal, **kwargs)
+        ss = kwargs.pop('radius', radius)
+        return _operator(name, cylinder_type, h, m=mm, Lmax=LL, Nmax=NN, alpha=aa, radius=ss, dtype=dtype, internal=internal, **kwargs)
     return dispatcher
 
 
