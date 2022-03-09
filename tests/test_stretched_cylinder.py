@@ -6,6 +6,7 @@ from gyropoly import stretched_cylinder as sc
 
 np.random.seed(37)
 
+
 def check_close(value, target, tol, verbose=False):
     error = np.max(abs(value-target))
     if verbose:
@@ -22,32 +23,35 @@ def plotfield(s, z, f, fig=None, ax=None):
     fig.colorbar(im, ax=ax)
 
 
-def create_scalar_basis(cylinder_type, h, m, Lmax, Nmax, alpha, t, eta):
-    return sc.Basis(cylinder_type, h, m, Lmax, Nmax, alpha=alpha, sigma=0, eta=eta, t=t)
+def create_scalar_basis(geometry, m, Lmax, Nmax, alpha, t, eta):
+    return sc.Basis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=0, eta=eta, t=t)
 
 
-def create_vector_basis(cylinder_type, h, m, Lmax, Nmax, alpha, t, eta):
-    return {key: sc.Basis(cylinder_type, h, m, Lmax, Nmax, alpha=alpha, sigma=s, eta=eta, t=t) for key, s in [('up', +1), ('um', -1), ('w', 0)]}
+def create_vector_basis(geometry, m, Lmax, Nmax, alpha, t, eta):
+    return {key: sc.Basis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=s, eta=eta, t=t) for key, s in [('up', +1), ('um', -1), ('w', 0)]}
 
 
-def dZ(f, s, eta, h, cylinder_type):
+def dZ(geometry, f, t, eta, h):
     deta = np.gradient(f, eta, axis=0)
-    scale = 2 if cylinder_type == 'half' else 1
+    scale = 2 if geometry.cylinder_type == 'half' else 1
+    if geometry.root_h:
+        h = np.sqrt(h)
     return scale/h[np.newaxis,:] * deta
 
 
-def dS(f, s, eta, h, dhdt, cylinder_type):
-    deta, ds = np.gradient(f, eta, s)
-    if cylinder_type == 'half':
+def dS(geometry, f, t, eta, h, dhdt):
+    deta, dt = np.gradient(f, eta, t)
+    if geometry.cylinder_type == 'half':
         eta = 1+eta
-    return ds - 4*s*(dhdt/h)[np.newaxis,:] * eta[:,np.newaxis] * deta
+    scale = 1/2 if geometry.root_h else 1
+    return 2*np.sqrt(2*(1+t))/geometry.radius * (dt - scale*(dhdt/h)[np.newaxis,:] * eta[:,np.newaxis] * deta)
 
 
 def dPhi(f, m):
     return 1j*m * f
 
 
-def test_gradient(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
+def test_gradient(geometry, m, Lmax, Nmax, alpha, operators):
     # Build the operator
     op = operators('gradient')
 
@@ -58,20 +62,20 @@ def test_gradient(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
 
     # Build the bases
     ns, neta = 4000, 401
-    s = np.linspace(0,1,ns+1)[1:]
-    t = 2*s**2-1
+    t = np.linspace(-1,1,ns+1)[1:]
     eta = np.linspace(-1,1,neta)
-    scalar_basis = create_scalar_basis(cylinder_type, h, m, Lmax, Nmax, alpha,   t, eta)
-    vector_basis = create_vector_basis(cylinder_type, h, m, Lmax, Nmax, alpha+1, t, eta)
+    scalar_basis = create_scalar_basis(geometry, m, Lmax, Nmax, alpha,   t, eta)
+    vector_basis = create_vector_basis(geometry, m, Lmax, Nmax, alpha+1, t, eta)
+    s = geometry.s(t)
 
     # Expand the scalar field and compute its gradient with finite differences
     f = scalar_basis.expand(c)
-    hs = np.polyval(scalar_basis.h, t)
-    dhdt = np.polyval(np.polyder(scalar_basis.h), t)
+    h = np.polyval(geometry.h, t)
+    dhdt = np.polyval(np.polyder(geometry.h), t)
 
-    ugrid = dS(f, s, eta, hs, dhdt, cylinder_type)
+    ugrid = dS(geometry, f, t, eta, h, dhdt)
     vgrid = 1/s * dPhi(f, m)
-    wgrid = dZ(f, s, eta, hs, cylinder_type)
+    wgrid = dZ(geometry, f, t, eta, h)
 
     # Expand the result of the operator in grid space
     Up, Um, W = [d[i*ncoeff:(i+1)*ncoeff] for i in range(3)]
@@ -85,12 +89,12 @@ def test_gradient(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
         f, g = [a[ez:-ez,sz:-sz] for a in [field, grid]]
         check_close(f, g, tol)
 
-    check(u, ugrid, 1e-2)
-    check(w, wgrid, 1.2e-3)
+    check(u, ugrid, 1.6e-2)
+    check(w, wgrid, 1.4e-3)
     check_close(v, vgrid, 1e-11)
 
 
-def test_divergence(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
+def test_divergence(geometry, m, Lmax, Nmax, alpha, operators):
     # Build the operator
     op = operators('divergence')
 
@@ -101,11 +105,11 @@ def test_divergence(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
 
     # Build the bases
     ns, neta = 4000, 401
-    s = np.linspace(0,1,ns+1)[1:]
-    t = 2*s**2-1
+    t = np.linspace(-1,1,ns+1)[1:]
     eta = np.linspace(-1,1,neta)
-    vector_basis = create_vector_basis(cylinder_type, h, m, Lmax, Nmax, alpha,   t, eta)
-    scalar_basis = create_scalar_basis(cylinder_type, h, m, Lmax, Nmax, alpha+1, t, eta)
+    vector_basis = create_vector_basis(geometry, m, Lmax, Nmax, alpha,   t, eta)
+    scalar_basis = create_scalar_basis(geometry, m, Lmax, Nmax, alpha+1, t, eta)
+    s = geometry.s(t)
 
     # Expand the vector field and compute its divergence with finite differences
     Up, Um, W = [c[i*ncoeff:(i+1)*ncoeff] for i in range(3)]
@@ -113,12 +117,12 @@ def test_divergence(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
     u =   1/np.sqrt(2) * (up + um)
     v = -1j/np.sqrt(2) * (up - um)
 
-    hs = np.polyval(scalar_basis.h, t)
-    dhdt = np.polyval(np.polyder(scalar_basis.h), t)
+    h = np.polyval(geometry.h, t)
+    dhdt = np.polyval(np.polyder(geometry.h), t)
 
-    du = dS(u, s, eta, hs, dhdt, cylinder_type) + 1/s * u
+    du = dS(geometry, u, t, eta, h, dhdt) + 1/s * u
     dv = 1/s * dPhi(v, m)
-    dw = dZ(w, s, eta, hs, cylinder_type)
+    dw = dZ(geometry, w, t, eta, h)
 
     grid = du + dv + dw
 
@@ -134,24 +138,24 @@ def test_divergence(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
     check(f, grid, 2e-2)
 
 
-def test_curl(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
+def test_curl(geometry, m, Lmax, Nmax, alpha, operators):
     pass
 
 
-def test_scalar_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
+def test_scalar_laplacian(geometry, m, Lmax, Nmax, alpha, operators):
     pass
 
 
-def test_vector_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
+def test_vector_laplacian(geometry, m, Lmax, Nmax, alpha, operators):
     pass
 
 
-def test_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
-    test_scalar_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, operators)
-    test_vector_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, operators)
+def test_laplacian(geometry, m, Lmax, Nmax, alpha, operators):
+    test_scalar_laplacian(geometry, m, Lmax, Nmax, alpha, operators)
+    test_vector_laplacian(geometry, m, Lmax, Nmax, alpha, operators)
 
 
-def test_ndot_top(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
+def test_ndot_top(geometry, m, Lmax, Nmax, alpha, operators):
     # Build the operator
     exact = True
     dn = 1 if exact else 0
@@ -165,9 +169,8 @@ def test_ndot_top(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
     # Construct the bases
     t = np.linspace(-1,1,100)
     eta = np.linspace(-1,1,101)
-    scalar_basis = create_scalar_basis(cylinder_type, h, m, Lmax, Nmax+dn, alpha, t, eta)
-    vector_basis = create_vector_basis(cylinder_type, h, m, Lmax, Nmax,    alpha, t, eta)
-    s = scalar_basis.s()
+    scalar_basis = create_scalar_basis(geometry, m, Lmax, Nmax+dn, alpha, t, eta)
+    vector_basis = create_vector_basis(geometry, m, Lmax, Nmax,    alpha, t, eta)
 
     # Evaluate the operator output in the scalar basis
     ndotu = scalar_basis.expand(d)
@@ -176,14 +179,14 @@ def test_ndot_top(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
     Cp, Cm, Cz = [c[i*ncoeff:(i+1)*ncoeff] for i in range(3)]
     up, um, w = [vector_basis[key].expand(coeffs) for key,coeffs in [('up', Cp), ('um', Cm), ('w', Cz)]]
     u = 1/np.sqrt(2) * (up + um)
-    hp = np.polyval(np.polyder(scalar_basis.h), t)
-    ndotu_grid = -2*np.sqrt(2*(1+t)) * hp * u + w
+    hp = np.polyval(np.polyder(geometry.h), t)
+    ndotu_grid = -2*np.sqrt(2*(1+t))/geometry.radius * hp * u + w
 
     # Compute the error
     check_close(ndotu, ndotu_grid, 2e-13)
 
 
-def test_ndot_xy_plane(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
+def test_ndot_xy_plane(geometry, m, Lmax, Nmax, alpha, operators):
     op = operators('normal_component', surface='z=0')
 
     # Construct the coefficient vector and apply the operator
@@ -194,9 +197,8 @@ def test_ndot_xy_plane(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
     # Construct the bases
     t = np.linspace(-1,1,100)
     eta = np.linspace(-1,1,101)
-    scalar_basis = create_scalar_basis(cylinder_type, h, m, Lmax, Nmax, alpha, t, eta)
-    vector_basis = create_vector_basis(cylinder_type, h, m, Lmax, Nmax, alpha, t, eta)
-    s = scalar_basis.s()
+    scalar_basis = create_scalar_basis(geometry, m, Lmax, Nmax, alpha, t, eta)
+    vector_basis = create_vector_basis(geometry, m, Lmax, Nmax, alpha, t, eta)
 
     # Evaluate the operator output in the scalar basis
     ndotu = scalar_basis.expand(d)
@@ -210,8 +212,8 @@ def test_ndot_xy_plane(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
     check_close(ndotu, ndotu_grid, 1e-16)
 
 
-def test_ndot_bottom(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
-    if cylinder_type != 'full':
+def test_ndot_bottom(geometry, m, Lmax, Nmax, alpha, operators):
+    if geometry.cylinder_type != 'full':
         raise ValueError('z=-h not in half domain')
     # Build the operator
     exact = True
@@ -226,9 +228,8 @@ def test_ndot_bottom(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
     # Construct the bases
     t = np.linspace(-1,1,100)
     eta = np.linspace(-1,1,101)
-    scalar_basis = create_scalar_basis(cylinder_type, h, m, Lmax, Nmax+dn, alpha, t, eta)
-    vector_basis = create_vector_basis(cylinder_type, h, m, Lmax, Nmax,    alpha, t, eta)
-    s = scalar_basis.s()
+    scalar_basis = create_scalar_basis(geometry, m, Lmax, Nmax+dn, alpha, t, eta)
+    vector_basis = create_vector_basis(geometry, m, Lmax, Nmax,    alpha, t, eta)
 
     # Evaluate the operator output in the scalar basis
     ndotu = scalar_basis.expand(d)
@@ -237,14 +238,14 @@ def test_ndot_bottom(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
     Cp, Cm, Cz = [c[i*ncoeff:(i+1)*ncoeff] for i in range(3)]
     up, um, w = [vector_basis[key].expand(coeffs) for key,coeffs in [('up', Cp), ('um', Cm), ('w', Cz)]]
     u = 1/np.sqrt(2) * (up + um)
-    hp = np.polyval(np.polyder(scalar_basis.h), t)
-    ndotu_grid = -2*np.sqrt(2*(1+t)) * hp * u - w
+    hp = np.polyval(np.polyder(geometry.h), t)
+    ndotu_grid = -2*np.sqrt(2*(1+t))/geometry.radius * hp * u - w
 
     # Compute the error
     check_close(ndotu, ndotu_grid, 1e-13)
 
 
-def test_ndot_side(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
+def test_ndot_side(geometry, m, Lmax, Nmax, alpha, operators):
     # Build the operator
     exact = True
     dn = 1 if exact else 0
@@ -258,8 +259,8 @@ def test_ndot_side(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
     # Construct the bases
     t = np.linspace(-1,1,100)
     eta = np.linspace(-1,1,101)
-    scalar_basis = create_scalar_basis(cylinder_type, h, m, Lmax, Nmax+dn, alpha, t, eta)
-    vector_basis = create_vector_basis(cylinder_type, h, m, Lmax, Nmax,    alpha, t, eta)
+    scalar_basis = create_scalar_basis(geometry, m, Lmax, Nmax+dn, alpha, t, eta)
+    vector_basis = create_vector_basis(geometry, m, Lmax, Nmax,    alpha, t, eta)
     s = scalar_basis.s()
 
     # Evaluate the operator output in the scalar basis
@@ -272,15 +273,15 @@ def test_ndot_side(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
 
     # Compute the error
     error = ndotu - ndotu_grid
-    check_close(ndotu, ndotu_grid, 1e-13)
+    check_close(ndotu, ndotu_grid, 1.6e-13)
 
 
-def test_normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
-    test_ndot_top(cylinder_type, h, m, Lmax, Nmax, alpha, operators)
-    test_ndot_xy_plane(cylinder_type, h, m, Lmax, Nmax, alpha, operators)
-    if cylinder_type == 'full':
-        test_ndot_bottom(cylinder_type, h, m, Lmax, Nmax, alpha, operators)
-    test_ndot_side(cylinder_type, h, m, Lmax, Nmax, alpha, operators)
+def test_normal_component(geometry, m, Lmax, Nmax, alpha, operators):
+    test_ndot_top(geometry, m, Lmax, Nmax, alpha, operators)
+    test_ndot_xy_plane(geometry, m, Lmax, Nmax, alpha, operators)
+    if geometry.cylinder_type == 'full':
+        test_ndot_bottom(geometry, m, Lmax, Nmax, alpha, operators)
+    test_ndot_side(geometry, m, Lmax, Nmax, alpha, operators)
 
 
 def rank_deficiency(mat):
@@ -292,7 +293,7 @@ def rank_deficiency(mat):
     return np.shape(mat)[0] - rank
 
 
-def test_boundary_combination(cylinder_type, h, m, Lmax, Nmax, alpha, operators, bottom):
+def test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom):
     # The three boundary operators have linearly dependent rows.  There are three cases:
     # 1. Full Cylinder, evaluating at z=0
     #    -> chuck the last equation from each surface evaluation operator
@@ -301,11 +302,11 @@ def test_boundary_combination(cylinder_type, h, m, Lmax, Nmax, alpha, operators,
     #    -> b. Lmax odd  ? chuck last equation from top, bottom, second to last from side
     # 3. Half Cylinder
     #    -> Same as 2b.
-    bottom = 'z=-h' if cylinder_type == 'full' else 'z=0'
+    bottom = 'z=-h' if geometry.cylinder_type == 'full' else 'z=0'
     op1 = operators('boundary', sigma=0, surface='z=h')
     op2 = operators('boundary', sigma=0, surface=bottom)
     op3 = operators('boundary', sigma=0, surface='s=S')
-    if cylinder_type == 'full' or Lmax%2 == 0:
+    if geometry.cylinder_type == 'full' or Lmax%2 == 0:
         op = sparse.vstack([op1[:-1,:],op2[:-1,:],op3[:-1,:]])
     else:
         op = sparse.vstack([op1[:-1,:],op2[:-1,:],op3[:-2,:],op3[-1,:]])
@@ -315,7 +316,7 @@ def test_boundary_combination(cylinder_type, h, m, Lmax, Nmax, alpha, operators,
     # Create the evaluation basis
     eta = np.linspace(-1,1,257)
     t = np.linspace(-1,1,256)
-    basis = sc.Basis(cylinder_type, h, m, Lmax, Nmax, alpha, sigma=0, eta=eta, t=t)
+    basis = sc.Basis(geometry, m, Lmax, Nmax, alpha, sigma=0, eta=eta, t=t)
 
     boundary_rows, num_coeffs = np.shape(op)
     dim = np.shape(nullspace)[1]
@@ -324,7 +325,7 @@ def test_boundary_combination(cylinder_type, h, m, Lmax, Nmax, alpha, operators,
     assert boundary_deficiency == 0
 
     errors = np.zeros((dim,3))
-    bottom_index = len(eta)//2 if bottom == 'z=0' and cylinder_type == 'full' else 0
+    bottom_index = len(eta)//2 if bottom == 'z=0' and geometry.cylinder_type == 'full' else 0
     for i in range(dim):
         f = basis.expand(nullspace[:,i])
         fmax = np.max(abs(f))
@@ -333,13 +334,13 @@ def test_boundary_combination(cylinder_type, h, m, Lmax, Nmax, alpha, operators,
     check_close(max_error, 0, 2e-14)
 
 
-def test_boundary(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
-    test_boundary_combination(cylinder_type, h, m, Lmax, Nmax, alpha, operators, bottom='z=0')
-    if cylinder_type == 'full':
-        test_boundary_combination(cylinder_type, h, m, Lmax, Nmax, alpha, operators, bottom='z=-h')
+def test_boundary(geometry, m, Lmax, Nmax, alpha, operators):
+    test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom='z=0')
+    if geometry.cylinder_type == 'full':
+        test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom='z=-h')
 
 
-def test_convert(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
+def test_convert(geometry, m, Lmax, Nmax, alpha, operators):
     op1 = operators('convert', sigma=0)
     op2 = operators('convert', sigma=0, ntimes=3)
 
@@ -350,19 +351,19 @@ def test_convert(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
 
     t = np.linspace(-1,1,100)
     eta = np.linspace(-1,1,101)
-    basis0 = create_scalar_basis(cylinder_type, h, m, Lmax, Nmax, alpha,   t, eta)
-    basis1 = create_scalar_basis(cylinder_type, h, m, Lmax, Nmax, alpha+1, t, eta)
-    basis2 = create_scalar_basis(cylinder_type, h, m, Lmax, Nmax, alpha+3, t, eta)
+    basis0 = create_scalar_basis(geometry, m, Lmax, Nmax, alpha,   t, eta)
+    basis1 = create_scalar_basis(geometry, m, Lmax, Nmax, alpha+1, t, eta)
+    basis2 = create_scalar_basis(geometry, m, Lmax, Nmax, alpha+3, t, eta)
 
     f = basis0.expand(c)
     g1 = basis1.expand(d1)
     g2 = basis2.expand(d2)
 
-    check_close(f, g1, 9e-14)
-    check_close(f, g2, 6e-13)
+    check_close(f, g1, 1.5e-13)
+    check_close(f, g2, 6.2e-13)
 
 
-def test_convert_adjoint(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
+def test_convert_adjoint(geometry, m, Lmax, Nmax, alpha, operators):
     op = operators('convert', sigma=0, adjoint=True)
 
     ncoeff = sc.total_num_coeffs(Lmax, Nmax)
@@ -371,18 +372,19 @@ def test_convert_adjoint(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
 
     t = np.linspace(-1,1,100)
     eta = np.linspace(-1,1,101)
-    basis0 = create_scalar_basis(cylinder_type, h, m, Lmax,   Nmax,   alpha,   t, eta)
-    basis1 = create_scalar_basis(cylinder_type, h, m, Lmax+2, Nmax+3, alpha-1, t, eta)
+    basis0 = create_scalar_basis(geometry, m, Lmax,   Nmax,   alpha,   t, eta)
+    basis1 = create_scalar_basis(geometry, m, Lmax+2, Nmax+3, alpha-1, t, eta)
 
     t, eta = t[np.newaxis,:], eta[:,np.newaxis]
-    ht = np.polyval(basis0.h, t)
-    f = (1-eta**2) * (1-t) * ht**2 * basis0.expand(c)
+    ht = np.polyval(geometry.h, t)
+    hpower = 1 if geometry.root_h else 2
+    f = (1-eta**2) * (1-t) * ht**hpower * basis0.expand(c)
     g = basis1.expand(d)
 
     check_close(f, g, 6e-15)
 
     # Boundary evaluation of the conversion adjoint is identically zero
-    Bops = sc.operators(cylinder_type, h, m=m, Lmax=Lmax+2, Nmax=Nmax+3, alpha=alpha-1)
+    Bops = sc.operators(geometry, m=m, Lmax=Lmax+2, Nmax=Nmax+3, alpha=alpha-1)
 
     B = Bops('boundary', sigma=0, surface='s=S')
     assert np.max(abs(B @ op)) < 3e-16
@@ -390,12 +392,12 @@ def test_convert_adjoint(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
     B = Bops('boundary', sigma=0, surface='z=h')
     assert np.max(abs(B @ op)) < 2e-15
 
-    bottom = 'z=-h' if cylinder_type == 'full' else 'z=0'
+    bottom = 'z=-h' if geometry.cylinder_type == 'full' else 'z=0'
     B = Bops('boundary', sigma=0, surface=bottom)
     assert np.max(abs(B @ op)) < 1e-15
 
 
-def test_project(cylinder_type, h, m, Lmax, Nmax, alpha, operators):
+def test_project(geometry, m, Lmax, Nmax, alpha, operators):
     def project(direction, shift, Lstop=0): 
         return operators('project', sigma=0, direction=direction, shift=shift, Lstop=Lstop)
 
@@ -419,15 +421,25 @@ def main():
     funs = [test_gradient, test_divergence, test_curl, test_laplacian,
             test_normal_component, test_boundary, test_convert, test_convert_adjoint, test_project]
 
-    def test(cylinder_type):
-        operators = sc.operators(cylinder_type, h, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha)
-        args = cylinder_type, h, m, Lmax, Nmax, alpha, operators
+    def test(geometry):
+        operators = sc.operators(geometry, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha)
+        args = geometry, m, Lmax, Nmax, alpha, operators
         for fun in funs:
-            fun(*args)
+            try:
+                fun(*args)
+            except ValueError as e:
+                print('Warning: skipping test:', e)
 
-    for cylinder_type in ['full', 'half']:
-        print(f'Testing {cylinder_type} stretched cylinder...')
-        test(cylinder_type)
+    geometries = [sc.Geometry(cylinder_type='full', h=h),
+                  sc.Geometry(cylinder_type='half', h=h),
+                  sc.Geometry(cylinder_type='full', h=h, radius=2.),
+                  sc.Geometry(cylinder_type='half', h=h, radius=2.),
+                  sc.Geometry(cylinder_type='full', h=h, root_h=True),
+                  sc.Geometry(cylinder_type='full', h=h, root_h=True, radius=2.)]
+    for geometry in geometries:
+        print(f'Testing {geometry} stretched cylinder...')
+        test(geometry)
+    print('ok')
 
 
 if __name__=='__main__':

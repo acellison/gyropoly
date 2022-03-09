@@ -23,27 +23,23 @@ def Lshift(sigma):
     return 1 if sigma == 0 else 0
 
 
-def bottom_boundary(cylinder_type, symmetric_domain):
-    return 'z=-h' if symmetric_domain and cylinder_type == 'full' else 'z=0'
-
-
-def combined_boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, radius, root_h, symmetric_domain):
+def combined_boundary(geometry, m, Lmax, Nmax, alpha, sigma):
     def make_op(sigma, surface):
-        return sc.boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, radius=radius, root_h=root_h)
+        return sc.boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface)
 
-    op1 = make_op(sigma=sigma, surface='z=h')
-    op2 = make_op(sigma=sigma, surface=bottom_boundary(cylinder_type, symmetric_domain))
-    op3 = make_op(sigma=sigma, surface='s=S')
-    if cylinder_type == 'full' or Lmax%2 == 0:
+    op1 = make_op(sigma=sigma, surface=geometry.top)
+    op2 = make_op(sigma=sigma, surface=geometry.bottom)
+    op3 = make_op(sigma=sigma, surface=geometry.side)
+    if geometry.cylinder_type == 'full' or Lmax%2 == 0:
         op = sparse.vstack([op1[:-1,:],op2[:-1,:],op3[:-1,:]])
     else:
         op = sparse.vstack([op1[:-1,:],op2[:-1,:],op3[:-2,:],op3[-1,:]])
     return op
 
 
-def combined_projection(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, radius, root_h, symmetric_domain):
+def combined_projection(geometry, m, Lmax, Nmax, alpha, sigma):
     def make_op(direction, shift, Lstop=0): 
-        return sc.project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma=sigma, radius=radius, root_h=root_h, direction=direction, shift=shift, Lstop=Lstop)
+        return sc.project(geometry, m, Lmax, Nmax, alpha, sigma=sigma, direction=direction, shift=shift, Lstop=Lstop)
 
     top_shifts = [1,0]     # size Nmax-(Lmax-2) and Nmax-(Lmax-1), total = 2*Nmax-2*Lmax+3
     side_shifts = [2,1,0]  # total size 3*(Lmax-2) = 3*Lmax-6, top+side = 2*Nmax+Lmax-3 ok
@@ -52,27 +48,27 @@ def combined_projection(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, radius, r
     return sparse.hstack(opt+ops)
 
 
-def build_boundary(cylinder_type, h, m, Lmax, Nmax, alpha, radius, root_h, symmetric_domain):
-    make_op = lambda sigma: combined_boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, radius, root_h, symmetric_domain)
+def build_boundary(geometry, m, Lmax, Nmax, alpha):
+    make_op = lambda sigma: combined_boundary(geometry, m, Lmax, Nmax, alpha, sigma)
     B = sparse.block_diag([make_op(sigma) for sigma in [+1,-1,0]])
     ncoeff = sc.total_num_coeffs(Lmax, Nmax)
     Z = sparse.lil_matrix((np.shape(B)[0], ncoeff))
     return sparse.hstack([B,Z])
 
 
-def build_projections(cylinder_type, h, m, Lmax, Nmax, alpha, radius, root_h, symmetric_domain, boundary_method):
+def build_projections(geometry, m, Lmax, Nmax, alpha, boundary_method):
     if boundary_method == 'tau':
-        make_op = lambda sigma: combined_projection(cylinder_type, h, m, Lmax, Nmax, alpha+1, sigma, radius, root_h, symmetric_domain)
+        make_op = lambda sigma: combined_projection(geometry, m, Lmax, Nmax, alpha+1, sigma)
         col = sparse.block_diag([make_op(sigma) for sigma in [+1, -1, 0]])
         Z = sparse.lil_matrix((sc.total_num_coeffs(Lmax, Nmax), np.shape(col)[1]))
         return sparse.vstack([col, Z])
     else:
-        make_op = lambda sigma, dalpha, dL: combined_projection(cylinder_type, h, m, Lmax+2-dL, Nmax+3, alpha+dalpha, sigma, radius, root_h, symmetric_domain)
+        make_op = lambda sigma, dalpha, dL: combined_projection(geometry, m, Lmax+2-dL, Nmax+3, alpha+dalpha, sigma)
         return sparse.block_diag([make_op(sigma, dalpha, dL) for sigma, dalpha, dL in [(+1,1,0), (-1,1,0), (0,1,Lshift(0)), (0,0,0)]])
 
 
-def build_matrices_tau(cylinder_type, h, m, Lmax, Nmax, Ekman, alpha, symmetric_domain, radius=1., root_h=False):
-    operators = sc.operators(cylinder_type, h, m, Lmax, Nmax, radius=radius, root_h=root_h)
+def build_matrices_tau(geometry, m, Lmax, Nmax, Ekman, alpha):
+    operators = sc.operators(geometry, m, Lmax, Nmax)
 
     ncoeff = sc.total_num_coeffs(Lmax, Nmax)
     I = sparse.eye(ncoeff)
@@ -93,10 +89,10 @@ def build_matrices_tau(cylinder_type, h, m, Lmax, Nmax, Ekman, alpha, symmetric_
     M = -sparse.block_diag([Ap, Am, Az, Z])
 
     # Build the combined boundary condition
-    row = build_boundary(cylinder_type, h, m, Lmax, Nmax, alpha, radius, root_h, symmetric_domain=symmetric_domain)
+    row = build_boundary(geometry, m, Lmax, Nmax, alpha)
 
     # Tau projections for enforcing the boundaries
-    col = build_projections(cylinder_type, h, m, Lmax, Nmax, alpha, radius, root_h, symmetric_domain=symmetric_domain, boundary_method='tau')
+    col = build_projections(geometry, m, Lmax, Nmax, alpha, boundary_method='tau')
 
     # Concatenate the boundary conditions and projections onto the system
     corner = sparse.lil_matrix((np.shape(row)[0], np.shape(col)[1]))
@@ -107,19 +103,16 @@ def build_matrices_tau(cylinder_type, h, m, Lmax, Nmax, Ekman, alpha, symmetric_
 
 
 @cached
-def galerkin_matrix(cylinder_type, h, m, Lmax, Nmax, alpha, radius, root_h):
-    Sp, Sm, Sz = [sc.convert(cylinder_type, h, m, Lmax-Lshift(sigma), Nmax, alpha+1, sigma=sigma, radius=radius, root_h=root_h, adjoint=True) for sigma in [+1,-1,0]]
+def galerkin_matrix(geometry, m, Lmax, Nmax, alpha):
+    Sp, Sm, Sz = [sc.convert(geometry, m, Lmax-Lshift(sigma), Nmax, alpha+1, sigma=sigma, adjoint=True) for sigma in [+1,-1,0]]
     I = sparse.eye(sc.total_num_coeffs(Lmax, Nmax))
     return sparse.block_diag([Sp,Sm,Sz,I])
 
 
-def build_matrices_galerkin(cylinder_type, h, m, Lmax, Nmax, Ekman, alpha, symmetric_domain, radius=1., root_h=False):
-    if (cylinder_type, symmetric_domain) == ('full', False):
-        raise ValueError('Galerkin method only works on symmetric stretched cylinders')
-
+def build_matrices_galerkin(geometry, m, Lmax, Nmax, Ekman, alpha):
     dL, dN = 2, 3
-    operatorsu = sc.operators(cylinder_type, h, m, Lmax+dL, Nmax+dN, radius=radius, root_h=root_h)
-    operatorsp = sc.operators(cylinder_type, h, m, Lmax,    Nmax,    radius=radius, root_h=root_h)
+    operatorsu = sc.operators(geometry, m, Lmax+dL, Nmax+dN)
+    operatorsp = sc.operators(geometry, m, Lmax,    Nmax)
 
     ncoeffu = sc.total_num_coeffs(Lmax+dL,   Nmax+dN)
     ncoeffp = sc.total_num_coeffs(Lmax, Nmax)
@@ -150,11 +143,11 @@ def build_matrices_galerkin(cylinder_type, h, m, Lmax, Nmax, Ekman, alpha, symme
     M = -sparse.block_diag([Ap, Am, Az, Z])
 
     # Galerkin recombine the system for no slip boundaries
-    S = galerkin_matrix(cylinder_type, h, m, Lmax, Nmax, alpha, radius, root_h)
+    S = galerkin_matrix(geometry, m, Lmax, Nmax, alpha)
     L, M = L @ S, M @ S
 
     # Tau projections for enforcing the boundaries
-    col = build_projections(cylinder_type, h, m, Lmax, Nmax, alpha, radius, root_h, symmetric_domain=symmetric_domain, boundary_method='galerkin')
+    col = build_projections(geometry, m, Lmax, Nmax, alpha, boundary_method='galerkin')
     L = sparse.hstack([L,   col])
     M = sparse.hstack([M, 0*col])
 
@@ -168,33 +161,27 @@ def _get_directory(prefix='data'):
     return directory
 
   
-def solve_eigenproblem(omega, cylinder_type, h, m, Lmax, Nmax, radius, root_h, boundary_method, Ekman, force_construct=True, force_solve=True, alpha=0, symmetric_domain=False, nev='all', evalue_target=None):
-    if (boundary_method, cylinder_type, symmetric_domain) == ('galerkin', 'full', False):
-        raise ValueError('Galerkin method only works on symmetric stretched cylinders')
-
+def solve_eigenproblem(geometry, m, Lmax, Nmax, boundary_method, omega, Ekman, alpha=0, force_construct=True, force_solve=True, nev='all', evalue_target=None):
     # Construct the data filename
     alphastr = '' if alpha == 0 else f'-alpha={alpha}'
-    symstr = '-symmetric' if bottom_boundary(cylinder_type, symmetric_domain) == 'z=-h' else ''
     tarstr = f'-evalue_target={evalue_target}' if nev != 'all' else ''
-    radstr = f'-radius={float(radius)}' if radius != 1 else ''
-    rootstr = '-root_h' if root_h else ''
 
     directory = _get_directory('data')
-    prefix = os.path.join(directory, f'{g_file_prefix}-{cylinder_type}_cyl{symstr}-m={m}-Lmax={Lmax}-Nmax={Nmax}{radstr}{rootstr}{alphastr}-omega={float(omega)}-Ekman={Ekman}-{boundary_method}')
+    prefix = os.path.join(directory, f'{g_file_prefix}-{geometry}-omega={float(omega)}-m={m}-Ekman={Ekman}-Lmax={Lmax}-Nmax={Nmax}{alphastr}-{boundary_method}')
     matrix_filename = prefix + '-matrices.pckl'
     esolve_filename = prefix + f'-esolve-nev={nev}{tarstr}.pckl'
 
-    base_data = {'cylinder_type': cylinder_type, 'symmetric_domain': symmetric_domain, 'boundary_method': boundary_method,
-                 'omega': omega, 'h': h, 'm': m, 'Lmax': Lmax, 'Nmax': Nmax, 'alpha': alpha, 'radius': radius, 'root_h': root_h, 'Ekman': Ekman}
+    base_data = {'geometry': geometry, 'boundary_method': boundary_method,
+                 'omega': omega, 'm': m, 'Lmax': Lmax, 'Nmax': Nmax, 'alpha': alpha, 'Ekman': Ekman}
 
     if force_solve or not os.path.exists(esolve_filename):
         # Build or load the matrices
         if force_construct or not os.path.exists(matrix_filename):
             print('  Building matrices...')
             build_matrices = build_matrices_galerkin if boundary_method == 'galerkin' else build_matrices_tau
-            L, M = build_matrices(cylinder_type, h, m, Lmax, Nmax, Ekman, alpha=alpha, radius=radius, root_h=root_h, symmetric_domain=symmetric_domain)
+            L, M = build_matrices(geometry, m, Lmax, Nmax, Ekman, alpha=alpha)
             if boundary_method == 'galerkin':
-                S = galerkin_matrix(cylinder_type, h, m, Lmax, Nmax, alpha, radius, root_h)
+                S = galerkin_matrix(geometry, m, Lmax, Nmax, alpha)
             else:
                 S = None
             matrix_data = base_data.copy()
@@ -271,7 +258,7 @@ def expand_evector(evector, bases, names='all', verbose=True):
     return fields
 
 
-def plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, bases, fig=None, ax=None):
+def plot_spectrum_callback(index, evalues, evectors, bases, fig=None, ax=None):
     fields = expand_evector(evectors[:,index], bases, names=['p'])
 
     fieldname = 'p'
@@ -289,41 +276,36 @@ def plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, bases, fig=N
     return fig, ax
 
 
-def create_bases(cylinder_type, h, m, Lmax, Nmax, alpha, radius, root_h, t, eta, boundary_method):
+def create_bases(geometry, m, Lmax, Nmax, alpha, t, eta, boundary_method):
     if boundary_method == 'galerkin':
         dL, dN = 2, 3
     else:
         dL, dN = 0, 0
-    vbases = [sc.Basis(cylinder_type, h, m, Lmax+dL-Lshift(sig), Nmax+dN, alpha=alpha,   radius=radius, root_h=root_h, sigma=sig, t=t, eta=eta) for sig in [+1,-1,0]]
-    pbasis =  sc.Basis(cylinder_type, h, m, Lmax,                Nmax,    alpha=alpha+1, radius=radius, root_h=root_h, sigma=0, t=t, eta=eta)
+    vbases = [sc.Basis(geometry, m, Lmax+dL-Lshift(sig), Nmax+dN, alpha=alpha,   sigma=sig, t=t, eta=eta) for sig in [+1,-1,0]]
+    pbasis =  sc.Basis(geometry, m, Lmax,                Nmax,    alpha=alpha+1, sigma=0,   t=t, eta=eta)
     return {'p': pbasis, 'up': vbases[0], 'um': vbases[1], 'w': vbases[2]}
 
 
 def plot_solution(data):
-    cylinder_type, symmetric_domain, boundary_method = data['cylinder_type'], data['symmetric_domain'], data['boundary_method']
-    h, m, Lmax, Nmax = [data[key] for key in ['h', 'm', 'Lmax', 'Nmax']]
+    boundary_method = data['boundary_method']
+    geometry, m, Lmax, Nmax, alpha = [data[key] for key in ['geometry', 'm', 'Lmax', 'Nmax', 'alpha']]
     evalues, evectors = [data[key] for key in ['evalues', 'evectors']]
-    alpha = data['alpha']
-    radius = data.pop('radius', 1.)
-    root_h = data.pop('root_h', False)
 
     t = np.linspace(-1,1,400)
-    etamin = -1 if cylinder_type == 'half' or symmetric_domain else 0
-    eta = np.linspace(etamin,1.,301)
-    bases = create_bases(cylinder_type, h, m, Lmax, Nmax, alpha, radius, root_h, t, eta, boundary_method)
+    eta = np.linspace(-1.,1.,301)
+    bases = create_bases(geometry, m, Lmax, Nmax, alpha, t, eta, boundary_method)
 
     def onpick(index):
-        return plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, bases)
+        return plot_spectrum_callback(index, evalues, evectors, bases)
 
     fig, ax = plot_spectrum(evalues, onpick=onpick)
     fig.set_tight_layout(True)
 
 
 def main():
-    cylinder_type, m, Lmax, Nmax, Ekman, alpha, omega, radius, root_h, nev = 'half', 14, 40, 160, 1e-5, 0, 2, 1., True, 400
-#    cylinder_type, m, Lmax, Nmax, Ekman, alpha, omega, radius, root_h, nev = 'full', 14, 40, 160, 1e-5, 0, 2, 1., False, 400
+    cylinder_type, m, Lmax, Nmax, Ekman, alpha, omega, radius, root_h, nev = 'full', 14, 40, 160, 1e-5, 0, 1.4, 1., True, 400
 
-    symmetric_domain, boundary_method = True, 'galerkin'
+    boundary_method = 'galerkin'
     force_construct, force_solve = False, False
 
     evalue_target = 0.
@@ -332,13 +314,14 @@ def main():
         # omega is the bounding sphere radius to tangent cylinder radius ratio
         h = [-1/2, -1/2+omega**2]
     else:
-        H = 0.5 if bottom_boundary(cylinder_type, symmetric_domain) == 'z=-h' else 1.
+        H = 0.5 if cylinder_type == 'full' else 1.
         h = H*np.array([omega/(2+omega), 1.])
+    geometry = sc.Geometry(cylinder_type=cylinder_type, h=h, radius=radius, root_h=root_h)
 
-    print(f'cylinder_type = {cylinder_type}, m = {m}, Lmax = {Lmax}, Nmax = {Nmax}, alpha = {alpha}, omega = {omega}, radius = {radius}, root_h = {root_h}, symmetric_domain = {symmetric_domain}')
-    data = solve_eigenproblem(omega, cylinder_type, h, m, Lmax, Nmax, radius, root_h, boundary_method, \
-                              Ekman=Ekman, force_construct=force_construct, force_solve=force_solve, \
-                              alpha=alpha, symmetric_domain=symmetric_domain, \
+    print(f'cylinder_type = {cylinder_type}, m = {m}, Lmax = {Lmax}, Nmax = {Nmax}, alpha = {alpha}, omega = {omega}, radius = {radius}, root_h = {root_h}')
+    data = solve_eigenproblem(geometry, m, Lmax, Nmax, boundary_method, omega, \
+                              Ekman=Ekman, alpha=alpha, \
+                              force_construct=force_construct, force_solve=force_solve, \
                               nev=nev, evalue_target=evalue_target)
     plot_solution(data)
 

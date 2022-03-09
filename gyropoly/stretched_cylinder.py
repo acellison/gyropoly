@@ -11,6 +11,75 @@ __all__ = ['Basis', 'total_num_coeffs', 'coeff_sizes', 'operators'
            'resize', 'plotfield']
 
 
+class Geometry():
+    """
+    Geometry descriptor for a particular stretched cylinder configuration
+
+    Parameters
+    ----------
+    cylinder_type : str
+        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
+        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
+    h : np.array
+        List of polynomial coefficients for the height function h(t = 2*s**2-1)
+    radius : float, optional
+        Bounding radius of the cylinder
+    root_h : bool, optional
+        If True, z = \eta \sqrt(h(t)), otherwise z = \eta h(t).  Default False
+
+    """
+    def __init__(self, cylinder_type, h, radius=1., root_h=False):
+        if cylinder_type not in ['half', 'full']:
+            raise ValueError(f'Invalid cylinder type ({cylinder_type})')
+        self.__cylinder_type = cylinder_type
+        self.__h = h
+        self.__radius = radius
+        self.__root_h = root_h
+
+    @property
+    def cylinder_type(self):
+        return self.__cylinder_type
+
+    @property
+    def h(self):
+        return self.__h
+
+    @property
+    def radius(self):
+        return self.__radius
+
+    @property
+    def root_h(self):
+        return self.__root_h
+
+    @property
+    def top(self):
+        return 'z=h'
+
+    @property
+    def bottom(self):
+        return 'z=-h' if self.cylinder_type == 'full' else 'z=0'
+
+    @property
+    def side(self):
+        return 's=S'
+
+    def s(self, t):
+        return self.radius*np.sqrt((1+t)/2)
+
+    def z(self, t, eta):
+        tt, ee = t[np.newaxis,:], eta[:,np.newaxis]
+        ht = np.polyval(self.h, tt)
+        if self.root_h:
+            ht = np.sqrt(ht)
+        if self.cylinder_type == 'half':
+            ee = (ee+1)/2
+        return ee * ht
+
+    def __repr__(self):
+        return f'-cylinder_type={self.cylinder_type}-radius={float(self.radius)}-root_h={self.root_h}'
+
+
 class Basis():
     """
     Stretched Cylinder basis functions for evaluating functions in the stretched cylinder domain.
@@ -26,10 +95,8 @@ class Basis():
 
     Parameters
     ----------
-    cylinder_type : str, one of {'full', 'half'}
-        A full cylinder is symmetric about z=0 (z ϵ [-h(t), h(t)]) while a half cylinder has domain z ϵ [0, h(t)]
-    h : list
-        Polynomial coefficients for the height function h(t) in terms of the variable t = 2*s**2-1
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
     m : int
         Azimuthal wavenumber
     Lmax : int
@@ -40,10 +107,6 @@ class Basis():
         Hierarchy parameter for the basis functions
     sigma : int, one of {-1, 0, +1}
         Spin weight of the basis functions.  Non-zero spin weights are used to decompose vector fields
-    radius : float, optional
-        Bounding radius of the cylinder
-    root_h : bool, optional
-        If True, z = \eta \sqrt(h(t)), otherwise z = \eta h(t).  Default False
     eta : np.ndarray
         Vertical coordinate for evaluating the basis functions
     t : np.ndarray
@@ -56,22 +119,20 @@ class Basis():
         Data type for evaluation of the basis functions
 
     """
-    def __init__(self, cylinder_type, h, m, Lmax, Nmax, alpha, sigma=0, radius=1., root_h=False, eta=None, t=None, has_m_scaling=True, has_h_scaling=True, dtype='float64'):
-        _check_cylinder_type(cylinder_type)
+    def __init__(self, geometry, m, Lmax, Nmax, alpha, sigma=0, eta=None, t=None, has_m_scaling=True, has_h_scaling=True, dtype='float64'):
         _check_radial_degree(Lmax, Nmax)
-        self.__cylinder_type = cylinder_type
-        self.__h, self.__m, self.__Lmax, self.__Nmax = h, m, Lmax, Nmax
+        self.__geometry = geometry
+        self.__m, self.__Lmax, self.__Nmax = m, Lmax, Nmax
         self.__alpha, self.__sigma = alpha, sigma
         self.__dtype = dtype
-        self.__radius, self.__root_h = radius, root_h
 
         # Get the number of coefficients including truncation
         self.__num_coeffs = total_num_coeffs(Lmax, Nmax)
 
         # Construct the radial polynomial systems
-        make_radial_params = _radial_jacobi_parameters(m, alpha=alpha, sigma=sigma, root_h=root_h)
+        make_radial_params = _radial_jacobi_parameters(m, alpha=alpha, sigma=sigma, root_h=geometry.root_h)
         radial_params = [make_radial_params(ell) for ell in range(Lmax)]
-        self.__systems = [ajacobi.AugmentedJacobiSystem(a, b, [(h,c[0])]) for a,b,c in radial_params]
+        self.__systems = [ajacobi.AugmentedJacobiSystem(a, b, [(geometry.h,c[0])]) for a,b,c in radial_params]
 
         # Construct the polynomials if eta and t are not None
         self.__has_m_scaling, self.__has_h_scaling = has_m_scaling, has_h_scaling
@@ -80,12 +141,16 @@ class Basis():
         self._make_radial_polynomials(t)
 
     @property
+    def geometry(self):
+        return self.__geometry
+
+    @property
     def cylinder_type(self):
-        return self.__cylinder_type
+        return self.geometry.cylinder_type
 
     @property
     def h(self):
-        return self.__h
+        return self.geometry.h
 
     @property
     def m(self):
@@ -109,11 +174,11 @@ class Basis():
 
     @property
     def radius(self):
-        return self.__radius
+        return self.geometry.radius
 
     @property
     def root_h(self):
-        return self.__root_h
+        return self.geometry.root_h
 
     @property
     def dtype(self):
@@ -150,20 +215,16 @@ class Basis():
     @decorators.cached
     def s(self):
         """Compute the cylindrical radial coordinate s from t"""
-        self._check_constructed(check_Q=True)
-        return self.radius*np.sqrt((1+self.t)/2)
+        if self.t is None:
+            raise ValueError('No valid t coordinate')
+        return self.geometry.s(self.t)
 
     @decorators.cached
     def z(self):
         """Compute the cylindrical vertical coordinate z from t and eta"""
-        self._check_constructed(check_P=True, check_Q=True)
-        tt, ee = self.t[np.newaxis,:], self.eta[:,np.newaxis]
-        ht = np.polyval(self.h, tt)
-        if self.root_h:
-            ht = np.sqrt(ht)
-        if self.cylinder_type == 'half':
-            ee = (ee+1)/2
-        return ee * ht
+        if self.t is None or self.eta is None:
+            raise ValueError('No valid t or eta coordinates')
+        return self.geometry.z(self.t, self.eta)
 
     def vertical_polynomial(self, ell):
         """Get the vertical polynomial of degree ell"""
@@ -267,12 +328,6 @@ def _check_radial_degree(Lmax, Nmax):
         raise ValueError('Radial degree too small for triangular truncation')
 
 
-def _check_cylinder_type(cylinder_type):
-    """Check for a valid cylinder type"""
-    if cylinder_type not in ['half', 'full']:
-        raise ValueError(f'Invalid cylinder type ({cylinder_type})')
-
-
 def _radial_size(Nmax, ell):
     """Get the triangular truncation size for a given ell"""
     return Nmax-ell
@@ -335,7 +390,7 @@ def _radial_jacobi_parameters(m, alpha, sigma, ell=None, root_h=False):
     return fn(ell) if ell is not None else fn
 
 
-def _make_operator(dell, zop, sop, m, Lmax, Nmax, alpha, sigma, root_h=None, Lpad=0, Npad=0):
+def _make_operator(dell, zop, sop, m, Lmax, Nmax, alpha, sigma, root_h=False, Lpad=0, Npad=0):
     """Kronecker the operator in the eta and s directions"""
     Nin_sizes,  Nin_offsets  = coeff_sizes(Lmax,      Nmax)
     Nout_sizes, Nout_offsets = coeff_sizes(Lmax+Lpad, Nmax+Npad)
@@ -368,19 +423,16 @@ def _make_operator(dell, zop, sop, m, Lmax, Nmax, alpha, sigma, root_h=None, Lpa
 
 
 @decorators.cached
-def _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma, radius=1., root_h=False, dtype='float64', internal='float128'):
+def _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal='float128'):
     """
     Construct a raising, lowering or neutral differential operator
 
     Parameters
     ----------
-    cylinder_type : str
-        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
-        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
     delta : integer, in {-1,0,+1}
         Spin weight increment for the operator.  +1 raises, -1 lowers, 0 maintains
-    h : np.array
-        List of polynomial coefficients for the height function h(t = 2*s**2-1)
     Lmax : int
         Maximum vertical degree of input basis
     Nmax : int
@@ -389,10 +441,6 @@ def _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma,
         Input basis hierarchy parameter.  Output basis has alpha->alpha+1
     sigma : int, one of {-1, 0, 1}
         Input basis spin weight.  Output basis has sigma->sigma+delta
-    radius : float, optional
-        Bounding radius of the cylinder
-    root_h : bool, optional
-        If True, z = \eta \sqrt(h(t)), otherwise z = \eta h(t).  Default False
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -403,7 +451,6 @@ def _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma,
     Sparse matrix with differential operator coefficients
 
     """
-    _check_cylinder_type(cylinder_type)
     if alpha <= -1:
         raise ValueError(f'alpha (= {alpha}) must be larger than -1')
     if delta not in [-1,0,+1]:
@@ -416,66 +463,64 @@ def _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma,
         raise ValueError('Cannot lower sigma = -1')
 
     # Construct the fundamental Augmented Jacobi operators
-    ops = ajacobi.operators([h], dtype=internal, internal=internal)
+    ops = ajacobi.operators([geometry.h], dtype=internal, internal=internal)
     A, B, C = [ops(kind) for kind in ['A', 'B', 'C']]
     R = ops('rhoprime', weighted=False)
     Dz, Da, Db, Dc = [ops(kind) for kind in ['D', 'E', 'F', 'G']]
 
     # Construct the radial part of the operators.  
     # L<n> is the operator that maps vertical index ell to ell-n
-    root_h_scale = 2. if root_h else 1.
+    cpower = 0 if geometry.root_h else 1
     if delta == +1:
         # Raising operator
-        L0 =   C(+1) @ Dz(+1) * root_h_scale
+        L0 =   C(+1)**cpower @ Dz(+1)
         L1 = - R @ A(+1) @ B(+1)
-        L2 = - C(-1) @ Dc(-1) * root_h_scale
+        L2 = - C(-1)**cpower @ Dc(-1)
     elif delta == -1:
         # Lowering operator
-        L0 =   C(+1) @ Db(+1) * root_h_scale
+        L0 =   C(+1)**cpower @ Db(+1)
         L1 = - R @ A(+1) @ B(-1)
-        L2 = - C(-1) @ Da(-1) * root_h_scale
+        L2 = - C(-1)**cpower @ Da(-1)
     else:
         # Neutral operator
         L0 = 0
         L1 = A(+1)
         L2 = 0
+
     Ls = L0, L1, L2
 
     # Get the vertical polynomial scale factors for embedding ell -> ell-n
     mods = _get_ell_modifiers(Lmax, alpha, dtype=internal, internal=internal)
 
     # Set up the composite operators
-    if cylinder_type == 'full':
+    if geometry.cylinder_type == 'full':
         dells = 0, 2
         zscale = 1 if delta == 0 else 2
-    elif cylinder_type == 'half':
+    elif geometry.cylinder_type == 'half':
         dells = 0, 1, 2
         zscale = 2
     else:
-        raise ValueError(f'Unknown cylinder_type {cylinder_type}')
-    sscale = 1. if delta == 0 else 1./radius
+        raise ValueError(f'Unknown cylinder_type {geometry.cylinder_type}')
+    sscale = 1. if delta == 0 else 1./geometry.radius
     scale = zscale * sscale
 
     # Neutral operator has just the ell->ell-1 component
     if delta == 0: dells = (1,)
 
     # Construct the composite operators
-    make_op = lambda dell, zop, sop: _make_operator(dell, zop, sop, m, Lmax, Nmax, alpha, sigma, root_h=root_h)
+    make_op = lambda dell, zop, sop: _make_operator(dell, zop, sop, m, Lmax, Nmax, alpha, sigma, root_h=geometry.root_h)
     ops = [make_op(dell, mods[dell], Ls[dell]) for dell in dells]
     return scale*sum(ops).astype(dtype)
 
 
-def gradient(cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., root_h=False, dtype='float64', internal='float128'):
+def gradient(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
     """
     Construct the gradient operator acting on a scalar field
 
     Parameters
     ----------
-    cylinder_type : str
-        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
-        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
-    h : np.array
-        List of polynomial coefficients for the height function h(t = 2*s**2-1)
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
     m : int
         Azimuthal wavenumber
     Lmax : int
@@ -484,10 +529,6 @@ def gradient(cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., root_h=False, dt
         Maximum radial degree of input basis
     alpha : float > -1
         Input basis hierarchy parameter.  Output basis has alpha->alpha+1
-    radius : float, optional
-        Bounding radius of the cylinder
-    root_h : bool, optional
-        If True, z = \eta \sqrt(h(t)), otherwise z = \eta h(t).  Default False
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -498,22 +539,18 @@ def gradient(cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., root_h=False, dt
     Sparse matrix with gradient operator coefficients
 
     """
-    _check_cylinder_type(cylinder_type)
-    make_dop = lambda delta: _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma=0, radius=radius, root_h=root_h, dtype=dtype, internal=internal)
+    make_dop = lambda delta: _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma=0, dtype=dtype, internal=internal)
     return sparse.vstack([make_dop(delta) for delta in [+1,-1,0]])
 
 
-def divergence(cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., root_h=False, dtype='float64', internal='float128'):
+def divergence(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
     """
     Construct the divergence operator acting on a vector field
 
     Parameters
     ----------
-    cylinder_type : str
-        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
-        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
-    h : np.array
-        List of polynomial coefficients for the height function h(t = 2*s**2-1)
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
     m : int
         Azimuthal wavenumber
     Lmax : int
@@ -522,10 +559,6 @@ def divergence(cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., root_h=False, 
         Maximum radial degree of input basis
     alpha : float > -1
         Input basis hierarchy parameter.  Output basis has alpha->alpha+1
-    radius : float, optional
-        Bounding radius of the cylinder
-    root_h : bool, optional
-        If True, z = \eta \sqrt(h(t)), otherwise z = \eta h(t).  Default False
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -536,22 +569,18 @@ def divergence(cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., root_h=False, 
     Sparse matrix with divergence operator coefficients
 
     """
-    _check_cylinder_type(cylinder_type)
-    make_dop = lambda sigma: _differential_operator(cylinder_type, -sigma, h, m, Lmax, Nmax, alpha, sigma=sigma, radius=radius, root_h=root_h, dtype=dtype, internal=internal)
+    make_dop = lambda sigma: _differential_operator(geometry, -sigma, m, Lmax, Nmax, alpha, sigma=sigma, dtype=dtype, internal=internal)
     return sparse.hstack([make_dop(sigma) for sigma in [+1,-1,0]])
 
 
-def curl(cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., root_h=False, dtype='float64', internal='float128'):
+def curl(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
     """
     Construct the curl operator acting on a vector field
 
     Parameters
     ----------
-    cylinder_type : str
-        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
-        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
-    h : np.array
-        List of polynomial coefficients for the height function h(t = 2*s**2-1)
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
     m : int
         Azimuthal wavenumber
     Lmax : int
@@ -560,10 +589,6 @@ def curl(cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., root_h=False, dtype=
         Maximum radial degree of input basis
     alpha : float > -1
         Input basis hierarchy parameter.  Output basis has alpha->alpha+1
-    radius : float, optional
-        Bounding radius of the cylinder
-    root_h : bool, optional
-        If True, z = \eta \sqrt(h(t)), otherwise z = \eta h(t).  Default False
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -574,11 +599,10 @@ def curl(cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., root_h=False, dtype=
     Sparse matrix with curl operator coefficients
 
     """
-    _check_cylinder_type(cylinder_type)
     ncoeff = total_num_coeffs(Lmax, Nmax)
     Z = sparse.lil_matrix((ncoeff,ncoeff))
 
-    make_dop = lambda sigma, delta: _differential_operator(cylinder_type, delta, h, m, Lmax, Nmax, alpha, sigma=sigma, radius=radius, root_h=root_h, dtype=dtype, internal=internal)
+    make_dop = lambda sigma, delta: _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma=sigma, dtype=dtype, internal=internal)
     Cp =  make_dop(+1, 0),                   -make_dop(0, +1)
     Cm =                   -make_dop(-1, 0),  make_dop(0, -1)
     Cz = -make_dop(+1,-1),  make_dop(-1,+1)
@@ -587,17 +611,14 @@ def curl(cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., root_h=False, dtype=
                              [Cz[0], Cz[1], Z]])
 
 
-def scalar_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., root_h=False, dtype='float64', internal='float128'):
+def scalar_laplacian(geoemtry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
     """
     Construct the Laplacian operator acting on a scalar field
 
     Parameters
     ----------
-    cylinder_type : str
-        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
-        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
-    h : np.array
-        List of polynomial coefficients for the height function h(t = 2*s**2-1)
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
     m : int
         Azimuthal wavenumber
     Lmax : int
@@ -606,10 +627,6 @@ def scalar_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., root_h=F
         Maximum radial degree of input basis
     alpha : float > -1
         Input basis hierarchy parameter.  Output basis has alpha->alpha+1
-    radius : float, optional
-        Bounding radius of the cylinder
-    root_h : bool, optional
-        If True, z = \eta \sqrt(h(t)), otherwise z = \eta h(t).  Default False
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -620,23 +637,19 @@ def scalar_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., root_h=F
     Sparse matrix with Laplacian operator coefficients
 
     """
-    _check_cylinder_type(cylinder_type)
-    G =   gradient(cylinder_type, h, m, Lmax, Nmax, alpha,   radius=radius, root_h=root_h, dtype=internal, internal=internal)
-    D = divergence(cylinder_type, h, m, Lmax, Nmax, alpha+1, radius=radius, root_h=root_h, dtype=internal, internal=internal)
+    G =   gradient(geometry, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
+    D = divergence(geometry, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal)
     return (D @ G).astype(dtype)
 
 
-def vector_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., root_h=False, dtype='float64', internal='float128'):
+def vector_laplacian(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
     """
     Construct the Laplacian operator acting on a vector field
 
     Parameters
     ----------
-    cylinder_type : str
-        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
-        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
-    h : np.array
-        List of polynomial coefficients for the height function h(t = 2*s**2-1)
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
     m : int
         Azimuthal wavenumber
     Lmax : int
@@ -645,10 +658,6 @@ def vector_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., root_h=F
         Maximum radial degree of input basis
     alpha : float > -1
         Input basis hierarchy parameter.  Output basis has alpha->alpha+1
-    radius : float, optional
-        Bounding radius of the cylinder
-    root_h : bool, optional
-        If True, z = \eta \sqrt(h(t)), otherwise z = \eta h(t).  Default False
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -659,15 +668,14 @@ def vector_laplacian(cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., root_h=F
     Sparse matrix with Laplacian operator coefficients
 
     """
-    _check_cylinder_type(cylinder_type)
-    D = divergence(cylinder_type, h, m, Lmax, Nmax, alpha,   radius=radius, root_h=root_h, dtype=internal, internal=internal)
-    G =   gradient(cylinder_type, h, m, Lmax, Nmax, alpha+1, radius=radius, root_h=root_h, dtype=internal, internal=internal)
-    C1 =      curl(cylinder_type, h, m, Lmax, Nmax, alpha,   radius=radius, root_h=root_h, dtype=internal, internal=internal)
-    C2 =      curl(cylinder_type, h, m, Lmax, Nmax, alpha+1, radius=radius, root_h=root_h, dtype=internal, internal=internal)
+    D = divergence(geometry, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
+    G =   gradient(geometry, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal)
+    C1 =      curl(geometry, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
+    C2 =      curl(geometry, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal)
     return (G @ D - (C2 @ C1).real).astype(dtype)
     
 
-def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, radius=1., root_h=False, exact=False, dtype='float64', internal='float128'):
+def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype='float64', internal='float128'):
     """
     Construct the normal dot operator acting on a vector field.  For the basis functions to behave
     properly this multiplies by the non-normalized normal component at the specified surface.
@@ -679,11 +687,8 @@ def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, radius=1.,
 
     Parameters
     ----------
-    cylinder_type : str
-        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
-        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
-    h : np.array
-        List of polynomial coefficients for the height function h(t = 2*s**2-1)
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
     m : int
         Azimuthal wavenumber
     Lmax : int
@@ -695,10 +700,6 @@ def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, radius=1.,
     surface : str, one of {'z=h', 'z=-h', 'z=0', 's=S'}
         Surface for evaluation of the normal component of the vector field.
         If cylinder_type is 'half', 'z=-h' is not valid since it is outside the domain.
-    radius : float, optional
-        Bounding radius of the cylinder
-    root_h : bool, optional
-        If True, z = \eta \sqrt(h(t)), otherwise z = \eta h(t).  Default False
     exact : bool, optional
         If True, pads the output of the operator appropriately for the bandwidth growth
         caused by multiplication by the surface.  
@@ -715,25 +716,24 @@ def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, radius=1.,
     Sparse matrix with normal dot operator coefficients
 
     """
-    if root_h and surface in ['z=h', 'z=-h']:
-        raise ValueError('operator not implemented for root_h height')
-    _check_cylinder_type(cylinder_type)
+    if geometry.root_h and surface in ['z=h', 'z=-h']:
+        raise ValueError('normal_component operator not implemented for root_h height')
 
-    ops = ajacobi.operators([h], dtype=internal, internal=internal)
+    ops = ajacobi.operators([geometry.h], dtype=internal, internal=internal)
     B, R, Id = ops('B'), ops('rhoprime', weighted=False), ops('Id')
     Zero = 0*Id
 
     if surface == 'z=h':
-        root_h_scale = 1 if root_h else 2
-        Lp = -root_h_scale/radius * R @ B(-1)
-        Lm = -root_h_scale/radius * R @ B(+1)
+        root_h_scale = 1 if geometry.root_h else 2
+        Lp = -root_h_scale/geometry.radius * R @ B(-1)
+        Lm = -root_h_scale/geometry.radius * R @ B(+1)
         Lz = Id  # FIXME: for root_h, Lz = Z comes in two parts: ell->ell+1 (C(+1)) and ell->ell-1 (C(-1))
         dn = 1 + R.codomain.dn
     elif surface == 'z=-h':
-        if cylinder_type != 'full':
+        if geometry.cylinder_type != 'full':
                 raise ValueError('Half cylinder cannot be evaluated at z=-h')
         # If we're at the bottom flip the sign of the z component compared to the top
-        N = normal_component('full', h, m, Lmax, Nmax, alpha, surface='z=h', radius=radius, root_h=root_h, exact=exact, dtype=dtype, internal=internal).tocsr()
+        N = normal_component(geometry, m, Lmax, Nmax, alpha, surface='z=h', exact=exact, dtype=dtype, internal=internal).tocsr()
         n = total_num_coeffs(Lmax, Nmax)
         N[:,2*n:3*n] = -N[:,2*n:3*n]
         return N
@@ -743,8 +743,8 @@ def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, radius=1.,
         Lz = -Id
         dn = 0
     elif surface == 's=S':
-        Lp = radius/2 * B(-1)
-        Lm = radius/2 * B(+1)
+        Lp = geometry.radius/2 * B(-1)
+        Lm = geometry.radius/2 * B(+1)
         Lz = Zero
         dn = 1
     else:
@@ -752,22 +752,19 @@ def normal_component(cylinder_type, h, m, Lmax, Nmax, alpha, surface, radius=1.,
 
     zop = np.ones(Lmax)
     Npad = dn if exact else 0
-    make_op = lambda sigma, sop: _make_operator(0, zop, sop, m, Lmax, Nmax, alpha, sigma, root_h=root_h, Npad=Npad).astype(dtype)
+    make_op = lambda sigma, sop: _make_operator(0, zop, sop, m, Lmax, Nmax, alpha, sigma, root_h=geometry.root_h, Npad=Npad).astype(dtype)
     ops = [make_op(sigma, L) for sigma, L in [(+1,Lp),(-1,Lm),(0,Lz)]]
     return sparse.hstack(ops)
 
 
-def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, radius=1., root_h=False, dtype='float64', internal='float128'):
+def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', internal='float128'):
     """
     Construct the boundary evaluation operator acting on a scalar field or component of a vector field
 
     Parameters
     ----------
-    cylinder_type : str
-        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
-        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
-    h : np.array
-        List of polynomial coefficients for the height function h(t = 2*s**2-1)
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
     m : int
         Azimuthal wavenumber
     Lmax : int
@@ -781,10 +778,6 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, radius=1., 
     surface : str, one of {'z=h', 'z=-h', 'z=0', 's=S'}
         Surface for evaluation of the normal component of the vector field.
         If cylinder_type is 'half', 'z=-h' is not valid since it is outside the domain.
-    radius : float, optional
-        Bounding radius of the cylinder
-    root_h : bool, optional
-        If True, z = \eta \sqrt(h(t)), otherwise z = \eta h(t).  Default False
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -795,9 +788,8 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, radius=1., 
     Sparse matrix with boundary evaluation operator coefficients
 
     """
-    if root_h:
+    if geometry.root_h:
         raise ValueError('boundary operator not implemented for root_h height (need even-odd separation)')
-    _check_cylinder_type(cylinder_type)
     zeros = lambda shape: sparse.lil_matrix(shape, dtype=internal)
 
     # Get the number of radial coefficients for each vertical degree
@@ -806,21 +798,21 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, radius=1., 
 
     # Helper function to create the basis polynomials
     def make_basis(eta=None, t=None, has_h_scaling=False):
-        return Basis(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, radius=radius, root_h=root_h, eta=eta, t=t, has_m_scaling=False, has_h_scaling=has_h_scaling, dtype=internal)
+        return Basis(geometry, m, Lmax, Nmax, alpha, sigma, eta=eta, t=t, has_m_scaling=False, has_h_scaling=has_h_scaling, dtype=internal)
 
     # Get the evaluation surface from the surface argument
     if isinstance(surface, str):
         locs = surface.replace(' ', '').split('=')
         direction, location = locs
         if direction == 'z':
-            if (locs[1], cylinder_type) == ('-h', 'half'):
+            if (locs[1], geometry.cylinder_type) == ('-h', 'half'):
                 raise ValueError('Half cylinder cannot be evaluated at z=-h')
-            coordinate_value = {'h': 1., '-h': -1., '0': {'full': 0., 'half': -1.}[cylinder_type]}[location]
+            coordinate_value = {'h': 1., '-h': -1., '0': {'full': 0., 'half': -1.}[geometry.cylinder_type]}[location]
         elif direction == 's':
             if location == 'S':
                 coordinate_value = 1.
             else:
-                coordinate_value = 2*float(location)**2 - 1
+                coordinate_value = 2*float(location/geometry.radius)**2 - 1
         else:
             raise ValueError(f'Invalid surface coordinate (={direction}')
     else:
@@ -834,16 +826,16 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, radius=1., 
         # For each ell we eat the h(t)^{ell} height function by lowering the C parameter
         # ell times.  The highest mode (ell = Lmax-1) is left with C parameter (Lmax-1 + 2*alpha +1).
         # We then raise all C indices to match this highest mode.
-        ops = ajacobi.operators([h], dtype=internal, internal=internal)
+        ops = ajacobi.operators([geometry.h], dtype=internal, internal=internal)
         C = ops('C')
-        radial_params = _radial_jacobi_parameters(m, alpha, sigma, root_h=root_h)
+        radial_params = _radial_jacobi_parameters(m, alpha, sigma, root_h=geometry.root_h)
         make_op = lambda ell: bc[ell] * (C(+1)**(Lmax-1-ell) @ C(-1)**ell)(lengths[ell], *radial_params(ell))
 
         # Construct the operator.
         # If we are in full cylinder geometry evaluating at the middle
         # then only the even ell polynomials contribute since the odd
         # ones vanish at z = 0
-        even_only = (coordinate_value, cylinder_type) == (0., 'full')
+        even_only = (coordinate_value, geometry.cylinder_type) == (0., 'full')
         ell_range = range(0,Lmax,2) if even_only else range(Lmax)
         B = zeros((Nmax,ncols))
         for ell in ell_range:
@@ -865,7 +857,7 @@ def boundary(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, surface, radius=1., 
     return B.astype(dtype)
 
 
-def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, radius=1., root_h=False, ntimes=1, adjoint=False, exact=True, dtype='float64', internal='float128'):
+def convert(geometry, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exact=True, dtype='float64', internal='float128'):
     """
     Convert alpha to alpha + (ntimes if not adjoint else -1).
     The adjoint operator lowers alpha by multiplying the field in grid space by
@@ -876,11 +868,8 @@ def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, radius=1., root_h=Fal
 
     Parameters
     ----------
-    cylinder_type : str
-        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
-        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
-    h : np.array
-        List of polynomial coefficients for the height function h(t = 2*s**2-1)
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
     m : int
         Azimuthal wavenumber
     Lmax : int
@@ -891,10 +880,6 @@ def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, radius=1., root_h=Fal
         Input basis hierarchy parameter.  Output basis has alpha->alpha+1
     sigma : int, one of {-1, 0, +1}
         Spin weight
-    radius : float, optional
-        Bounding radius of the cylinder
-    root_h : bool, optional
-        If True, z = \eta \sqrt(h(t)), otherwise z = \eta h(t).  Default False
     ntimes : int, optional
         Number of times to convert alpha up, so that alpha -> alpha + ntimes
     adjoint : bool, optional
@@ -912,28 +897,27 @@ def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, radius=1., root_h=Fal
     Sparse matrix with conversion operator coefficients
 
     """
-    _check_cylinder_type(cylinder_type)
     if ntimes > 1 and adjoint:
         raise ValueError('Lowering alpha more than once not supported')
 
-    ops = ajacobi.operators([h], dtype=internal, internal=internal)
+    ops = ajacobi.operators([geometry.h], dtype=internal, internal=internal)
     A, C = ops('A'), ops('C')
     if adjoint:
-        p, dell = -1, -2
+        p = -1
         Lpad, Npad = 2, 1 + 2*C(-1).codomain.dn
     else:
-        p, dell = +1, +2
+        p = +1
         Lpad, Npad = 0, 0
-    power = 1 if root_h else 2
+    power = 1 if geometry.root_h else 2
     L0 =  A(p) @ C( p)**power
     L2 = -A(p) @ C(-p)**power
     mods = _get_ell_modifiers(Lmax, alpha, dtype=internal, internal=internal, adjoint=adjoint)
 
-    make_op = lambda dell, sop: _make_operator(dell, mods[abs(dell)], sop, m, Lmax, Nmax, alpha, sigma, root_h=root_h, Lpad=Lpad, Npad=Npad)
+    make_op = lambda dell, sop: _make_operator(dell, mods[abs(dell)], sop, m, Lmax, Nmax, alpha, sigma, root_h=geometry.root_h, Lpad=Lpad, Npad=Npad)
     op = (make_op(0, L0) + make_op(2*p, L2))
 
     if ntimes > 1:
-        C = convert(cylinder_type, h, m, Lmax, Nmax, alpha+1, sigma, radius=radius, root_h=root_h, ntimes=ntimes-1, adjoint=False, dtype=internal, internal='float128')
+        C = convert(geometry, m, Lmax, Nmax, alpha+1, sigma, ntimes=ntimes-1, adjoint=False, exact=exact, dtype=internal, internal=internal)
         op = C @ op
 
     op = op.astype(dtype)
@@ -944,18 +928,15 @@ def convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, radius=1., root_h=Fal
     return op
 
 
-def project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, direction, radius=1., root_h=False, shift=0, Lstop=0, dtype='float64', internal='float128'):
+def project(geometry, m, Lmax, Nmax, alpha, sigma, direction, shift=0, Lstop=0, dtype='float64', internal='float128'):
     """
     Project modes with parameter alpha onto highest modes with parameter alpha+1.
     This is used to implement tau corrections equations when enforcing boundary conditions.
 
     Parameters
     ----------
-    cylinder_type : str
-        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
-        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
-    h : np.array
-        List of polynomial coefficients for the height function h(t = 2*s**2-1)
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
     m : int
         Azimuthal wavenumber
     Lmax : int
@@ -969,10 +950,6 @@ def project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, direction, radius=1.,
     direction : str, one of {'s', 'z'}
         If 's', project onto highest radial modes
         If 'z', project onto highest vertical modes
-    radius : float, optional
-        Bounding radius of the cylinder
-    root_h : bool, optional
-        If True, z = \eta \sqrt(h(t)), otherwise z = \eta h(t).  Default False
     shift : int, optional
         Distance from highest mode for projection
     Lstop : int, optional
@@ -987,8 +964,7 @@ def project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, direction, radius=1.,
     Sparse matrix with projection operator coefficients
 
     """
-    _check_cylinder_type(cylinder_type)
-    C = convert(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, radius=radius, root_h=root_h, dtype=dtype, internal=internal)
+    C = convert(geometry, m, Lmax, Nmax, alpha, sigma, dtype=dtype, internal=internal)
     _, offsets = coeff_sizes(Lmax, Nmax)
     if direction == 'z':
         # Size Nmax-(Lmax-1-shift), projecting onto all radial coefficients of fixed vertical degree
@@ -1004,28 +980,25 @@ def project(cylinder_type, h, m, Lmax, Nmax, alpha, sigma, direction, radius=1.,
 
 
 @decorators.cached
-def _operator(name, cylinder_type, h, m, Lmax, Nmax, alpha, radius=1., root_h=False, dtype='float64', internal='float128', **kwargs):
+def _operator(name, geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', **kwargs):
     """Operator dispatch function with caching of results"""
     valid_names = ['gradient', 'divergence', 'curl', 'scalar_laplacian', 'vector_laplacian',
                    'normal_component', 'boundary', 'convert', 'project']
     if name not in valid_names:
         raise ValueError(f'Invalid operator name {name}')
     function = eval(name)
-    return function(cylinder_type, h, m, Lmax, Nmax, alpha, radius=radius, dtype=dtype, internal=internal, **kwargs)
+    return function(geometry, m, Lmax, Nmax, alpha, dtype=dtype, internal=internal, **kwargs)
     
 
-def operators(cylinder_type, h, m=None, Lmax=None, Nmax=None, alpha=None, radius=1., root_h=False, dtype='float64', internal='float128'):
+def operators(geometry, m=None, Lmax=None, Nmax=None, alpha=None, dtype='float64', internal='float128'):
     """
     Bind common arguments to an operator dispatcher so that they can be specified once instead
     of each time we construct a different operator.
 
     Parameters
     ----------
-    cylinder_type : str
-        If 'full', creates a differential operator for the full cylinder symmetric about z = 0.
-        If 'half', creates a differential operator for the upper half cylinder 0 <= z <= h(t)
-    h : np.array
-        List of polynomial coefficients for the height function h(t = 2*s**2-1)
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
     m : int, optional
         Azimuthal wavenumber
     Lmax : int, optional
@@ -1034,10 +1007,6 @@ def operators(cylinder_type, h, m=None, Lmax=None, Nmax=None, alpha=None, radius
         Maximum radial degree of input basis
     alpha : float > -1, optional
         Input basis hierarchy parameter.  Output basis has alpha->alpha+1
-    radius : float, optional
-        Bounding radius of the cylinder
-    root_h : bool, optional
-        If True, z = \eta \sqrt(h(t)), otherwise z = \eta h(t).  Default False
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -1051,15 +1020,12 @@ def operators(cylinder_type, h, m=None, Lmax=None, Nmax=None, alpha=None, radius
     to pass to the function.
 
     """
-    _check_cylinder_type(cylinder_type)
     def dispatcher(name, **kwargs):
         mm = kwargs.pop('m', m)
         LL = kwargs.pop('Lmax', Lmax)
         NN = kwargs.pop('Nmax', Nmax)
         aa = kwargs.pop('alpha', alpha)
-        ss = kwargs.pop('radius', radius)
-        rh = kwargs.pop('root_h', root_h)
-        return _operator(name, cylinder_type, h, m=mm, Lmax=LL, Nmax=NN, alpha=aa, radius=ss, root_h=rh, dtype=dtype, internal=internal, **kwargs)
+        return _operator(name, geometry, m=mm, Lmax=LL, Nmax=NN, alpha=aa, dtype=dtype, internal=internal, **kwargs)
     return dispatcher
 
 
