@@ -8,7 +8,6 @@ np.random.seed(37)
 
 
 def check_close(value, target, tol, verbose=False):
-    tol = 3*tol
     error = np.max(abs(value-target))
     if verbose:
         print(f'Error {error:1.4e}')
@@ -162,7 +161,7 @@ def test_ndot_top(geometry, m, Lmax, Nmax, alpha, operators):
     # Build the operator
     exact = True
     dl, dn = ((1 if geometry.root_h else 0),geometry.degree) if exact else (0,0)
-    op = operators('normal_component', surface='z=h', exact=exact)
+    op = operators('normal_component', surface=geometry.top, exact=exact)
 
     # Construct the coefficient vector and apply the operator
     ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
@@ -223,7 +222,7 @@ def test_ndot_bottom(geometry, m, Lmax, Nmax, alpha, operators):
     # Build the operator
     exact = True
     dl, dn = ((1 if geometry.root_h else 0),geometry.degree) if exact else (0,0)
-    op = operators('normal_component', surface='z=-h', exact=exact)
+    op = operators('normal_component', surface=geometry.bottom, exact=exact)
 
     # Construct the coefficient vector and apply the operator
     ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
@@ -256,7 +255,7 @@ def test_ndot_side(geometry, m, Lmax, Nmax, alpha, operators):
     # Build the operator
     exact = True
     dn = 1 if exact else 0
-    op = operators('normal_component', surface='s=S', exact=exact)
+    op = operators('normal_component', surface=geometry.side, exact=exact)
 
     # Construct the coefficient vector and apply the operator
     ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
@@ -280,7 +279,7 @@ def test_ndot_side(geometry, m, Lmax, Nmax, alpha, operators):
 
     # Compute the error
     error = ndotu - ndotu_grid
-    check_close(ndotu, ndotu_grid, 1.6e-13)
+    check_close(ndotu, ndotu_grid, 3e-13)
 
 
 def test_normal_component(geometry, m, Lmax, Nmax, alpha, operators):
@@ -310,9 +309,8 @@ def test_convert(geometry, m, Lmax, Nmax, alpha, operators):
     g1 = basis1.expand(d1)
     g2 = basis2.expand(d2)
 
-    root_h_scale = np.sqrt(3) if geometry.root_h else 1
-    check_close(f, g1, 1.5e-13)
-    check_close(f, g2, 6.2e-13 * root_h_scale)
+    check_close(f, g1, 1.6e-13)
+    check_close(f, g2, 1.4e-12)
 
 
 def test_convert_adjoint(geometry, m, Lmax, Nmax, alpha, operators):
@@ -336,22 +334,16 @@ def test_convert_adjoint(geometry, m, Lmax, Nmax, alpha, operators):
 
     check_close(f, g, 2e-14)
 
-    # FIXME: Implement boundary operators for root_h height function
-    if geometry.root_h:
-        print('  Warning: skipping boundary recombination test for root_h height')
-        return
-
     # Boundary evaluation of the conversion adjoint is identically zero
     Bops = sc.operators(geometry, m=m, Lmax=Lmax+2, Nmax=Nmax+dn, alpha=alpha-1)
 
-    B = Bops('boundary', sigma=0, surface='s=S')
+    B = Bops('boundary', sigma=0, surface=geometry.side)
     check_close(B @ op, 0, 1e-15)
 
-    B = Bops('boundary', sigma=0, surface='z=h')
+    B = Bops('boundary', sigma=0, surface=geometry.top)
     check_close(B @ op, 0, 2e-14)
 
-    bottom = 'z=-h' if geometry.cylinder_type == 'full' else 'z=0'
-    B = Bops('boundary', sigma=0, surface=bottom)
+    B = Bops('boundary', sigma=0, surface=geometry.bottom)
     check_close(B @ op, 0, 1e-14)
 
 
@@ -365,11 +357,6 @@ def rank_deficiency(mat):
 
 
 def test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom):
-    # FIXME: Implement boundary deficiency fix for higher degree height polynomials
-    if geometry.degree > 1:
-        print('  Warning: skpping boundary_combination test for h polynomial with degree > 1')
-        return
-
     # The three boundary operators have linearly dependent rows.  There are three cases:
     # 1. Full Cylinder, evaluating at z=0
     #    -> chuck the last equation from each surface evaluation operator
@@ -378,14 +365,25 @@ def test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom)
     #    -> b. Lmax odd  ? chuck last equation from top, bottom, second to last from side
     # 3. Half Cylinder
     #    -> Same as 2b.
-    bottom = 'z=-h' if geometry.cylinder_type == 'full' else 'z=0'
-    op1 = operators('boundary', sigma=0, surface='z=h')
+    op1 = operators('boundary', sigma=0, surface=geometry.top)
     op2 = operators('boundary', sigma=0, surface=bottom)
-    op3 = operators('boundary', sigma=0, surface='s=S')
-    if geometry.cylinder_type == 'full' or Lmax%2 == 0:
-        op = sparse.vstack([op1[:-1,:],op2[:-1,:],op3[:-1,:]])
+    op3 = operators('boundary', sigma=0, surface=geometry.side)
+    if geometry.root_h:
+        if bottom == 'z=-h':
+            if Lmax%2 == 0:
+                op = sparse.vstack([op1[:-1,:],op3[:-2,:],op3[-1,:]])
+            else:
+                op = sparse.vstack([op1[:-1,:],op3[:-1,:]])
+        else:
+            if Lmax%2 == 0:
+                op = sparse.vstack([op1[:Nmax-1,:],op1[Nmax:,:],op2[:-2,:],op3[:-1,:]])
+            else:
+                op = sparse.vstack([op1[:-1,:],op2[:-2,:],op3[:-1,:]])
     else:
-        op = sparse.vstack([op1[:-1,:],op2[:-1,:],op3[:-2,:],op3[-1,:]])
+        if Lmax%2 == 0:
+            op = sparse.vstack([op1[:-1,:],op2[:-1,:],op3[:-1,:]])
+        else:
+            op = sparse.vstack([op1[:-1,:],op2[:-1,:],op3[:-2,:],op3[-1,:]])
 
     nullspace = sp.linalg.null_space(op.todense())
 
@@ -397,8 +395,11 @@ def test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom)
     boundary_rows, num_coeffs = np.shape(op)
     dim = np.shape(nullspace)[1]
     boundary_deficiency = dim - (num_coeffs-boundary_rows)
-    check_close(rank_deficiency(op), 0, 0)
-    check_close(boundary_deficiency, 0, 0)
+    if geometry.degree == 1:
+        check_close(rank_deficiency(op), 0, 0)
+        check_close(boundary_deficiency, 0, 0)
+    else:
+        print('  Warning: skipping boundary_combination deficiency test for h polynomial with degree > 1')
 
     errors = np.zeros((dim,3))
     bottom_index = len(eta)//2 if bottom == 'z=0' and geometry.cylinder_type == 'full' else 0
@@ -407,15 +408,10 @@ def test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom)
         fmax = np.max(abs(f))
         errors[i,:] = [np.max(abs(a))/fmax for a in [f[-1,:], f[bottom_index,:], f[:,-1]]]
     max_error = np.max(abs(errors))
-    check_close(max_error, 0, 2e-14)
+    check_close(max_error, 0, 3e-14)
 
 
 def test_boundary(geometry, m, Lmax, Nmax, alpha, operators):
-    # FIXME: Implement boundary operators for root_h height function
-    if geometry.root_h:
-        print('  Warning: skipping boundary test for root_h height')
-        return
-
     test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom='z=0')
     if geometry.cylinder_type == 'full':
         test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom='z=-h')
