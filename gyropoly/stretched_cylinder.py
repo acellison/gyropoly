@@ -31,6 +31,8 @@ class Geometry():
     def __init__(self, cylinder_type, h, radius=1., root_h=False):
         if cylinder_type not in ['half', 'full']:
             raise ValueError(f'Invalid cylinder type ({cylinder_type})')
+        if root_h and cylinder_type == 'half':
+            raise ValueError('Half cylinder with root_h height is not supported')
         self.__cylinder_type = cylinder_type
         self.__h = h
         self.__radius = radius
@@ -120,17 +122,17 @@ class Basis():
 
     """
     def __init__(self, geometry, m, Lmax, Nmax, alpha, sigma=0, eta=None, t=None, has_m_scaling=True, has_h_scaling=True, dtype='float64'):
-        _check_radial_degree(Lmax, Nmax)
+        _check_radial_degree(geometry, Lmax, Nmax)
         self.__geometry = geometry
         self.__m, self.__Lmax, self.__Nmax = m, Lmax, Nmax
         self.__alpha, self.__sigma = alpha, sigma
         self.__dtype = dtype
 
         # Get the number of coefficients including truncation
-        self.__num_coeffs = total_num_coeffs(Lmax, Nmax)
+        self.__num_coeffs = total_num_coeffs(geometry, Lmax, Nmax)
 
         # Construct the radial polynomial systems
-        make_radial_params = _radial_jacobi_parameters(m, alpha=alpha, sigma=sigma, root_h=geometry.root_h)
+        make_radial_params = _radial_jacobi_parameters(geometry, m, alpha=alpha, sigma=sigma)
         radial_params = [make_radial_params(ell) for ell in range(Lmax)]
         self.__systems = [ajacobi.AugmentedJacobiSystem(a, b, [(geometry.h,c[0])]) for a,b,c in radial_params]
 
@@ -260,7 +262,7 @@ class Basis():
         # Iterate through each basis function, adding in its weighted contribution
         index = 0
         for ell in range(self.Lmax):
-            for k in range(_radial_size(self.Nmax, ell)):
+            for k in range(_radial_size(self.geometry, self.Nmax, ell)):
                 f += coeffs[index] * self._mode_unchecked(ell, k)
                 index += 1
         return f
@@ -278,8 +280,8 @@ class Basis():
     def _check_degree(self, ell, k=None):
         if ell >= self.Lmax:
             raise ValueError(f'ell (={ell}) index exceeds maximum Lmax-1 (={self.Lmax-1})')
-        if k is not None and k >= _radial_size(self.Nmax, ell):
-            raise ValueError(f'k (={k}) index exceeds maximum Nmax-ell-1 (={_radial_size(self.Nmax, ell)-1})')
+        if k is not None and k >= _radial_size(self.geometry, self.Nmax, ell):
+            raise ValueError(f'k (={k}) index exceeds maximum (={_radial_size(self.geometry, self.Nmax, ell)-1})')
 
     def _make_vertical_polynomials(self, eta):
         if eta is not None:
@@ -300,7 +302,7 @@ class Basis():
             if self.root_h:
                 ht = np.sqrt(ht)
             systems = self.__systems
-            polys = lambda ell: systems[ell].polynomials(_radial_size(self.Nmax, ell), t, dtype=self.dtype)
+            polys = lambda ell: systems[ell].polynomials(_radial_size(self.geometry, self.Nmax, ell), t, dtype=self.dtype)
             self.__Q = [prefactor * ht**ell * polys(ell) for ell,system in enumerate(systems)]
 
 
@@ -322,18 +324,18 @@ def _get_ell_modifiers(Lmax, alpha, adjoint=False, dtype='float64', internal='fl
     return diags[0], diags[1], -diags[2]
 
 
-def _check_radial_degree(Lmax, Nmax):
+def _check_radial_degree(geometry, Lmax, Nmax):
     """Ensure we can triangular truncate with the given maximum degree"""
-    if Nmax < Lmax:
+    if Nmax < (Lmax//2 if geometry.root_h else Lmax):
         raise ValueError('Radial degree too small for triangular truncation')
 
 
-def _radial_size(Nmax, ell):
+def _radial_size(geometry, Nmax, ell):
     """Get the triangular truncation size for a given ell"""
-    return Nmax-ell
+    return Nmax - (ell//2 if geometry.root_h else ell)
 
 
-def coeff_sizes(Lmax, Nmax):
+def coeff_sizes(geometry, Lmax, Nmax):
     """
     Return the number of radial coefficients for each vertical degree,
     and the offsets for indexing into a coefficient vector for the first
@@ -342,6 +344,8 @@ def coeff_sizes(Lmax, Nmax):
 
     Parameters
     ----------
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
     Lmax : int
         Maximum vertical degree of input basis
     Nmax : int
@@ -356,13 +360,13 @@ def coeff_sizes(Lmax, Nmax):
         start of radial coefficients each vertical degree
 
     """
-    _check_radial_degree(Lmax, Nmax)
-    lengths = np.array([_radial_size(Nmax, ell) for ell in range(Lmax)])
+    _check_radial_degree(geometry, Lmax, Nmax)
+    lengths = np.array([_radial_size(geometry, Nmax, ell) for ell in range(Lmax)])
     offsets = np.append(0, np.cumsum(lengths))
     return lengths, offsets
 
 
-def total_num_coeffs(Lmax, Nmax):
+def total_num_coeffs(geometry, Lmax, Nmax):
     """
     Return the total number of coefficients in an expansion truncated
     with Lmax vertical modes and Nmax radial modes.  Due to triangular
@@ -370,6 +374,8 @@ def total_num_coeffs(Lmax, Nmax):
 
     Parameters
     ----------
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
     Lmax : int
         Maximum vertical degree of input basis
     Nmax : int
@@ -380,20 +386,20 @@ def total_num_coeffs(Lmax, Nmax):
     Total number of coefficients for the given truncation degrees
 
     """
-    return coeff_sizes(Lmax, Nmax)[1][-1]
+    return coeff_sizes(geometry, Lmax, Nmax)[1][-1]
 
 
-def _radial_jacobi_parameters(m, alpha, sigma, ell=None, root_h=False):
+def _radial_jacobi_parameters(geometry, m, alpha, sigma, ell=None):
     """Get the Augmented Jacobi parameters for the given (m, alpha, sigma, ell)"""
-    scale = 1/2 if root_h else 1
+    scale = 1/2 if geometry.root_h else 1
     fn = lambda l: (alpha, m+sigma, (scale*(2*l+2*alpha+1),))
     return fn(ell) if ell is not None else fn
 
 
-def _make_operator(dell, zop, sop, m, Lmax, Nmax, alpha, sigma, root_h=False, Lpad=0, Npad=0):
+def _make_operator(geometry, dell, zop, sop, m, Lmax, Nmax, alpha, sigma, Lpad=0, Npad=0):
     """Kronecker the operator in the eta and s directions"""
-    Nin_sizes,  Nin_offsets  = coeff_sizes(Lmax,      Nmax)
-    Nout_sizes, Nout_offsets = coeff_sizes(Lmax+Lpad, Nmax+Npad)
+    Nin_sizes,  Nin_offsets  = coeff_sizes(geometry, Lmax,      Nmax)
+    Nout_sizes, Nout_offsets = coeff_sizes(geometry, Lmax+Lpad, Nmax+Npad)
 
     oprows, opcols, opdata = [], [], []
     if dell < 0:
@@ -403,7 +409,7 @@ def _make_operator(dell, zop, sop, m, Lmax, Nmax, alpha, sigma, root_h=False, Lp
         ellmin = 0
         ellmax = Lmax - dell
 
-    radial_params = _radial_jacobi_parameters(m, alpha=alpha, sigma=sigma, root_h=root_h)
+    radial_params = _radial_jacobi_parameters(geometry, m, alpha=alpha, sigma=sigma)
 
     for i in range(ellmin, ellmax):
         ellin, ellout = i+dell, i
@@ -508,7 +514,7 @@ def _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma, dtype='
     if delta == 0: dells = (1,)
 
     # Construct the composite operators
-    make_op = lambda dell, zop, sop: _make_operator(dell, zop, sop, m, Lmax, Nmax, alpha, sigma, root_h=geometry.root_h)
+    make_op = lambda dell, zop, sop: _make_operator(geometry, dell, zop, sop, m, Lmax, Nmax, alpha, sigma)
     ops = [make_op(dell, mods[dell], Ls[dell]) for dell in dells]
     return scale*sum(ops).astype(dtype)
 
@@ -599,7 +605,7 @@ def curl(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
     Sparse matrix with curl operator coefficients
 
     """
-    ncoeff = total_num_coeffs(Lmax, Nmax)
+    ncoeff = total_num_coeffs(geometry, Lmax, Nmax)
     Z = sparse.lil_matrix((ncoeff,ncoeff))
 
     make_dop = lambda sigma, delta: _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma=sigma, dtype=dtype, internal=internal)
@@ -734,7 +740,7 @@ def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype
                 raise ValueError('Half cylinder cannot be evaluated at z=-h')
         # If we're at the bottom flip the sign of the z component compared to the top
         N = normal_component(geometry, m, Lmax, Nmax, alpha, surface='z=h', exact=exact, dtype=dtype, internal=internal).tocsr()
-        n = total_num_coeffs(Lmax, Nmax)
+        n = total_num_coeffs(geometry, Lmax, Nmax)
         N[:,2*n:3*n] = -N[:,2*n:3*n]
         return N
     elif surface == 'z=0':
@@ -752,7 +758,7 @@ def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype
 
     zop = np.ones(Lmax)
     Npad = dn if exact else 0
-    make_op = lambda sigma, sop: _make_operator(0, zop, sop, m, Lmax, Nmax, alpha, sigma, root_h=geometry.root_h, Npad=Npad).astype(dtype)
+    make_op = lambda sigma, sop: _make_operator(geometry, 0, zop, sop, m, Lmax, Nmax, alpha, sigma, Npad=Npad).astype(dtype)
     ops = [make_op(sigma, L) for sigma, L in [(+1,Lp),(-1,Lm),(0,Lz)]]
     return sparse.hstack(ops)
 
@@ -793,7 +799,7 @@ def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', in
     zeros = lambda shape: sparse.lil_matrix(shape, dtype=internal)
 
     # Get the number of radial coefficients for each vertical degree
-    lengths, offsets = coeff_sizes(Lmax, Nmax)
+    lengths, offsets = coeff_sizes(geometry, Lmax, Nmax)
     ncols = offsets[-1]
 
     # Helper function to create the basis polynomials
@@ -828,7 +834,7 @@ def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', in
         # We then raise all C indices to match this highest mode.
         ops = ajacobi.operators([geometry.h], dtype=internal, internal=internal)
         C = ops('C')
-        radial_params = _radial_jacobi_parameters(m, alpha, sigma, root_h=geometry.root_h)
+        radial_params = _radial_jacobi_parameters(geometry, m, alpha, sigma)
         make_op = lambda ell: bc[ell] * (C(+1)**(Lmax-1-ell) @ C(-1)**ell)(lengths[ell], *radial_params(ell))
 
         # Construct the operator.
@@ -913,7 +919,7 @@ def convert(geometry, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exac
     L2 = -A(p) @ C(-p)**power
     mods = _get_ell_modifiers(Lmax, alpha, dtype=internal, internal=internal, adjoint=adjoint)
 
-    make_op = lambda dell, sop: _make_operator(dell, mods[abs(dell)], sop, m, Lmax, Nmax, alpha, sigma, root_h=geometry.root_h, Lpad=Lpad, Npad=Npad)
+    make_op = lambda dell, sop: _make_operator(geometry, dell, mods[abs(dell)], sop, m, Lmax, Nmax, alpha, sigma, Lpad=Lpad, Npad=Npad)
     op = (make_op(0, L0) + make_op(2*p, L2))
 
     if ntimes > 1:
@@ -923,7 +929,7 @@ def convert(geometry, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exac
     op = op.astype(dtype)
 
     if adjoint and not exact:
-        op = resize(op, Lmax+2, Nmax+3, Lmax, Nmax)
+        op = resize(geometry, op, Lmax+2, Nmax+3, Lmax, Nmax)
 
     return op
 
@@ -965,7 +971,7 @@ def project(geometry, m, Lmax, Nmax, alpha, sigma, direction, shift=0, Lstop=0, 
 
     """
     C = convert(geometry, m, Lmax, Nmax, alpha, sigma, dtype=dtype, internal=internal)
-    _, offsets = coeff_sizes(Lmax, Nmax)
+    _, offsets = coeff_sizes(geometry, Lmax, Nmax)
     if direction == 'z':
         # Size Nmax-(Lmax-1-shift), projecting onto all radial coefficients of fixed vertical degree
         col = C[:,offsets[Lmax-shift-1]:offsets[Lmax-shift]]
@@ -1029,13 +1035,15 @@ def operators(geometry, m=None, Lmax=None, Nmax=None, alpha=None, dtype='float64
     return dispatcher
 
 
-def resize(mat, Lin, Nin, Lout, Nout):
+def resize(geometry, mat, Lin, Nin, Lout, Nout):
     """
     Reshape the matrix from codomain size (Lin,Nin) to size (Lout,Nout).
     This appends and deletes rows as necessary without touching the columns.
 
     Parameters
     ----------
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
     mat : scipy.sparse matrix
         Sparse matrix to resize
     Lin, Nin : int
@@ -1048,8 +1056,8 @@ def resize(mat, Lin, Nin, Lout, Nout):
     Sparse matrix with resized to desired maximal degrees
 
     """
-    nlengths_in,  offsets_in = coeff_sizes(Lin, Nin)
-    nlengths_out, offsets_out = coeff_sizes(Lout, Nout)
+    nlengths_in,  offsets_in = coeff_sizes(geometry, Lin, Nin)
+    nlengths_out, offsets_out = coeff_sizes(geometry, Lout, Nout)
     nintotal, nouttotal = offsets_in[-1], offsets_out[-1]
 
     # Check if all sizes match.  If so, just return the input matrix

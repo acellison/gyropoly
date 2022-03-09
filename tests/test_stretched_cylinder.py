@@ -56,7 +56,7 @@ def test_gradient(geometry, m, Lmax, Nmax, alpha, operators):
     op = operators('gradient')
 
     # Apply the operator in coefficient space
-    ncoeff = sc.total_num_coeffs(Lmax, Nmax)
+    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
     c = 2*np.random.rand(ncoeff) - 1
     d = op @ c
 
@@ -89,7 +89,8 @@ def test_gradient(geometry, m, Lmax, Nmax, alpha, operators):
         f, g = [a[ez:-ez,sz:-sz] for a in [field, grid]]
         check_close(f, g, tol)
 
-    check(u, ugrid, 1.6e-2)
+    root_h_scale = np.sqrt(2) if geometry.root_h else 1
+    check(u, ugrid, 1.6e-2 * root_h_scale)
     check(w, wgrid, 1.4e-3)
     check_close(v, vgrid, 1e-11)
 
@@ -99,7 +100,7 @@ def test_divergence(geometry, m, Lmax, Nmax, alpha, operators):
     op = operators('divergence')
 
     # Apply the operator in coefficient space
-    ncoeff = sc.total_num_coeffs(Lmax, Nmax)
+    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
     c = 2*np.random.rand(3*ncoeff) - 1
     d = op @ c
 
@@ -135,7 +136,8 @@ def test_divergence(geometry, m, Lmax, Nmax, alpha, operators):
         f, g = [a[ez:-ez,sz:-sz] for a in [field, grid]]
         check_close(f, g, tol)
 
-    check(f, grid, 2e-2)
+    root_h_scale = 2 if geometry.root_h else 1
+    check(f, grid, 2e-2 * root_h_scale)
 
 
 def test_curl(geometry, m, Lmax, Nmax, alpha, operators):
@@ -162,7 +164,7 @@ def test_ndot_top(geometry, m, Lmax, Nmax, alpha, operators):
     op = operators('normal_component', surface='z=h', exact=exact)
 
     # Construct the coefficient vector and apply the operator
-    ncoeff = sc.total_num_coeffs(Lmax, Nmax)
+    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
     c = 2*np.random.rand(3*ncoeff) - 1
     d = op @ c
 
@@ -190,7 +192,7 @@ def test_ndot_xy_plane(geometry, m, Lmax, Nmax, alpha, operators):
     op = operators('normal_component', surface='z=0')
 
     # Construct the coefficient vector and apply the operator
-    ncoeff = sc.total_num_coeffs(Lmax, Nmax)
+    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
     c = 2*np.random.rand(3*ncoeff) - 1
     d = op @ c
 
@@ -221,7 +223,7 @@ def test_ndot_bottom(geometry, m, Lmax, Nmax, alpha, operators):
     op = operators('normal_component', surface='z=-h', exact=exact)
 
     # Construct the coefficient vector and apply the operator
-    ncoeff = sc.total_num_coeffs(Lmax, Nmax)
+    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
     c = 2*np.random.rand(3*ncoeff) - 1
     d = op @ c
 
@@ -252,7 +254,7 @@ def test_ndot_side(geometry, m, Lmax, Nmax, alpha, operators):
     op = operators('normal_component', surface='s=S', exact=exact)
 
     # Construct the coefficient vector and apply the operator
-    ncoeff = sc.total_num_coeffs(Lmax, Nmax)
+    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
     c = 2*np.random.rand(3*ncoeff) - 1
     d = op @ c
 
@@ -344,7 +346,7 @@ def test_convert(geometry, m, Lmax, Nmax, alpha, operators):
     op1 = operators('convert', sigma=0)
     op2 = operators('convert', sigma=0, ntimes=3)
 
-    ncoeff = sc.total_num_coeffs(Lmax, Nmax)
+    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
     c = 2*np.random.rand(ncoeff) - 1
     d1 = op1 @ c
     d2 = op2 @ c
@@ -359,14 +361,15 @@ def test_convert(geometry, m, Lmax, Nmax, alpha, operators):
     g1 = basis1.expand(d1)
     g2 = basis2.expand(d2)
 
+    root_h_scale = np.sqrt(3) if geometry.root_h else 1
     check_close(f, g1, 1.5e-13)
-    check_close(f, g2, 6.2e-13)
+    check_close(f, g2, 6.2e-13 * root_h_scale)
 
 
 def test_convert_adjoint(geometry, m, Lmax, Nmax, alpha, operators):
     op = operators('convert', sigma=0, adjoint=True)
 
-    ncoeff = sc.total_num_coeffs(Lmax, Nmax)
+    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
     c = 2*np.random.rand(ncoeff) - 1
     d = op @ c
 
@@ -381,7 +384,7 @@ def test_convert_adjoint(geometry, m, Lmax, Nmax, alpha, operators):
     f = (1-eta**2) * (1-t) * ht**hpower * basis0.expand(c)
     g = basis1.expand(d)
 
-    check_close(f, g, 6e-15)
+    check_close(f, g, 6.6e-15)
 
     # Boundary evaluation of the conversion adjoint is identically zero
     Bops = sc.operators(geometry, m=m, Lmax=Lmax+2, Nmax=Nmax+3, alpha=alpha-1)
@@ -409,7 +412,8 @@ def test_project(geometry, m, Lmax, Nmax, alpha, operators):
     all_ops = ops + opt
     ns = [np.shape(op)[1] for op in all_ops]
     n = sum(ns)
-    assert n == 2*Nmax+Lmax-3
+    target = 2*Nmax+Lmax-3 if not geometry.root_h else 2*Nmax+2*Lmax-4
+    assert n == target
 
 
 def main():
@@ -428,7 +432,7 @@ def main():
             try:
                 fun(*args)
             except ValueError as e:
-                print('Warning: skipping test:', e)
+                print('  Warning: skipping test:', e)
 
     geometries = [sc.Geometry(cylinder_type='full', h=h),
                   sc.Geometry(cylinder_type='half', h=h),

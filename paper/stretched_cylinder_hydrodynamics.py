@@ -51,7 +51,7 @@ def combined_projection(geometry, m, Lmax, Nmax, alpha, sigma):
 def build_boundary(geometry, m, Lmax, Nmax, alpha):
     make_op = lambda sigma: combined_boundary(geometry, m, Lmax, Nmax, alpha, sigma)
     B = sparse.block_diag([make_op(sigma) for sigma in [+1,-1,0]])
-    ncoeff = sc.total_num_coeffs(Lmax, Nmax)
+    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
     Z = sparse.lil_matrix((np.shape(B)[0], ncoeff))
     return sparse.hstack([B,Z])
 
@@ -60,7 +60,7 @@ def build_projections(geometry, m, Lmax, Nmax, alpha, boundary_method):
     if boundary_method == 'tau':
         make_op = lambda sigma: combined_projection(geometry, m, Lmax, Nmax, alpha+1, sigma)
         col = sparse.block_diag([make_op(sigma) for sigma in [+1, -1, 0]])
-        Z = sparse.lil_matrix((sc.total_num_coeffs(Lmax, Nmax), np.shape(col)[1]))
+        Z = sparse.lil_matrix((sc.total_num_coeffs(geometry, Lmax, Nmax), np.shape(col)[1]))
         return sparse.vstack([col, Z])
     else:
         make_op = lambda sigma, dalpha, dL: combined_projection(geometry, m, Lmax+2-dL, Nmax+3, alpha+dalpha, sigma)
@@ -70,7 +70,7 @@ def build_projections(geometry, m, Lmax, Nmax, alpha, boundary_method):
 def build_matrices_tau(geometry, m, Lmax, Nmax, Ekman, alpha):
     operators = sc.operators(geometry, m, Lmax, Nmax)
 
-    ncoeff = sc.total_num_coeffs(Lmax, Nmax)
+    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
     I = sparse.eye(ncoeff)
     Z = sparse.lil_matrix((ncoeff,ncoeff))
 
@@ -105,7 +105,7 @@ def build_matrices_tau(geometry, m, Lmax, Nmax, Ekman, alpha):
 @cached
 def galerkin_matrix(geometry, m, Lmax, Nmax, alpha):
     Sp, Sm, Sz = [sc.convert(geometry, m, Lmax-Lshift(sigma), Nmax, alpha+1, sigma=sigma, adjoint=True) for sigma in [+1,-1,0]]
-    I = sparse.eye(sc.total_num_coeffs(Lmax, Nmax))
+    I = sparse.eye(sc.total_num_coeffs(geometry, Lmax, Nmax))
     return sparse.block_diag([Sp,Sm,Sz,I])
 
 
@@ -114,8 +114,8 @@ def build_matrices_galerkin(geometry, m, Lmax, Nmax, Ekman, alpha):
     operatorsu = sc.operators(geometry, m, Lmax+dL, Nmax+dN)
     operatorsp = sc.operators(geometry, m, Lmax,    Nmax)
 
-    ncoeffu = sc.total_num_coeffs(Lmax+dL,   Nmax+dN)
-    ncoeffp = sc.total_num_coeffs(Lmax, Nmax)
+    ncoeffu = sc.total_num_coeffs(geometry, Lmax+dL,   Nmax+dN)
+    ncoeffp = sc.total_num_coeffs(geometry, Lmax, Nmax)
     Z = sparse.lil_matrix((ncoeffu,ncoeffp))
 
     # Bulk Equations
@@ -126,10 +126,10 @@ def build_matrices_galerkin(geometry, m, Lmax, Nmax, Ekman, alpha):
 
     # Resize the gradient into the Lmax+2, Nmax+3 shape
     Gs = [G[i*ncoeffp:(i+1)*ncoeffp,:] for i in range(3)]
-    G = sparse.vstack([sc.resize(mat, Lmax, Nmax, Lmax+dL, Nmax+dN) for sigma,mat in zip([+1,-1,0], Gs)])
+    G = sparse.vstack([sc.resize(geometry, mat, Lmax, Nmax, Lmax+dL, Nmax+dN) for sigma,mat in zip([+1,-1,0], Gs)])
 
     # Resize the vertical velocity down to Lmax-1
-    lengths, offsets = sc.coeff_sizes(Lmax+dL, Nmax+dN)
+    lengths, offsets = sc.coeff_sizes(geometry, Lmax+dL, Nmax+dN)
     G = G.tocsr()[:-lengths[-1],:]
     D = D.tocsr()[:,:-lengths[-1]]
     Lap = Lap.tocsr()[:-lengths[-1],:-lengths[-1]]
@@ -303,7 +303,7 @@ def plot_solution(data):
 
 
 def main():
-    cylinder_type, m, Lmax, Nmax, Ekman, alpha, omega, radius, root_h, nev = 'full', 14, 40, 160, 1e-5, 0, 1.4, 1., True, 400
+    cylinder_type, m, Lmax, Nmax, Ekman, alpha, omega, radius, root_h, nev = 'full', 14, 40, 120, 1e-5, 0, 1.4, 1., True, 400
 
     boundary_method = 'galerkin'
     force_construct, force_solve = False, False
