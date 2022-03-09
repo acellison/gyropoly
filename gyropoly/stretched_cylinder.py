@@ -55,6 +55,10 @@ class Geometry():
         return self.__root_h
 
     @property
+    def degree(self):
+        return len(self.__h) - 1
+
+    @property
     def top(self):
         return 'z=h'
 
@@ -324,15 +328,15 @@ def _get_ell_modifiers(Lmax, alpha, adjoint=False, dtype='float64', internal='fl
     return diags[0], diags[1], -diags[2]
 
 
-def _check_radial_degree(geometry, Lmax, Nmax):
-    """Ensure we can triangular truncate with the given maximum degree"""
-    if Nmax < (Lmax//2 if geometry.root_h else Lmax):
-        raise ValueError('Radial degree too small for triangular truncation')
-
-
 def _radial_size(geometry, Nmax, ell):
     """Get the triangular truncation size for a given ell"""
-    return Nmax - (ell//2 if geometry.root_h else ell)
+    return Nmax - geometry.degree * (ell//2 if geometry.root_h else ell)
+
+
+def _check_radial_degree(geometry, Lmax, Nmax):
+    """Ensure we can triangular truncate with the given maximum degree"""
+    if _radial_size(geometry, Nmax, Lmax-1) <= 1:
+        raise ValueError('Radial degree too small for triangular truncation')
 
 
 def coeff_sizes(geometry, Lmax, Nmax):
@@ -906,15 +910,15 @@ def convert(geometry, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exac
     if ntimes > 1 and adjoint:
         raise ValueError('Lowering alpha more than once not supported')
 
+    power = 1 if geometry.root_h else 2
     ops = ajacobi.operators([geometry.h], dtype=internal, internal=internal)
     A, C = ops('A'), ops('C')
     if adjoint:
         p = -1
-        Lpad, Npad = 2, 1 + 2*C(-1).codomain.dn
+        Lpad, Npad = 2, 1 + power*C(-1).codomain.dn
     else:
         p = +1
         Lpad, Npad = 0, 0
-    power = 1 if geometry.root_h else 2
     L0 =  A(p) @ C( p)**power
     L2 = -A(p) @ C(-p)**power
     mods = _get_ell_modifiers(Lmax, alpha, dtype=internal, internal=internal, adjoint=adjoint)
