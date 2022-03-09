@@ -161,7 +161,7 @@ def test_laplacian(geometry, m, Lmax, Nmax, alpha, operators):
 def test_ndot_top(geometry, m, Lmax, Nmax, alpha, operators):
     # Build the operator
     exact = True
-    dn = geometry.degree if exact else 0
+    dl, dn = ((1 if geometry.root_h else 0),geometry.degree) if exact else (0,0)
     op = operators('normal_component', surface='z=h', exact=exact)
 
     # Construct the coefficient vector and apply the operator
@@ -172,8 +172,8 @@ def test_ndot_top(geometry, m, Lmax, Nmax, alpha, operators):
     # Construct the bases
     t = np.linspace(-1,1,100)
     eta = np.linspace(-1,1,101)
-    scalar_basis = create_scalar_basis(geometry, m, Lmax, Nmax+dn, alpha, t, eta)
-    vector_basis = create_vector_basis(geometry, m, Lmax, Nmax,    alpha, t, eta)
+    scalar_basis = create_scalar_basis(geometry, m, Lmax+dl, Nmax+dn, alpha, t, eta)
+    vector_basis = create_vector_basis(geometry, m, Lmax,    Nmax,    alpha, t, eta)
 
     # Evaluate the operator output in the scalar basis
     ndotu = scalar_basis.expand(d)
@@ -183,7 +183,9 @@ def test_ndot_top(geometry, m, Lmax, Nmax, alpha, operators):
     up, um, w = [vector_basis[key].expand(coeffs) for key,coeffs in [('up', Cp), ('um', Cm), ('w', Cz)]]
     u = 1/np.sqrt(2) * (up + um)
     hp = np.polyval(np.polyder(geometry.h), t)
-    ndotu_grid = -2*np.sqrt(2*(1+t))/geometry.radius * hp * u + w
+    uscale = 1/2 if geometry.root_h else 1
+    wscale = geometry.z(t, eta) if geometry.root_h else 1
+    ndotu_grid = -2*uscale*np.sqrt(2*(1+t))/geometry.radius * hp * u + wscale * w
 
     # Compute the error
     check_close(ndotu, ndotu_grid, 4e-13)
@@ -220,7 +222,7 @@ def test_ndot_bottom(geometry, m, Lmax, Nmax, alpha, operators):
         raise ValueError('z=-h not in half domain')
     # Build the operator
     exact = True
-    dn = geometry.degree if exact else 0
+    dl, dn = ((1 if geometry.root_h else 0),geometry.degree) if exact else (0,0)
     op = operators('normal_component', surface='z=-h', exact=exact)
 
     # Construct the coefficient vector and apply the operator
@@ -231,8 +233,8 @@ def test_ndot_bottom(geometry, m, Lmax, Nmax, alpha, operators):
     # Construct the bases
     t = np.linspace(-1,1,100)
     eta = np.linspace(-1,1,101)
-    scalar_basis = create_scalar_basis(geometry, m, Lmax, Nmax+dn, alpha, t, eta)
-    vector_basis = create_vector_basis(geometry, m, Lmax, Nmax,    alpha, t, eta)
+    scalar_basis = create_scalar_basis(geometry, m, Lmax+dl, Nmax+dn, alpha, t, eta)
+    vector_basis = create_vector_basis(geometry, m, Lmax,    Nmax,    alpha, t, eta)
 
     # Evaluate the operator output in the scalar basis
     ndotu = scalar_basis.expand(d)
@@ -242,7 +244,9 @@ def test_ndot_bottom(geometry, m, Lmax, Nmax, alpha, operators):
     up, um, w = [vector_basis[key].expand(coeffs) for key,coeffs in [('up', Cp), ('um', Cm), ('w', Cz)]]
     u = 1/np.sqrt(2) * (up + um)
     hp = np.polyval(np.polyder(geometry.h), t)
-    ndotu_grid = -2*np.sqrt(2*(1+t))/geometry.radius * hp * u - w
+    uscale = 1/2 if geometry.root_h else 1
+    wscale = geometry.z(t, eta) if geometry.root_h else 1
+    ndotu_grid = -2*uscale*np.sqrt(2*(1+t))/geometry.radius * hp * u - wscale * w
 
     # Compute the error
     check_close(ndotu, ndotu_grid, 4e-13)
@@ -280,10 +284,6 @@ def test_ndot_side(geometry, m, Lmax, Nmax, alpha, operators):
 
 
 def test_normal_component(geometry, m, Lmax, Nmax, alpha, operators):
-    # FIXME: Implement normal_component operator for root_h height
-    if geometry.root_h:
-        print('  Warning: skipping normal_component test for root_h height')
-        return
     test_ndot_top(geometry, m, Lmax, Nmax, alpha, operators)
     test_ndot_xy_plane(geometry, m, Lmax, Nmax, alpha, operators)
     if geometry.cylinder_type == 'full':

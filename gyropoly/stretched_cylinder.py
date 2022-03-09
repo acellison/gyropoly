@@ -694,6 +694,9 @@ def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype
         n_{±} = ∇(± z + h(t)) = ± e_{z} - 2*(2*(1+t))**0.5 * h'(t) * e_{S}.
     When 'z=0' the field is dotted with -e_{Z}.
     When 's=S' the field is dotted with S * e_{S}
+    If the geometry has a root-polynomial height function we regularize the result by
+    multiplying through by z = \eta * \sqrt{h(t)}.  This allows the basis functions
+    to fit together for the operator to be well defined.
 
     Parameters
     ----------
@@ -726,19 +729,22 @@ def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype
     Sparse matrix with normal dot operator coefficients
 
     """
-    if geometry.root_h and surface in ['z=h', 'z=-h']:
-        raise ValueError('normal_component operator not implemented for root_h height')
-
     ops = ajacobi.operators([geometry.h], dtype=internal, internal=internal)
-    B, R, Id = ops('B'), ops('rhoprime', weighted=False), ops('Id')
+    B, C, R, Id = ops('B'), ops('C'), ops('rhoprime', weighted=False), ops('Id')
     Zero = 0*Id
 
     if surface == 'z=h':
         root_h_scale = 1 if geometry.root_h else 2
         Lp = -root_h_scale/geometry.radius * R @ B(-1)
         Lm = -root_h_scale/geometry.radius * R @ B(+1)
-        Lz = Id  # FIXME: for root_h, Lz = Z comes in two parts: ell->ell+1 (C(+1)) and ell->ell-1 (C(-1))
-        dn = 1 + R.codomain.dn
+        if geometry.root_h:
+            Lzp1 = C(+1)
+            Lzm1 = C(-1)
+            zop = jacobi.operator('Z', dtype=internal)(Lmax, alpha, alpha)
+            dl, dn = 1, 1 + R.codomain.dn
+        else:
+            Lz = Id
+            dl, dn = 0, 1 + R.codomain.dn
     elif surface == 'z=-h':
         if geometry.cylinder_type != 'full':
                 raise ValueError('Half cylinder cannot be evaluated at z=-h')
@@ -751,19 +757,24 @@ def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype
         Lp = Zero
         Lm = Zero
         Lz = -Id
-        dn = 0
+        dl, dn = 0, 0
     elif surface == 's=S':
         Lp = geometry.radius/2 * B(-1)
         Lm = geometry.radius/2 * B(+1)
         Lz = Zero
-        dn = 1
+        dl, dn = 0, 1
     else:
         raise ValueError(f'Invalid surface ({surface})')
 
-    zop = np.ones(Lmax)
-    Npad = dn if exact else 0
-    make_op = lambda sigma, sop: _make_operator(geometry, 0, zop, sop, m, Lmax, Nmax, alpha, sigma, Npad=Npad).astype(dtype)
-    ops = [make_op(sigma, L) for sigma, L in [(+1,Lp),(-1,Lm),(0,Lz)]]
+    Lpad, Npad = (dl,dn) if exact else (0,0)
+    make_op = lambda sigma, sop: _make_operator(geometry, 0, np.ones(Lmax), sop, m, Lmax, Nmax, alpha, sigma, Lpad=Lpad, Npad=Npad).astype(dtype)
+    ops = [make_op(sigma, L) for sigma, L in [(+1,Lp),(-1,Lm)]]
+
+    if surface == 'z=h' and geometry.root_h:
+        make_op = lambda dell, sop: _make_operator(geometry, dell, zop.diagonal(dell), sop, m, Lmax, Nmax, alpha, sigma=0, Lpad=Lpad, Npad=Npad).astype(dtype)
+        ops.append(make_op(+1, Lzm1) + make_op(-1, Lzp1))
+    else:
+        ops.append(make_op(0, Lz))
     return sparse.hstack(ops)
 
 
