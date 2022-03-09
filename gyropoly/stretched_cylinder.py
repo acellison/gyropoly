@@ -850,20 +850,19 @@ def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', in
         div = 2 if geometry.root_h else 1
         make_op = lambda ell: bc[ell] * (C(+1)**((Lmax-1-ell)//div) @ C(-1)**(ell//div))(lengths[ell], *radial_params(ell))
         even_only = (coordinate_value, geometry.cylinder_type) == (0., 'full')
-        ell_range = range(0,Lmax,2) if even_only else range(Lmax)
+        ell_range = range(0, Lmax, 2 if even_only else 1)
 
         # Construct the operator.
         if geometry.root_h:
-            ncols = total_num_coeffs(geometry, Lmax, Nmax)
-            Beven, Bodd = zeros((Nmax,ncols)), zeros((Nmax,ncols))
+            # Boundary evaluation splits into even and odd ell components.
+            # For this reason the 'z=-h' evaluation operator is linearly dependent
+            # with the 'z=h' evaluation operator.
+            Beven, Bodd = zeros((Nmax,ncols)), (None if even_only else zeros((Nmax,ncols)))
             for ell in ell_range:
                 n, index, mat = lengths[ell], offsets[ell], [Beven, Bodd][ell % 2] 
                 op = make_op(ell)
                 mat[:np.shape(op)[0],index:index+n] = op
-            if even_only:
-                B = Beven
-            else:
-                B = sparse.vstack([Beven,Bodd]).tolil()
+            B = Beven if even_only else sparse.vstack([Beven,Bodd], format='lil')
         else:
             # If we are in full cylinder geometry evaluating at the middle
             # then only the even ell polynomials contribute since the odd
