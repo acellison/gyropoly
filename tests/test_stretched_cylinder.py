@@ -413,11 +413,14 @@ def test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom)
     boundary_rows, num_coeffs = np.shape(op)
     dim = np.shape(nullspace)[1]
     boundary_deficiency = dim - (num_coeffs-boundary_rows)
-    if geometry.degree == 1:
+    if geometry.degree == 1 and not geometry.sphere:
         check_close(rank_deficiency(op), 0, 0)
         check_close(boundary_deficiency, 0, 0)
     else:
-        print('  Warning: skipping boundary_combination deficiency test for h polynomial with degree > 1')
+        if geometry.degree > 1:
+            print('  Warning: skipping boundary_combination deficiency test for h polynomial with degree > 1')
+        if geometry.sphere:
+            print('  Warning: skipping boundary_combination deficiency test for sphere geometry')
 
     errors = np.zeros((dim,3))
     bottom_index = len(eta)//2 if bottom == 'z=0' and geometry.cylinder_type == 'full' else 0
@@ -426,14 +429,10 @@ def test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom)
         fmax = np.max(abs(f))
         errors[i,:] = [np.max(abs(a))/fmax for a in [f[-1,:], f[bottom_index,:], f[:,-1]]]
     max_error = np.max(abs(errors))
-    check_close(max_error, 0, 3e-14)
+    check_close(max_error, 0, 4e-14)
 
 
 def test_boundary(geometry, m, Lmax, Nmax, alpha, operators):
-    if geometry.sphere:
-        print('  Warning: skipping boundary test for sphere geometry')
-        return
-
     test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom='z=0')
     if geometry.cylinder_type == 'full':
         test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom='z=-h')
@@ -443,6 +442,7 @@ def test_project(geometry, m, Lmax, Nmax, alpha, operators):
     if geometry.sphere:
         print('  Warning: skipping project test for sphere geometry')
         return
+
     if geometry.degree > 1:
         print('  Warning: skipping project test for h polynomial with degree > 1')
         return
@@ -480,7 +480,6 @@ def main():
         args = geometry, m, Lmax, Nmax, alpha, operators
         for fun in funs:
             fun(*args)
-
 
     geometries = [sc.Geometry(cylinder_type='full', h=h),
                   sc.Geometry(cylinder_type='half', h=h),

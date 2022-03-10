@@ -985,12 +985,16 @@ def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', in
         radial_params = _radial_jacobi_parameters(geometry, m, alpha, sigma)
 
         div = 2 if geometry.root_h else 1
-        make_op = lambda ell: bc[ell] * (C(+1)**((Lmax-1-ell)//div) @ C(-1)**(ell//div))(lengths[ell], *radial_params(ell))
+        if geometry.sphere:
+            A = ops('A')
+            make_op = lambda ell: bc[ell] * (A(+1)**((Lmax-1-ell)//2) @ C(+1)**((Lmax-1-ell)//div) @ A(-1)**(ell//2) @ C(-1)**(ell//div))(lengths[ell], *radial_params(ell))
+        else:
+            make_op = lambda ell: bc[ell] * (C(+1)**((Lmax-1-ell)//div) @ C(-1)**(ell//div))(lengths[ell], *radial_params(ell))
         even_only = (coordinate_value, geometry.cylinder_type) == (0., 'full')
         ell_range = range(0, Lmax, 2 if even_only else 1)
 
         # Construct the operator.
-        if geometry.root_h:
+        if geometry.root_h or geometry.sphere:
             # Boundary evaluation splits into even and odd ell components.
             # For this reason the 'z=-h' evaluation operator is linearly dependent
             # with the 'z=h' evaluation operator.
