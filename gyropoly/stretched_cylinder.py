@@ -25,18 +25,23 @@ class Geometry():
     radius : float, optional
         Bounding radius of the cylinder
     root_h : bool, optional
-        If True, z = \eta \sqrt(h(t)), otherwise z = \eta h(t).  Default False
+        If True, z = \eta \sqrt{h(t)}, otherwise z = \eta h(t).  Default False
+    sphere : bool, optional
+        If True, height function vanishes at s = radius via z = \eta \sqrt{1-t} h(t)
 
     """
-    def __init__(self, cylinder_type, h, radius=1., root_h=False):
+    def __init__(self, cylinder_type, h, radius=1., root_h=False, sphere=False):
         if cylinder_type not in ['half', 'full']:
             raise ValueError(f'Invalid cylinder type ({cylinder_type})')
         if root_h and cylinder_type == 'half':
             raise ValueError('Half cylinder with root_h height is not supported')
+        if sphere and cylinder_type == 'half':
+            raise ValueError('Half cylinder with sphere height is not supported')
         self.__cylinder_type = cylinder_type
         self.__h = h
         self.__radius = radius
         self.__root_h = root_h
+        self.__sphere = sphere
 
     @property
     def cylinder_type(self):
@@ -55,6 +60,10 @@ class Geometry():
         return self.__root_h
 
     @property
+    def sphere(self):
+        return self.__sphere
+
+    @property
     def degree(self):
         return len(self.__h) - 1
 
@@ -71,19 +80,24 @@ class Geometry():
         return 's=S'
 
     def s(self, t):
-        return self.radius*np.sqrt((1+t)/2)
+        return self.radius*np.sqrt((1+t.ravel())/2)
 
     def z(self, t, eta):
-        tt, ee = t[np.newaxis,:], eta[:,np.newaxis]
+        tt, ee = t.ravel()[np.newaxis,:], eta.ravel()[:,np.newaxis]
         ht = np.polyval(self.h, tt)
         if self.root_h:
             ht = np.sqrt(ht)
+        if self.sphere:
+            ht = np.sqrt(1-t) * ht
         if self.cylinder_type == 'half':
             ee = (ee+1)/2
         return ee * ht
 
     def __repr__(self):
-        return f'-cylinder_type={self.cylinder_type}-radius={float(self.radius)}-root_h={self.root_h}'
+        radius = f'-radius={float(self.radius)}'
+        root_h = f'-root_h={self.root_h}'
+        sphere = f'-sphere={self.sphere}'
+        return f'-cylinder_type={self.cylinder_type}{radius}{root_h}{sphere}'
 
 
 class Basis():
@@ -151,14 +165,6 @@ class Basis():
         return self.__geometry
 
     @property
-    def cylinder_type(self):
-        return self.geometry.cylinder_type
-
-    @property
-    def h(self):
-        return self.geometry.h
-
-    @property
     def m(self):
         return self.__m
 
@@ -177,14 +183,6 @@ class Basis():
     @property
     def sigma(self):
         return self.__sigma
-
-    @property
-    def radius(self):
-        return self.geometry.radius
-
-    @property
-    def root_h(self):
-        return self.geometry.root_h
 
     @property
     def dtype(self):
@@ -299,15 +297,19 @@ class Basis():
                 prefactor = (1+t)**((self.m + self.sigma)/2)
             else:
                 prefactor = (1+t)**(self.sigma/2)
-            if self.has_h_scaling:
-                ht = np.polyval(self.h, t)
-            else:
-                ht = 1.
-            if self.root_h:
-                ht = np.sqrt(ht)
+            ht = self._make_height(t)
             systems = self.__systems
             polys = lambda ell: systems[ell].polynomials(_radial_size(self.geometry, self.Nmax, ell), t, dtype=self.dtype)
             self.__Q = [prefactor * ht**ell * polys(ell) for ell,system in enumerate(systems)]
+
+    def _make_height(self, t):
+        if self.has_h_scaling:
+            ht = np.polyval(self.geometry.h, t)
+            if self.geometry.root_h: ht = np.sqrt(ht)
+            if self.geometry.sphere: ht = ht * np.sqrt(1-t)
+        else:
+            ht = 1.
+        return ht
 
 
 def _get_ell_modifiers(Lmax, alpha, adjoint=False, dtype='float64', internal='float128'):
@@ -330,7 +332,7 @@ def _get_ell_modifiers(Lmax, alpha, adjoint=False, dtype='float64', internal='fl
 
 def _radial_size(geometry, Nmax, ell):
     """Get the triangular truncation size for a given ell"""
-    return Nmax - geometry.degree * (ell//2 if geometry.root_h else ell)
+    return Nmax - (geometry.degree * (ell//2 if geometry.root_h else ell) + geometry.sphere * (ell//2))
 
 
 def _check_radial_degree(geometry, Lmax, Nmax):
@@ -396,7 +398,7 @@ def total_num_coeffs(geometry, Lmax, Nmax):
 def _radial_jacobi_parameters(geometry, m, alpha, sigma, ell=None):
     """Get the Augmented Jacobi parameters for the given (m, alpha, sigma, ell)"""
     scale = 1/2 if geometry.root_h else 1
-    fn = lambda l: (alpha, m+sigma, (scale*(2*l+2*alpha+1),))
+    fn = lambda l: ((l+1/2)*geometry.sphere + alpha, m+sigma, (scale*(2*l+2*alpha+1),))
     return fn(ell) if ell is not None else fn
 
 
@@ -474,27 +476,28 @@ def _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma, dtype='
 
     # Construct the fundamental Augmented Jacobi operators
     ops = ajacobi.operators([geometry.h], dtype=internal, internal=internal)
-    A, B, C = [ops(kind) for kind in ['A', 'B', 'C']]
+    Id, A, B, C = [ops(kind) for kind in ['Id', 'A', 'B', 'C']]
     R = ops('rhoprime', weighted=False)
     Dz, Da, Db, Dc = [ops(kind) for kind in ['D', 'E', 'F', 'G']]
 
     # Construct the radial part of the operators.  
     # L<n> is the operator that maps vertical index ell to ell-n
     cpower = 0 if geometry.root_h else 1
+    s = 1 if geometry.sphere else -1
     if delta == +1:
         # Raising operator
         L0 =   C(+1)**cpower @ Dz(+1)
         L1 = - R @ A(+1) @ B(+1)
-        L2 = - C(-1)**cpower @ Dc(-1)
+        L2 = s*C(-1)**cpower @ (Db if geometry.sphere else Dc)(-1)
     elif delta == -1:
         # Lowering operator
         L0 =   C(+1)**cpower @ Db(+1)
         L1 = - R @ A(+1) @ B(-1)
-        L2 = - C(-1)**cpower @ Da(-1)
+        L2 = s*C(-1)**cpower @ (Dz if geometry.sphere else Da)(-1)
     else:
         # Neutral operator
         L0 = 0
-        L1 = A(+1)
+        L1 = Id if geometry.sphere else A(+1)
         L2 = 0
 
     Ls = L0, L1, L2
@@ -930,18 +933,22 @@ def convert(geometry, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exac
     if ntimes > 1 and adjoint:
         raise ValueError('Lowering alpha more than once not supported')
 
-    power = 1 if geometry.root_h else 2
     ops = ajacobi.operators([geometry.h], dtype=internal, internal=internal)
     A, C = ops('A'), ops('C')
+    cpower = 1 if geometry.root_h else 2
     if adjoint:
         p = -1
-        Lpad, Npad = 2, 1 + power*C(-1).codomain.dn
+        Lpad, Npad = 2, 1 + cpower*C(-1).codomain.dn
     else:
         p = +1
         Lpad, Npad = 0, 0
-    L0 =  A(p) @ C( p)**power
-    L2 = -A(p) @ C(-p)**power
-    mods = _get_ell_modifiers(Lmax, alpha, dtype=internal, internal=internal, adjoint=adjoint)
+    if geometry.sphere:
+        pa, pc = -p, -p
+    else:
+        pa, pc = p, -p
+    L0 =  A(p ) @ C(p )**cpower
+    L2 = -A(pa) @ C(pc)**cpower
+    mods = _get_ell_modifiers(Lmax, alpha, adjoint=adjoint, dtype=internal, internal=internal)
 
     make_op = lambda dell, sop: _make_operator(geometry, dell, mods[abs(dell)], sop, m, Lmax, Nmax, alpha, sigma, Lpad=Lpad, Npad=Npad)
     op = (make_op(0, L0) + make_op(2*p, L2))

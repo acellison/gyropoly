@@ -36,6 +36,8 @@ def dZ(geometry, f, t, eta, h):
     scale = 2 if geometry.cylinder_type == 'half' else 1
     if geometry.root_h:
         h = np.sqrt(h)
+    if geometry.sphere:
+        h = h*np.sqrt(1-t)
     return scale/h[np.newaxis,:] * deta
 
 
@@ -44,7 +46,7 @@ def dS(geometry, f, t, eta, h, dhdt):
     if geometry.cylinder_type == 'half':
         eta = 1+eta
     scale = 1/2 if geometry.root_h else 1
-    return 2*np.sqrt(2*(1+t))/geometry.radius * (dt - scale*(dhdt/h)[np.newaxis,:] * eta[:,np.newaxis] * deta)
+    return 2*np.sqrt(2*(1+t))/geometry.radius * (dt - (scale*(dhdt/h)[np.newaxis,:] - geometry.sphere/(2*(1-t))) * eta[:,np.newaxis] * deta)
 
 
 def dPhi(f, m):
@@ -61,8 +63,8 @@ def test_gradient(geometry, m, Lmax, Nmax, alpha, operators):
     d = op @ c
 
     # Build the bases
-    ns, neta = 4000, 401
-    t = np.linspace(-1,1,ns+1)[1:]
+    ns, neta = 4000, 801
+    t = np.linspace(-1,1,ns+2)[1:-1]
     eta = np.linspace(-1,1,neta)
     scalar_basis = create_scalar_basis(geometry, m, Lmax, Nmax, alpha,   t, eta)
     vector_basis = create_vector_basis(geometry, m, Lmax, Nmax, alpha+1, t, eta)
@@ -87,10 +89,10 @@ def test_gradient(geometry, m, Lmax, Nmax, alpha, operators):
     def check(field, grid, tol):
         sz, ez = ns//20, neta//10
         f, g = [a[ez:-ez,sz:-sz] for a in [field, grid]]
-        check_close(f, g, tol)
+        check_close(f, g, tol, verbose=True)
 
     root_h_scale = 1.7 if geometry.root_h else 1
-    check(u, ugrid, 1.6e-2 * root_h_scale)
+    check(u, ugrid, 1.7e-2 * root_h_scale)
     check(w, wgrid, 1.4e-3)
     check_close(v, vgrid, 1e-11)
 
@@ -106,7 +108,7 @@ def test_divergence(geometry, m, Lmax, Nmax, alpha, operators):
 
     # Build the bases
     ns, neta = 4000, 401
-    t = np.linspace(-1,1,ns+1)[1:]
+    t = np.linspace(-1,1,ns+2)[1:-1]
     eta = np.linspace(-1,1,neta)
     vector_basis = create_vector_basis(geometry, m, Lmax, Nmax, alpha,   t, eta)
     scalar_basis = create_scalar_basis(geometry, m, Lmax, Nmax, alpha+1, t, eta)
@@ -334,6 +336,10 @@ def test_convert_adjoint(geometry, m, Lmax, Nmax, alpha, operators):
 
     check_close(f, g, 2e-14)
 
+    if geometry.sphere:
+        print('  Warning: skipping convert_adjoint boundary test for sphere geometry')
+        return
+
     # Boundary evaluation of the conversion adjoint is identically zero
     Bops = sc.operators(geometry, m=m, Lmax=Lmax+2, Nmax=Nmax+dn, alpha=alpha-1)
 
@@ -412,12 +418,19 @@ def test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom)
 
 
 def test_boundary(geometry, m, Lmax, Nmax, alpha, operators):
+    if geometry.sphere:
+        print('  Warning: skipping boundary test for sphere geometry')
+        return
+
     test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom='z=0')
     if geometry.cylinder_type == 'full':
         test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom='z=-h')
 
 
 def test_project(geometry, m, Lmax, Nmax, alpha, operators):
+    if geometry.sphere:
+        print('  Warning: skipping project test for sphere geometry')
+        return
     if geometry.degree > 1:
         print('  Warning: skipping project test for h polynomial with degree > 1')
         return
@@ -461,7 +474,8 @@ def main():
                   sc.Geometry(cylinder_type='full', h=h, radius=2.),
                   sc.Geometry(cylinder_type='half', h=h, radius=2.),
                   sc.Geometry(cylinder_type='full', h=h, root_h=True),
-                  sc.Geometry(cylinder_type='full', h=h, root_h=True, radius=2.)]
+                  sc.Geometry(cylinder_type='full', h=h, root_h=True, radius=2.),
+                  sc.Geometry(cylinder_type='full', h=h, sphere=True)]
 
     for geometry in geometries:
         print(f'Testing {geometry} stretched cylinder...')
