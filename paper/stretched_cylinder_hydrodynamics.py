@@ -264,10 +264,9 @@ def plot_spectrum_callback(index, evalues, evectors, bases, fig=None, ax=None):
     fieldname = 'p'
     basis = bases[fieldname]
     s, z = basis.s(), basis.z()
-    ht = np.polyval(basis.h, basis.t)
 
     if fig is None or ax is None:
-        scale = 1 if basis.cylinder_type == 'half' else 2
+        scale = 1 if basis.geometry.cylinder_type == 'half' else 2
         zmax, smax = np.max(z), np.max(s)
         fig, ax = plt.subplots(figsize=plt.figaspect(scale*zmax/smax))
     sc.plotfield(s, z, fields[fieldname], fig, ax, colorbar=False)
@@ -318,7 +317,7 @@ def main():
         h = H*np.array([omega/(2+omega), 1.])
     geometry = sc.Geometry(cylinder_type=cylinder_type, h=h, radius=radius, root_h=root_h)
 
-    print(f'cylinder_type = {cylinder_type}, m = {m}, Lmax = {Lmax}, Nmax = {Nmax}, alpha = {alpha}, omega = {omega}, radius = {radius}, root_h = {root_h}')
+    print(f'geometry: {geometry}, m = {m}, Lmax = {Lmax}, Nmax = {Nmax}, alpha = {alpha}, omega = {omega}')
     data = solve_eigenproblem(geometry, m, Lmax, Nmax, boundary_method, omega, \
                               Ekman=Ekman, alpha=alpha, \
                               force_construct=force_construct, force_solve=force_solve, \
