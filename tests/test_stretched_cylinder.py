@@ -89,7 +89,7 @@ def test_gradient(geometry, m, Lmax, Nmax, alpha, operators):
     def check(field, grid, tol):
         sz, ez = ns//20, neta//10
         f, g = [a[ez:-ez,sz:-sz] for a in [field, grid]]
-        check_close(f, g, tol, verbose=True)
+        check_close(f, g, tol)
 
     root_h_scale = 1.7 if geometry.root_h else 1
     check(u, ugrid, 1.7e-2 * root_h_scale)
@@ -162,7 +162,8 @@ def test_laplacian(geometry, m, Lmax, Nmax, alpha, operators):
 def test_ndot_top(geometry, m, Lmax, Nmax, alpha, operators):
     # Build the operator
     exact = True
-    dl, dn = ((1 if geometry.root_h else 0),geometry.degree) if exact else (0,0)
+    root_sphere = geometry.sphere and geometry.root_h
+    dl, dn = ((1 if geometry.root_h else 0),geometry.degree+(1 if root_sphere else 0)) if exact else (0,0)
     op = operators('normal_component', surface=geometry.top, exact=exact)
 
     # Construct the coefficient vector and apply the operator
@@ -186,7 +187,11 @@ def test_ndot_top(geometry, m, Lmax, Nmax, alpha, operators):
     hp = np.polyval(np.polyder(geometry.h), t)
     uscale = 1/2 if geometry.root_h else 1
     wscale = geometry.z(t, eta) if geometry.root_h else 1
-    ndotu_grid = -2*uscale*np.sqrt(2*(1+t))/geometry.radius * hp * u + wscale * w
+    if root_sphere:
+        ht = np.polyval(geometry.h, t)
+        ndotu_grid = np.sqrt(2*(1+t))/geometry.radius * (ht - (1-t)*hp) * u + wscale * w
+    else:
+        ndotu_grid = -2*uscale*np.sqrt(2*(1+t))/geometry.radius * hp * u + wscale * w
 
     # Compute the error
     check_close(ndotu, ndotu_grid, 4e-13)
@@ -223,7 +228,8 @@ def test_ndot_bottom(geometry, m, Lmax, Nmax, alpha, operators):
         raise ValueError('z=-h not in half domain')
     # Build the operator
     exact = True
-    dl, dn = ((1 if geometry.root_h else 0),geometry.degree) if exact else (0,0)
+    root_sphere = geometry.sphere and geometry.root_h
+    dl, dn = ((1 if geometry.root_h else 0),geometry.degree+(1 if root_sphere else 0)) if exact else (0,0)
     op = operators('normal_component', surface=geometry.bottom, exact=exact)
 
     # Construct the coefficient vector and apply the operator
@@ -248,6 +254,12 @@ def test_ndot_bottom(geometry, m, Lmax, Nmax, alpha, operators):
     uscale = 1/2 if geometry.root_h else 1
     wscale = geometry.z(t, eta) if geometry.root_h else 1
     ndotu_grid = -2*uscale*np.sqrt(2*(1+t))/geometry.radius * hp * u - wscale * w
+    if root_sphere:
+        ht = np.polyval(geometry.h, t)
+        ndotu_grid = np.sqrt(2*(1+t))/geometry.radius * (ht - (1-t)*hp) * u - wscale * w
+    else:
+        ndotu_grid = -2*uscale*np.sqrt(2*(1+t))/geometry.radius * hp * u - wscale * w
+
 
     # Compute the error
     check_close(ndotu, ndotu_grid, 4e-13)
@@ -468,6 +480,8 @@ def main():
         args = geometry, m, Lmax, Nmax, alpha, operators
         for fun in funs:
             fun(*args)
+
+    test(sc.Geometry(cylinder_type='full', h=h, root_h=True, sphere=True))
 
     geometries = [sc.Geometry(cylinder_type='full', h=h),
                   sc.Geometry(cylinder_type='half', h=h),

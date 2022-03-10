@@ -733,18 +733,26 @@ def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype
 
     """
     ops = ajacobi.operators([geometry.h], dtype=internal, internal=internal)
-    B, C, R, Id = ops('B'), ops('C'), ops('rhoprime', weighted=False), ops('Id')
+    A, B, C, R, Id = ops('A'), ops('B'), ops('C'), ops('rhoprime', weighted=False), ops('Id')
     Zero = 0*Id
 
     if surface == 'z=h':
         root_h_scale = 1 if geometry.root_h else 2
-        Lp = -root_h_scale/geometry.radius * R @ B(-1)
-        Lm = -root_h_scale/geometry.radius * R @ B(+1)
+        scale = root_h_scale/geometry.radius
+        Lp = -scale * R @ B(-1)
+        Lm = -scale * R @ B(+1)
         if geometry.root_h:
-            Lzp1 = C(+1)
-            Lzm1 = C(-1)
+            if geometry.sphere:
+                Lp = scale * (C(-1) @ C(+1) - A(-1) @ A(+1) @ R) @ B(-1)
+                Lm = scale * (C(-1) @ C(+1) - A(-1) @ A(+1) @ R) @ B(+1)
+                Lzp1 = A(+1) @ C(+1)
+                Lzm1 = A(-1) @ C(-1)
+                dl, dn = 1, 1 + geometry.degree
+            else:
+                Lzp1 = C(+1)
+                Lzm1 = C(-1)
+                dl, dn = 1, 1 + R.codomain.dn
             zop = jacobi.operator('Z', dtype=internal)(Lmax, alpha, alpha)
-            dl, dn = 1, 1 + R.codomain.dn
         else:
             Lz = Id
             dl, dn = 0, 1 + R.codomain.dn
