@@ -481,7 +481,6 @@ def main():
         for fun in funs:
             fun(*args)
 
-    test(sc.Geometry(cylinder_type='full', h=h, root_h=True, sphere=True))
 
     geometries = [sc.Geometry(cylinder_type='full', h=h),
                   sc.Geometry(cylinder_type='half', h=h),
@@ -489,7 +488,8 @@ def main():
                   sc.Geometry(cylinder_type='half', h=h, radius=2.),
                   sc.Geometry(cylinder_type='full', h=h, root_h=True),
                   sc.Geometry(cylinder_type='full', h=h, root_h=True, radius=2.),
-                  sc.Geometry(cylinder_type='full', h=h, sphere=True)]
+                  sc.Geometry(cylinder_type='full', h=h, sphere=True),
+                  sc.Geometry(cylinder_type='full', h=h, root_h=True, sphere=True)]
 
     for geometry in geometries:
         print(f'Testing {geometry} stretched cylinder...')

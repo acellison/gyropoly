@@ -7,7 +7,7 @@ from . import decorators
 
 __all__ = ['Basis', 'total_num_coeffs', 'coeff_sizes', 'operators'
            'gradient', 'divergence', 'curl', 'scalar_laplacian', 'vector_laplacian',
-           'normal_component', 'convert', 'boundary', 'project',
+           'normal_component', 'convert', 'project', 'boundary',
            'resize', 'plotfield']
 
 
@@ -788,116 +788,6 @@ def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype
     return sparse.hstack(ops)
 
 
-def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', internal='float128'):
-    """
-    Construct the boundary evaluation operator acting on a scalar field or component of a vector field
-
-    Parameters
-    ----------
-    geometry : Geometry
-        Geometry object instance to describe the stretched cylindrical domain
-    m : int
-        Azimuthal wavenumber
-    Lmax : int
-        Maximum vertical degree of input basis
-    Nmax : int
-        Maximum radial degree of input basis
-    alpha : float > -1
-        Input basis hierarchy parameter.  Output basis has alpha->alpha+1
-    sigma : int, one of {-1, 0, +1}
-        Spin weight
-    surface : str, one of {'z=h', 'z=-h', 'z=0', 's=S'}
-        Surface for evaluation of the normal component of the vector field.
-        If cylinder_type is 'half', 'z=-h' is not valid since it is outside the domain.
-    dtype : data-type, optional
-        Desired data-type for the output
-    internal : data-type, optional
-        Internal data-type for compuatations
-
-    Returns
-    -------
-    Sparse matrix with boundary evaluation operator coefficients
-
-    """
-    zeros = lambda shape: sparse.lil_matrix(shape, dtype=internal)
-
-    # Get the number of radial coefficients for each vertical degree
-    lengths, offsets = coeff_sizes(geometry, Lmax, Nmax)
-    ncols = offsets[-1]
-
-    # Helper function to create the basis polynomials
-    def make_basis(eta=None, t=None, has_h_scaling=False):
-        return Basis(geometry, m, Lmax, Nmax, alpha, sigma, eta=eta, t=t, has_m_scaling=False, has_h_scaling=has_h_scaling, dtype=internal)
-
-    # Get the evaluation surface from the surface argument
-    if not isinstance(surface, str):
-        raise ValueError(f'Invalid surface (={surface})')
-
-    direction, location = surface.replace(' ', '').split('=')
-    if direction == 'z':
-        if (location, geometry.cylinder_type) == ('-h', 'half'):
-            raise ValueError('Half cylinder cannot be evaluated at z=-h')
-        coordinate_value = {'h': 1., '-h': -1., '0': {'full': 0., 'half': -1.}[geometry.cylinder_type]}[location]
-    elif direction == 's':
-        if location == 'S':
-            coordinate_value = 1.
-        else:
-            coordinate_value = 2*float(location/geometry.radius)**2 - 1
-    else:
-        raise ValueError(f'Invalid surface coordinate (={direction}')
-
-    if direction == 'z':
-        # Construct the basis, evaluating on the top or bottom boundary
-        basis = make_basis(eta=coordinate_value, has_h_scaling=True)
-        bc = basis.vertical_polynomials
-
-        # For each ell we eat the h(t)^{ell} height function by lowering the C parameter
-        # ell times.  The highest mode (ell = Lmax-1) is left with C parameter (Lmax-1 + 2*alpha +1).
-        # We then raise all C indices to match this highest mode.
-        ops = ajacobi.operators([geometry.h], dtype=internal, internal=internal)
-        C = ops('C')
-        radial_params = _radial_jacobi_parameters(geometry, m, alpha, sigma)
-
-        div = 2 if geometry.root_h else 1
-        make_op = lambda ell: bc[ell] * (C(+1)**((Lmax-1-ell)//div) @ C(-1)**(ell//div))(lengths[ell], *radial_params(ell))
-        even_only = (coordinate_value, geometry.cylinder_type) == (0., 'full')
-        ell_range = range(0, Lmax, 2 if even_only else 1)
-
-        # Construct the operator.
-        if geometry.root_h:
-            # Boundary evaluation splits into even and odd ell components.
-            # For this reason the 'z=-h' evaluation operator is linearly dependent
-            # with the 'z=h' evaluation operator.
-            Beven, Bodd = zeros((Nmax,ncols)), (None if even_only else zeros((Nmax,ncols)))
-            for ell in ell_range:
-                n, index, mat = lengths[ell], offsets[ell], [Beven, Bodd][ell % 2] 
-                op = make_op(ell)
-                mat[:np.shape(op)[0],index:index+n] = op
-            B = Beven if even_only else sparse.vstack([Beven,Bodd], format='lil')
-        else:
-            # If we are in full cylinder geometry evaluating at the middle
-            # then only the even ell polynomials contribute since the odd
-            # ones vanish at z = 0
-            B = zeros((Nmax,ncols))
-            for ell in ell_range:
-                n, index = lengths[ell], offsets[ell]
-                op = make_op(ell)
-                B[:np.shape(op)[0],index:index+n] = op
-
-    elif direction == 's':
-        # Construct the basis, evaluating on the side boundary
-        basis = make_basis(t=coordinate_value, has_h_scaling=False)
-        bc = basis.radial_polynomials
-
-        # Construct the operator
-        B = zeros((Lmax,ncols))
-        for ell in range(Lmax):
-            n, index = lengths[ell], offsets[ell]
-            B[ell,index:index+n] = bc[ell]
-
-    return B.astype(dtype)
-
-
 def convert(geometry, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exact=True, dtype='float64', internal='float128'):
     """
     Convert alpha to alpha + (ntimes if not adjoint else -1).
@@ -1022,6 +912,116 @@ def project(geometry, m, Lmax, Nmax, alpha, sigma, direction, shift=0, Lstop=0, 
     else:
         raise ValueError(f'Invalid direction ({direction})')
     return col
+
+
+def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', internal='float128'):
+    """
+    Construct the boundary evaluation operator acting on a scalar field or component of a vector field
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
+    m : int
+        Azimuthal wavenumber
+    Lmax : int
+        Maximum vertical degree of input basis
+    Nmax : int
+        Maximum radial degree of input basis
+    alpha : float > -1
+        Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    sigma : int, one of {-1, 0, +1}
+        Spin weight
+    surface : str, one of {'z=h', 'z=-h', 'z=0', 's=S'}
+        Surface for evaluation of the normal component of the vector field.
+        If cylinder_type is 'half', 'z=-h' is not valid since it is outside the domain.
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+
+    Returns
+    -------
+    Sparse matrix with boundary evaluation operator coefficients
+
+    """
+    zeros = lambda shape: sparse.lil_matrix(shape, dtype=internal)
+
+    # Get the number of radial coefficients for each vertical degree
+    lengths, offsets = coeff_sizes(geometry, Lmax, Nmax)
+    ncols = offsets[-1]
+
+    # Helper function to create the basis polynomials
+    def make_basis(eta=None, t=None, has_h_scaling=False):
+        return Basis(geometry, m, Lmax, Nmax, alpha, sigma, eta=eta, t=t, has_m_scaling=False, has_h_scaling=has_h_scaling, dtype=internal)
+
+    # Get the evaluation surface from the surface argument
+    if not isinstance(surface, str):
+        raise ValueError(f'Invalid surface (={surface})')
+
+    direction, location = surface.replace(' ', '').split('=')
+    if direction == 'z':
+        if (location, geometry.cylinder_type) == ('-h', 'half'):
+            raise ValueError('Half cylinder cannot be evaluated at z=-h')
+        coordinate_value = {'h': 1., '-h': -1., '0': {'full': 0., 'half': -1.}[geometry.cylinder_type]}[location]
+    elif direction == 's':
+        if location == 'S':
+            coordinate_value = 1.
+        else:
+            coordinate_value = 2*float(location/geometry.radius)**2 - 1
+    else:
+        raise ValueError(f'Invalid surface coordinate (={direction}')
+
+    if direction == 'z':
+        # Construct the basis, evaluating on the top or bottom boundary
+        basis = make_basis(eta=coordinate_value, has_h_scaling=True)
+        bc = basis.vertical_polynomials
+
+        # For each ell we eat the h(t)^{ell} height function by lowering the C parameter
+        # ell times.  The highest mode (ell = Lmax-1) is left with C parameter (Lmax-1 + 2*alpha +1).
+        # We then raise all C indices to match this highest mode.
+        ops = ajacobi.operators([geometry.h], dtype=internal, internal=internal)
+        C = ops('C')
+        radial_params = _radial_jacobi_parameters(geometry, m, alpha, sigma)
+
+        div = 2 if geometry.root_h else 1
+        make_op = lambda ell: bc[ell] * (C(+1)**((Lmax-1-ell)//div) @ C(-1)**(ell//div))(lengths[ell], *radial_params(ell))
+        even_only = (coordinate_value, geometry.cylinder_type) == (0., 'full')
+        ell_range = range(0, Lmax, 2 if even_only else 1)
+
+        # Construct the operator.
+        if geometry.root_h:
+            # Boundary evaluation splits into even and odd ell components.
+            # For this reason the 'z=-h' evaluation operator is linearly dependent
+            # with the 'z=h' evaluation operator.
+            Beven, Bodd = zeros((Nmax,ncols)), (None if even_only else zeros((Nmax,ncols)))
+            for ell in ell_range:
+                n, index, mat = lengths[ell], offsets[ell], [Beven, Bodd][ell % 2] 
+                op = make_op(ell)
+                mat[:np.shape(op)[0],index:index+n] = op
+            B = Beven if even_only else sparse.vstack([Beven,Bodd], format='lil')
+        else:
+            # If we are in full cylinder geometry evaluating at the middle
+            # then only the even ell polynomials contribute since the odd
+            # ones vanish at z = 0
+            B = zeros((Nmax,ncols))
+            for ell in ell_range:
+                n, index = lengths[ell], offsets[ell]
+                op = make_op(ell)
+                B[:np.shape(op)[0],index:index+n] = op
+
+    elif direction == 's':
+        # Construct the basis, evaluating on the side boundary
+        basis = make_basis(t=coordinate_value, has_h_scaling=False)
+        bc = basis.radial_polynomials
+
+        # Construct the operator
+        B = zeros((Lmax,ncols))
+        for ell in range(Lmax):
+            n, index = lengths[ell], offsets[ell]
+            B[ell,index:index+n] = bc[ell]
+
+    return B.astype(dtype)
 
 
 @decorators.cached
