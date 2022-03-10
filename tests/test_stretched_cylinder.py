@@ -348,15 +348,11 @@ def test_convert_adjoint(geometry, m, Lmax, Nmax, alpha, operators):
 
     check_close(f, g, 2e-14)
 
-    if geometry.sphere:
-        print('  Warning: skipping convert_adjoint boundary test for sphere geometry')
-        return
-
     # Boundary evaluation of the conversion adjoint is identically zero
     Bops = sc.operators(geometry, m=m, Lmax=Lmax+2, Nmax=Nmax+dn, alpha=alpha-1)
 
     B = Bops('boundary', sigma=0, surface=geometry.side)
-    check_close(B @ op, 0, 1e-15)
+    check_close(B @ op, 0, 1e-14)
 
     B = Bops('boundary', sigma=0, surface=geometry.top)
     check_close(B @ op, 0, 2e-14)
@@ -476,6 +472,7 @@ def main():
             test_boundary, test_project]
 
     def test(geometry):
+        print(f'Testing {geometry} stretched cylinder...')
         operators = sc.operators(geometry, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha)
         args = geometry, m, Lmax, Nmax, alpha, operators
         for fun in funs:
@@ -491,7 +488,6 @@ def main():
                   sc.Geometry(cylinder_type='full', h=h, root_h=True, sphere=True)]
 
     for geometry in geometries:
-        print(f'Testing {geometry} stretched cylinder...')
         test(geometry)
 
     print('ok')
