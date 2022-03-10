@@ -382,22 +382,27 @@ def test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom)
     op1 = operators('boundary', sigma=0, surface=geometry.top)
     op2 = operators('boundary', sigma=0, surface=bottom)
     op3 = operators('boundary', sigma=0, surface=geometry.side)
+    # FIXME: fix rank deficiencies for sphere geometry
     if geometry.root_h:
         if bottom == 'z=-h':
-            if Lmax%2 == 0:
+            if geometry.sphere:
+                op = sparse.vstack([op1,op3])
+            elif Lmax%2 == 0:
                 op = sparse.vstack([op1[:-1,:],op3[:-2,:],op3[-1,:]])
             else:
                 op = sparse.vstack([op1[:-1,:],op3[:-1,:]])
         else:
+            op3slice = op3 if geometry.sphere else op3[:-1,:]
             if Lmax%2 == 0:
-                op = sparse.vstack([op1[:Nmax-1,:],op1[Nmax:,:],op2[:-2,:],op3[:-1,:]])
+                op = sparse.vstack([op1[:Nmax-1,:],op1[Nmax:,:],op2[:-2,:],op3slice])
             else:
-                op = sparse.vstack([op1[:-1,:],op2[:-2,:],op3[:-1,:]])
+                op = sparse.vstack([op1[:-1,:],op2[:-2,:],op3slice])
     else:
+        op3slice = op3 if geometry.sphere else op3[:-1,:]
         if Lmax%2 == 0:
-            op = sparse.vstack([op1[:-1,:],op2[:-1,:],op3[:-1,:]])
+            op = sparse.vstack([op1[:-1,:],op2[:-1,:],op3slice])
         else:
-            op = sparse.vstack([op1[:-1,:],op2[:-1,:],op3[:-2,:],op3[-1,:]])
+            op = sparse.vstack([op1[:-1,:],op2[:-1,:],op3[:-2,:],op3slice])
 
     nullspace = sp.linalg.null_space(op.todense())
 

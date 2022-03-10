@@ -1020,11 +1020,7 @@ def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', in
         bc = basis.radial_polynomials
 
         # Construct the operator
-        if geometry.sphere:
-            # FIXME: I don't really understand this for root_h
-            nrows = 2 if geometry.root_h else 1
-        else:
-            nrows = Lmax
+        nrows = 1 if geometry.sphere else Lmax
         B = zeros((nrows,ncols))
         for ell in range(nrows):
             n, index = lengths[ell], offsets[ell]
