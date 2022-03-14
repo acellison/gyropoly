@@ -380,6 +380,8 @@ def create_boundary_combination(geometry, m, Lmax, Nmax, alpha, bottom):
     op3 = operators('boundary', sigma=0, surface=geometry.side)
 
     if geometry.sphere:
+        # In all cases we throw away op1[Nmax-1,:].  This equation is
+        # linearly dependent with equations from the odd ell set, op1[Nmax:,:].
         if bottom == 'z=-h':
             if geometry.root_h:
                 ops = [op1[:Nmax-1,:],op1[Nmax:,:],op3]
