@@ -370,6 +370,46 @@ def rank_deficiency(mat):
     return np.shape(mat)[0] - rank
 
 
+def create_boundary_combination(geometry, m, Lmax, Nmax, alpha, bottom):
+    if bottom not in ['z=0', 'z=-h']:
+        raise ValueError(f'Unknown bottom surface {bottom}')
+
+    operators = sc.operators(geometry, m, Lmax, Nmax, alpha)
+    op1 = operators('boundary', sigma=0, surface=geometry.top)
+    op2 = operators('boundary', sigma=0, surface=bottom)
+    op3 = operators('boundary', sigma=0, surface=geometry.side)
+
+    if geometry.sphere:
+        if bottom == 'z=-h':
+            if geometry.root_h:
+                ops = [op1[:Nmax-1,:],op1[Nmax:,:],op3]
+            else:
+                ops = [op1[:Nmax-1,:],op1[Nmax:-1,:],op3]
+        elif bottom == 'z=0':
+            if geometry.root_h:
+                ops = [op1[:Nmax-1,:],op1[Nmax:,:],op2[:-2,:],op3]
+            else:
+                ops = [op1[:Nmax-1,:],op1[Nmax:-1,:],op2[:-3,:],op3]
+    elif geometry.root_h:
+        if bottom == 'z=-h':
+            if Lmax%2 == 0:
+                ops = [op1[:-1,:],op3[:-2,:],op3[-1,:]]
+            else:
+                ops = [op1[:-1,:],op3[:-1,:]]
+        elif bottom == 'z=0':
+            if Lmax%2 == 0:
+                ops = [op1[:Nmax-1,:],op1[Nmax:,:],op2[:-2,:],op3[:-1,:]]
+            else:
+                ops = [op1[:-1,:],op2[:-2,:],op3[:-1,:]]
+    else:
+        if Lmax%2 == 0:
+            ops = [op1[:-1,:],op2[:-1,:],op3[:-1,:]]
+        else:
+            ops = [op1[:-1,:],op2[:-1,:],op3[:-2,:],op3[-1,:]]
+
+    return sparse.vstack(ops)
+
+
 def test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom):
     # The three boundary operators have linearly dependent rows.  There are three cases:
     # 1. Full Cylinder, evaluating at z=0
@@ -379,31 +419,7 @@ def test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom)
     #    -> b. Lmax odd  ? chuck last equation from top, bottom, second to last from side
     # 3. Half Cylinder
     #    -> Same as 2b.
-    op1 = operators('boundary', sigma=0, surface=geometry.top)
-    op2 = operators('boundary', sigma=0, surface=bottom)
-    op3 = operators('boundary', sigma=0, surface=geometry.side)
-    # FIXME: fix rank deficiencies for sphere geometry
-    if geometry.root_h:
-        if bottom == 'z=-h':
-            if geometry.sphere:
-                op = sparse.vstack([op1,op3])
-            elif Lmax%2 == 0:
-                op = sparse.vstack([op1[:-1,:],op3[:-2,:],op3[-1,:]])
-            else:
-                op = sparse.vstack([op1[:-1,:],op3[:-1,:]])
-        else:
-            op3slice = op3 if geometry.sphere else op3[:-1,:]
-            if Lmax%2 == 0:
-                op = sparse.vstack([op1[:Nmax-1,:],op1[Nmax:,:],op2[:-2,:],op3slice])
-            else:
-                op = sparse.vstack([op1[:-1,:],op2[:-2,:],op3slice])
-    else:
-        op3slice = op3 if geometry.sphere else op3[:-1,:]
-        if Lmax%2 == 0:
-            op = sparse.vstack([op1[:-1,:],op2[:-1,:],op3slice])
-        else:
-            op = sparse.vstack([op1[:-1,:],op2[:-1,:],op3[:-2,:],op3slice])
-
+    op = create_boundary_combination(geometry, m, Lmax, Nmax, alpha, bottom)
     nullspace = sp.linalg.null_space(op.todense())
 
     # Create the evaluation basis
@@ -414,14 +430,12 @@ def test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom)
     boundary_rows, num_coeffs = np.shape(op)
     dim = np.shape(nullspace)[1]
     boundary_deficiency = dim - (num_coeffs-boundary_rows)
-    if geometry.degree == 1 and not geometry.sphere:
+    if geometry.degree == 1:
         check_close(rank_deficiency(op), 0, 0)
         check_close(boundary_deficiency, 0, 0)
     else:
         if geometry.degree > 1:
             print('  Warning: skipping boundary_combination deficiency test for h polynomial with degree > 1')
-        if geometry.sphere:
-            print('  Warning: skipping boundary_combination deficiency test for sphere geometry')
 
     errors = np.zeros((dim,3))
     bottom_index = len(eta)//2 if bottom == 'z=0' and geometry.cylinder_type == 'full' else 0
