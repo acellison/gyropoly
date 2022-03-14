@@ -1,6 +1,8 @@
+import os
 from functools import partial
 import numpy as np
 import scipy.sparse as sparse
+from pathos.multiprocessing import ProcessingPool as Pool
 from dedalus_sphere import jacobi
 from . import augmented_jacobi as ajacobi
 from . import decorators
@@ -402,6 +404,14 @@ def _radial_jacobi_parameters(geometry, m, alpha, sigma, ell=None):
     return fn(ell) if ell is not None else fn
 
 
+def _make_operator_impl(args):
+    ell, dell, Nin_sizes, Nout_sizes, radial_params, zop, sop = args
+    ellin, ellout = ell+dell, ell
+    Nin, Nout = Nin_sizes[ellin], Nout_sizes[ellout]
+    smat = sop(Nin, *radial_params)[:Nout,:]
+    return sparse.csr_matrix(zop[ellin-max(dell,0)] * smat)
+
+
 def _make_operator(geometry, dell, zop, sop, m, Lmax, Nmax, alpha, sigma, Lpad=0, Npad=0):
     """Kronecker the operator in the eta and s directions"""
     Nin_sizes,  Nin_offsets  = coeff_sizes(geometry, Lmax,      Nmax)
@@ -414,15 +424,18 @@ def _make_operator(geometry, dell, zop, sop, m, Lmax, Nmax, alpha, sigma, Lpad=0
     else:
         ellmin = 0
         ellmax = Lmax - dell
+    ell_range = range(ellmin, ellmax)
 
     radial_params = _radial_jacobi_parameters(geometry, m, alpha=alpha, sigma=sigma)
+    args = [(ell, dell, Nin_sizes, Nout_sizes, radial_params(ell+dell), zop, sop) for ell in ell_range]
 
-    for i in range(ellmin, ellmax):
-        ellin, ellout = i+dell, i
+    pool = Pool(os.cpu_count()-1)
+    mats = pool.map(_make_operator_impl, args)
+
+    for i,ell in enumerate(ell_range):
+        ellin, ellout = ell+dell, ell
         Nin, Nout = Nin_sizes[ellin], Nout_sizes[ellout]
-        smat = sop(Nin, *radial_params(ellin))[:Nout,:]
-        mat = sparse.csr_matrix(zop[ellin-max(dell,0)] * smat)
-
+        mat = mats[i]
         matrows, matcols = mat.nonzero()
         oprows += (Nout_offsets[ellout] + matrows).tolist()
         opcols += (Nin_offsets[ellin] + matcols).tolist()

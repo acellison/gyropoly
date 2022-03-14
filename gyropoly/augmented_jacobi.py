@@ -172,7 +172,6 @@ class PolynomialProduct():
         c = self.powers if weighted else np.ones(len(self), int)
         return sum(c[i] * self.degree(i) for i in range(len(self)))
 
-
 def _make_poly_config(coeffs):
     # coeffs are monomial-basis list of coefficients
     if not isinstance(coeffs, (tuple,list,np.ndarray)):
@@ -193,9 +192,8 @@ def _make_poly_config(coeffs):
     even = degree % 2 == 0 and np.all(coeffs[1::2] == 0)
 
     # function and derivative evaluation
-    function = lambda z: np.polyval(coeffs, z)
-    dcoeffs = np.polyder(coeffs)
-    derivative = lambda z: np.polyval(dcoeffs, z)
+    function = partial(np.polyval, coeffs)
+    derivative = partial(np.polyval, np.polyder(coeffs))
     return {'function': function, 'derivative': derivative, 'coeffs': coeffs, 'degree': degree, 'even': even}
 
 
@@ -1056,9 +1054,9 @@ class AugmentedJacobiOperator():
             name, index = name
             if name != 'C':
                 raise ValueError("Invalid two-argument kind - must be ('C', index)")
-            self.__function = self.__Ci(index)
+            self.__function = self._C(self, index)
         else:
-            self.__function = getattr(self,f'_AugmentedJacobiOperator__{name}')
+            self.__function = getattr(self,f'_{name}')
         self.__factors = factors
         self.__weight = PolynomialProduct(factors)
         self.__unweighted_degree = self.weight.total_degree(weighted=False)
@@ -1085,109 +1083,139 @@ class AugmentedJacobiOperator():
     def internal(self):
         return self.__internal
 
+    @property
+    def recurrence_kwargs(self):
+        return self.__recurrence_kwargs
+
+    class _Identity():
+        def __init__(self, dtype):
+            self.dtype = dtype
+
+        def __call__(self,n,a,b,c):
+            N = np.ones(n,dtype=self.dtype)
+            return infinite_csr(banded((N,[0]),(max(n,0),max(n,0))))
+
     @staticmethod
     def identity(factors, dtype='float64'):
-        def I(n,a,b,c):
-            N = np.ones(n,dtype=dtype)
-            return infinite_csr(banded((N,[0]),(max(n,0),max(n,0))))
         nc = len(factors)
-        return Operator(factors,I,AugmentedJacobiCodomain(0,0,0,(0,)*nc))
+        return Operator(factors,AugmentedJacobiOperator._Identity(dtype),AugmentedJacobiCodomain(0,0,0,(0,)*nc))
+
+    class _Number():
+        def __init__(self, dtype):
+            self.dtype = dtype
+
+        def __call__(self,n,a,b,c):
+            return infinite_csr(banded((np.arange(n,dtype=self.dtype),[0]),(max(n,0),max(n,0))))
 
     @staticmethod
     def number(factors, dtype='float64'):
-        def N(n,a,b,c):
-            return infinite_csr(banded((np.arange(n,dtype=dtype),[0]),(max(n,0),max(n,0))))
         nc = len(factors)
-        return Operator(factors,N,AugmentedJacobiCodomain(0,0,0,(0,)*nc))
+        return Operator(factors,AugmentedJacobiOperator._Number(dtype),AugmentedJacobiCodomain(0,0,0,(0,)*nc))
+
+    class _Recurrence():
+        def __init__(self, factors, dtype, internal, **kwargs):
+            self.factors, self.dtype, self.internal, self.kwargs = factors, dtype, internal, kwargs
+
+        @decorators.cached
+        def __call__(self,n,a,b,c):
+            system = AugmentedJacobiSystem(a, b, zip(self.factors,c))
+            op = system.recurrence(n, dtype=self.dtype, internal=self.internal, **self.kwargs)
+            return infinite_csr(op)
 
     @staticmethod
     def recurrence(factors, dtype='float64', internal='float128', **recurrence_kwargs):
-        @decorators.cached
-        def Z(n,a,b,c):
-            system = AugmentedJacobiSystem(a, b, zip(factors,c))
-            op = system.recurrence(n, dtype=dtype, internal=internal, **recurrence_kwargs)
-            return infinite_csr(op)
         nc = len(factors)
-        return Operator(factors,Z,AugmentedJacobiCodomain(1,0,0,(0,)*nc))
+        return Operator(factors,AugmentedJacobiOperator._Recurrence(factors,dtype,internal,**recurrence_kwargs),AugmentedJacobiCodomain(1,0,0,(0,)*nc))
+
+    class _Rhoprime():
+        def __init__(self, factors, weighted, dtype, internal, **kwargs):
+            self.factors, self.weighted, self.dtype, self.internal, self.kwargs = factors, weighted, dtype, internal, kwargs
+
+        @decorators.cached
+        def __call__(n,a,b,c):
+            system = AugmentedJacobiSystem(a, b, zip(self.factors,c))
+            op = rhoprime_multiplication(system, n, weighted=self.weighted, dtype=self.dtype, internal=self.internal, **self.kwargs)
+            return infinite_csr(op)
 
     @staticmethod
     def rhoprime(factors, weighted=True, dtype='float64', internal='float128', **recurrence_kwargs):
-        @decorators.cached
-        def R(n,a,b,c):
-            system = AugmentedJacobiSystem(a, b, zip(factors,c))
-            op = rhoprime_multiplication(system, n, weighted=weighted, dtype=dtype, internal=internal, **recurrence_kwargs)
-            return infinite_csr(op)
         nc = len(factors)
         dn = PolynomialProduct(factors).total_degree(weighted=False)-1
-        return Operator(factors,R,AugmentedJacobiCodomain(dn,0,0,(0,)*nc))
+        return Operator(factors,AugmentedJacobiOperator._Rhoprime(factors,weighted,dtype,internal,**recurrence_kwargs),AugmentedJacobiCodomain(dn,0,0,(0,)*nc))
 
     def __call__(self,p):
         return Operator(self.factors,*self.__function(p))
 
-    def __A(self,p):
-        op = partial(self.__dispatch, 'A', p)
+    def _A(self,p):
+        op = partial(AugmentedJacobiOperator._Dispatch(self), 'A', p)
         dn = 1 if p == -1 else 0
         nc = len(self.weight)
         return op, AugmentedJacobiCodomain(dn,p,0,(0,)*nc)
 
-    def __B(self,p):
-        op = partial(self.__dispatch, 'B', p)
+    def _B(self,p):
+        op = partial(AugmentedJacobiOperator._Dispatch(self), 'B', p)
         dn = 1 if p == -1 else 0
         nc = len(self.weight)
         return op, AugmentedJacobiCodomain(dn,0,p,(0,)*nc)
 
-    def __Ci(self,i):
-        def __C(p):
-            op = partial(self.__dispatch, ('C',i), p)
-            dn = self.weight.degree(i) if p == -1 else 0
-            nc = len(self.weight)
-            dc = np.zeros(nc, dtype=int)
-            dc[i] = p
-            return op, AugmentedJacobiCodomain(dn,0,0,dc)
-        return __C
+    class _C():
+        def __init__(self, op, i):
+            self.op, self.i = op, i
 
-    def __D(self,p):
-        op = partial(self.__dispatch, 'D', p)
+        def __call__(self, p):
+            op = partial(AugmentedJacobiOperator._Dispatch(self.op), ('C',self.i), p)
+            dn = self.op.weight.degree(self.i) if p == -1 else 0
+            nc = len(self.op.weight)
+            dc = np.zeros(nc, dtype=int)
+            dc[self.i] = p
+            return op, AugmentedJacobiCodomain(dn,0,0,dc)
+
+    def _D(self,p):
+        op = partial(AugmentedJacobiOperator._Dispatch(self), 'D', p)
         dn = 1+self.unweighted_degree if p == -1 else -1
         nc = len(self.weight)
         return op, AugmentedJacobiCodomain(dn,p,p,(p,)*nc)
 
-    def __E(self,p):
-        op = partial(self.__dispatch, 'E', p)
+    def _E(self,p):
+        op = partial(AugmentedJacobiOperator._Dispatch(self), 'E', p)
         dn = self.unweighted_degree if p == -1 else 0
         nc = len(self.weight)
         return op, AugmentedJacobiCodomain(dn,-p,p,(p,)*nc)
 
-    def __F(self,p):
-        op = partial(self.__dispatch, 'F', p)
+    def _F(self,p):
+        op = partial(AugmentedJacobiOperator._Dispatch(self), 'F', p)
         dn = self.unweighted_degree if p == -1 else 0
         nc = len(self.weight)
         return op, AugmentedJacobiCodomain(dn,p,-p,(p,)*nc)
 
-    def __G(self,p):
-        op = partial(self.__dispatch, 'G', p)
+    def _G(self,p):
+        op = partial(AugmentedJacobiOperator._Dispatch(self), 'G', p)
         dn = self.unweighted_degree-1 if p == -1 else 1
         nc = len(self.weight)
         return op, AugmentedJacobiCodomain(dn,-p,-p,(p,)*nc)
 
-    @decorators.cached
-    def __dispatch(self,kind,p,n,a,b,c):
-        if isinstance(kind, tuple):
-            if kind[0] == 'C':
-                c_embed = True
+    class _Dispatch():
+        def __init__(self, op):
+            self.op = op
+
+        @decorators.cached
+        def __call__(self,kind,p,n,a,b,c):
+            if isinstance(kind, tuple):
+                if kind[0] == 'C':
+                    c_embed = True
+                else:
+                    raise ValueError("Invalid two-argument kind - must be ('C', index)")
             else:
-                raise ValueError("Invalid two-argument kind - must be ('C', index)")
-        else:
-            c_embed = False
-        if kind in ['A','B'] or c_embed:
-            fun = {+1: embedding_operator, -1: embedding_operator_adjoint}[p]
-        elif kind in ['D','E','F','G']:
-            fun = {+1: differential_operator, -1: differential_operator_adjoint}[p]
-        else:
-            raise ValueError(f'Unknown operator kind: {kind}')
-        system = AugmentedJacobiSystem(a, b, zip(self.factors,c))
-        op = fun(kind, system, n, dtype=self.dtype, internal=self.internal, **self.__recurrence_kwargs)
-        return infinite_csr(op)
+                c_embed = False
+            if kind in ['A','B'] or c_embed:
+                fun = {+1: embedding_operator, -1: embedding_operator_adjoint}[p]
+            elif kind in ['D','E','F','G']:
+                fun = {+1: differential_operator, -1: differential_operator_adjoint}[p]
+            else:
+                raise ValueError(f'Unknown operator kind: {kind}')
+            system = AugmentedJacobiSystem(a, b, zip(self.op.factors,c))
+            op = fun(kind, system, n, dtype=self.op.dtype, internal=self.op.internal, **self.op.recurrence_kwargs)
+            return infinite_csr(op)
 
 
 class AugmentedJacobiCodomain(de_operators.Codomain):
