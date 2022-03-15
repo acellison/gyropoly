@@ -1132,7 +1132,7 @@ class AugmentedJacobiOperator():
             self.factors, self.weighted, self.dtype, self.internal, self.kwargs = factors, weighted, dtype, internal, kwargs
 
         @decorators.cached
-        def __call__(n,a,b,c):
+        def __call__(self,n,a,b,c):
             system = AugmentedJacobiSystem(a, b, zip(self.factors,c))
             op = rhoprime_multiplication(system, n, weighted=self.weighted, dtype=self.dtype, internal=self.internal, **self.kwargs)
             return infinite_csr(op)
