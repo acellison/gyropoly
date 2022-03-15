@@ -429,7 +429,7 @@ def _make_operator(geometry, dell, zop, sop, m, Lmax, Nmax, alpha, sigma, Lpad=0
     radial_params = _radial_jacobi_parameters(geometry, m, alpha=alpha, sigma=sigma)
     args = [(ell, dell, Nin_sizes, Nout_sizes, radial_params(ell+dell), zop, sop) for ell in ell_range]
 
-    pool = Pool(os.cpu_count()-1)
+    pool = Pool(os.cpu_count()//2)
     mats = pool.map(_make_operator_impl, args)
 
     for i,ell in enumerate(ell_range):

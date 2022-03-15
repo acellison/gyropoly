@@ -143,7 +143,10 @@ def test_divergence(geometry, m, Lmax, Nmax, alpha, operators):
 
 
 def test_curl(geometry, m, Lmax, Nmax, alpha, operators):
-    pass
+    # Make sure the divergence of the curl is zero
+    C = operators('curl')
+    D = operators('divergence', alpha=alpha+1)
+    check_close(D @ C, 0, 3e-13)
 
 
 def test_scalar_laplacian(geometry, m, Lmax, Nmax, alpha, operators):
