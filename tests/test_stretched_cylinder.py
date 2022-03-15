@@ -91,10 +91,10 @@ def test_gradient(geometry, m, Lmax, Nmax, alpha, operators):
         f, g = [a[ez:-ez,sz:-sz] for a in [field, grid]]
         check_close(f, g, tol)
 
-    root_h_scale = 1.7 if geometry.root_h else 1
+    root_h_scale = 2.1 if geometry.root_h else 1
     check(u, ugrid, 1.7e-2 * root_h_scale)
     check(w, wgrid, 1.4e-3)
-    check_close(v, vgrid, 1e-11)
+    check_close(v, vgrid, 2e-11)
 
 
 def test_divergence(geometry, m, Lmax, Nmax, alpha, operators):
@@ -147,6 +147,55 @@ def test_curl(geometry, m, Lmax, Nmax, alpha, operators):
     C = operators('curl')
     D = operators('divergence', alpha=alpha+1)
     check_close(D @ C, 0, 3e-13)
+
+    # Apply the operator in coefficient space
+    op = operators('curl')
+    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
+    c = 2*np.random.rand(3*ncoeff) - 1
+    d = op @ c
+
+    # Build the bases
+    ns, neta = 4000, 401
+    t = np.linspace(-1,1,ns+2)[1:-1]
+    eta = np.linspace(-1,1,neta)
+    vector_basis_1 = create_vector_basis(geometry, m, Lmax, Nmax, alpha,   t, eta)
+    vector_basis_2 = create_vector_basis(geometry, m, Lmax, Nmax, alpha+1, t, eta)
+    s = geometry.s(t)
+
+    def expand(basis, coeffs):
+        Up, Um, W = [coeffs[i*ncoeff:(i+1)*ncoeff] for i in range(3)]
+        up, um, w = [basis[key].expand(coeffs) for key,coeffs in [('up', Up), ('um', Um), ('w', W)]]
+        u =   1/np.sqrt(2) * (up + um)
+        v = -1j/np.sqrt(2) * (up - um)
+        return u, v, w
+
+    # Expand the vector field and compute its divergence with finite differences
+    u, v, w = expand(vector_basis_1, c)
+
+    h = np.polyval(geometry.h, t)
+    dhdt = np.polyval(np.polyder(geometry.h), t)
+
+    ds = lambda f: dS(geometry, f, t, eta, h, dhdt)
+    dz = lambda f: dZ(geometry, f, t, eta, h)
+    dphi = lambda f: dPhi(f, m)
+
+    cugrid = 1/s * dphi(w) - dz(v)
+    cvgrid = dz(u) - ds(w)
+    cwgrid = 1/s * ds(s[np.newaxis,:] * v) - 1/s * dphi(u)
+
+    # Expand the result of the operator in grid space
+    cu, cv, cw = expand(vector_basis_2, d)
+
+    # Compute Errors
+    def check(field, grid, tol):
+        sz, ez = ns//20, neta//10
+        f, g = [a[ez:-ez,sz:-sz] for a in [field, grid]]
+        check_close(f, g, tol)
+
+    scale = 2.5 if geometry.sphere and geometry.root_h else 1.5 if geometry.root_h else 1
+    check(cu, cugrid, 2.5e-2)
+    check(cv, cvgrid, 2.5e-2 * scale)
+    check(cw, cwgrid, 2.5e-2 * scale)
 
 
 def test_scalar_laplacian(geometry, m, Lmax, Nmax, alpha, operators):
@@ -326,8 +375,8 @@ def test_convert(geometry, m, Lmax, Nmax, alpha, operators):
     g1 = basis1.expand(d1)
     g2 = basis2.expand(d2)
 
-    check_close(f, g1, 1.6e-13)
-    check_close(f, g2, 1.4e-12)
+    check_close(f, g1, 1.8e-13)
+    check_close(f, g2, 1.8e-12)
 
 
 def test_convert_adjoint(geometry, m, Lmax, Nmax, alpha, operators):
