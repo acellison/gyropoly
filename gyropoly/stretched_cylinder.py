@@ -3,10 +3,12 @@ from functools import partial
 import numpy as np
 import scipy.sparse as sparse
 import matplotlib.pyplot as plt
-from pathos.multiprocessing import ProcessingPool as Pool
 from dedalus_sphere import jacobi
 from . import augmented_jacobi as ajacobi
-from . import decorators
+from . import decorators, config
+
+if config.parallel:
+    from pathos.multiprocessing import ProcessingPool as Pool
 
 __all__ = ['Basis', 'total_num_coeffs', 'coeff_sizes', 'operators'
            'gradient', 'divergence', 'curl', 'scalar_laplacian', 'vector_laplacian',
@@ -163,14 +165,23 @@ class Basis():
         If False, remove the h(t)**l factor from basis function evaluation
     dtype : str, optional
         Data type for evaluation of the basis functions
+    recurrence_kwargs : dict or list of (key,value) pairs, optional
+        Keyword arguments to pass to the recurrence computation subroutine.
+        Supported keys:
+            'use_jacobi_quadrature': bool, default False
+            'algorithm': 'stieltjes' or 'chebyshev', default 'chebyshev'
+            'verbose': bool, default False
+            'tol': float, default 1e-14
+            'nquad_ratio': float, default 1.25
 
     """
-    def __init__(self, geometry, m, Lmax, Nmax, alpha, sigma=0, eta=None, t=None, has_m_scaling=True, has_h_scaling=True, dtype='float64'):
+    def __init__(self, geometry, m, Lmax, Nmax, alpha, sigma=0, eta=None, t=None, has_m_scaling=True, has_h_scaling=True, dtype='float64', recurrence_kwargs=None):
         _check_radial_degree(geometry, Lmax, Nmax)
         self.__geometry = geometry
         self.__m, self.__Lmax, self.__Nmax = m, Lmax, Nmax
         self.__alpha, self.__sigma = alpha, sigma
         self.__dtype = dtype
+        self.__recurrence_kwargs = _form_kwargs(recurrence_kwargs)
 
         # Get the number of coefficients including truncation
         self.__num_coeffs = total_num_coeffs(geometry, Lmax, Nmax)
@@ -213,6 +224,10 @@ class Basis():
     @property
     def dtype(self):
         return self.__dtype
+
+    @property
+    def recurrence_kwargs(self):
+        return self.__recurrence_kwargs
 
     @property
     def num_coeffs(self):
@@ -325,8 +340,8 @@ class Basis():
                 prefactor = (1+t)**(self.sigma/2)
             ht = self._make_height(t)
             systems = self.__systems
-            polys = lambda ell: systems[ell].polynomials(_radial_size(self.geometry, self.Nmax, ell), t, dtype=self.dtype)
-            self.__Q = [prefactor * ht**ell * polys(ell) for ell,system in enumerate(systems)]
+            polys = lambda ell: systems[ell].polynomials(_radial_size(self.geometry, self.Nmax, ell), t, dtype=self.dtype, **self.recurrence_kwargs)
+            self.__Q = [prefactor * ht**ell * polys(ell) for ell in range(Lmax)]
 
     def _make_height(self, t):
         if self.has_h_scaling:
@@ -453,8 +468,11 @@ def _make_operator(geometry, dell, zop, sop, m, Lmax, Nmax, alpha, sigma, Lpad=0
     radial_params = _radial_jacobi_parameters(geometry, m, alpha=alpha, sigma=sigma)
     args = [(ell, dell, Nin_sizes, Nout_sizes, radial_params(ell+dell), zop, sop) for ell in ell_range]
 
-    pool = Pool(os.cpu_count()//2)
-    mats = pool.map(_make_operator_impl, args)
+    if config.parallel:
+        pool = Pool(os.cpu_count()//2)
+        mats = pool.map(_make_operator_impl, args)
+    else:
+        mats = [_make_operator_impl(a) for a in args]
 
     for i,ell in enumerate(ell_range):
         ellin, ellout = ell+dell, ell
@@ -471,8 +489,22 @@ def _make_operator(geometry, dell, zop, sop, m, Lmax, Nmax, alpha, sigma, Lpad=0
     return sparse.csr_matrix((opdata, (oprows, opcols)), shape=shape)
 
 
+def _form_kwargs(kwargs):
+    if kwargs is None:
+        kwargs = {}
+    elif isinstance(kwargs, (list,tuple)):
+        kwargs = dict(kwargs)
+    elif not isinstance(kwargs, dict):
+        raise ValueError('kwargs must be either None, a list of (key,value) pairs, or a dict')
+    return kwargs
+
+
+def _ajacobi_operators(geometry, dtype, recurrence_kwargs):
+    return ajacobi.operators([geometry.h], dtype=dtype, internal=dtype, **_form_kwargs(recurrence_kwargs))
+
+
 @decorators.cached
-def _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal='float128'):
+def _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Construct a raising, lowering or neutral differential operator
 
@@ -512,7 +544,7 @@ def _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma, dtype='
         raise ValueError('Cannot lower sigma = -1')
 
     # Construct the fundamental Augmented Jacobi operators
-    ops = ajacobi.operators([geometry.h], dtype=internal, internal=internal)
+    ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
     Id, A, B, C = [ops(kind) for kind in ['Id', 'A', 'B', 'C']]
     R = ops('rhoprime', weighted=False)
     Dz, Da, Db, Dc = [ops(kind) for kind in ['D', 'E', 'F', 'G']]
@@ -563,7 +595,7 @@ def _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma, dtype='
     return scale*sum(ops).astype(dtype)
 
 
-def gradient(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+def gradient(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Construct the gradient operator acting on a scalar field
 
@@ -589,11 +621,11 @@ def gradient(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128
     Sparse matrix with gradient operator coefficients
 
     """
-    make_dop = lambda delta: _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma=0, dtype=dtype, internal=internal)
+    make_dop = lambda delta: _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma=0, dtype=dtype, internal=internal, recurrence_kwargs=recurrence_kwargs)
     return sparse.vstack([make_dop(delta) for delta in [+1,-1,0]])
 
 
-def divergence(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+def divergence(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Construct the divergence operator acting on a vector field
 
@@ -619,11 +651,11 @@ def divergence(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float1
     Sparse matrix with divergence operator coefficients
 
     """
-    make_dop = lambda sigma: _differential_operator(geometry, -sigma, m, Lmax, Nmax, alpha, sigma=sigma, dtype=dtype, internal=internal)
+    make_dop = lambda sigma: _differential_operator(geometry, -sigma, m, Lmax, Nmax, alpha, sigma=sigma, dtype=dtype, internal=internal, recurrence_kwargs=recurrence_kwargs)
     return sparse.hstack([make_dop(sigma) for sigma in [+1,-1,0]])
 
 
-def curl(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+def curl(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Construct the curl operator acting on a vector field
 
@@ -652,7 +684,7 @@ def curl(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
     ncoeff = total_num_coeffs(geometry, Lmax, Nmax)
     Z = sparse.lil_matrix((ncoeff,ncoeff))
 
-    make_dop = lambda sigma, delta: _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma=sigma, dtype=dtype, internal=internal)
+    make_dop = lambda sigma, delta: _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma=sigma, dtype=dtype, internal=internal, recurrence_kwargs=recurrence_kwargs)
     Cp =  make_dop(+1, 0),                   -make_dop(0, +1)
     Cm =                   -make_dop(-1, 0),  make_dop(0, -1)
     Cz = -make_dop(+1,-1),  make_dop(-1,+1)
@@ -661,7 +693,7 @@ def curl(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
                              [Cz[0], Cz[1], Z]])
 
 
-def scalar_laplacian(geoemtry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+def scalar_laplacian(geoemtry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Construct the Laplacian operator acting on a scalar field
 
@@ -687,12 +719,12 @@ def scalar_laplacian(geoemtry, m, Lmax, Nmax, alpha, dtype='float64', internal='
     Sparse matrix with Laplacian operator coefficients
 
     """
-    G =   gradient(geometry, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
-    D = divergence(geometry, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal)
+    G =   gradient(geometry, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    D = divergence(geometry, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
     return (D @ G).astype(dtype)
 
 
-def vector_laplacian(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128'):
+def vector_laplacian(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Construct the Laplacian operator acting on a vector field
 
@@ -718,14 +750,14 @@ def vector_laplacian(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='
     Sparse matrix with Laplacian operator coefficients
 
     """
-    D = divergence(geometry, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
-    G =   gradient(geometry, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal)
-    C1 =      curl(geometry, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
-    C2 =      curl(geometry, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal)
+    D = divergence(geometry, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    G =   gradient(geometry, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    C1 =      curl(geometry, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    C2 =      curl(geometry, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
     return (G @ D - (C2 @ C1).real).astype(dtype)
     
 
-def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype='float64', internal='float128'):
+def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Construct the normal dot operator acting on a vector field.  For the basis functions to behave
     properly this multiplies by the non-normalized normal component at the specified surface.
@@ -769,7 +801,7 @@ def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype
     Sparse matrix with normal dot operator coefficients
 
     """
-    ops = ajacobi.operators([geometry.h], dtype=internal, internal=internal)
+    ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
     A, B, C, R, Id = ops('A'), ops('B'), ops('C'), ops('rhoprime', weighted=False), ops('Id')
     Zero = 0*Id
 
@@ -797,7 +829,7 @@ def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype
         if geometry.cylinder_type != 'full':
                 raise ValueError('Half cylinder cannot be evaluated at z=-h')
         # If we're at the bottom flip the sign of the z component compared to the top
-        N = normal_component(geometry, m, Lmax, Nmax, alpha, surface='z=h', exact=exact, dtype=dtype, internal=internal).tocsr()
+        N = normal_component(geometry, m, Lmax, Nmax, alpha, surface='z=h', exact=exact, dtype=dtype, internal=internal, recurrence_kwargs=recurrence_kwargs).tocsr()
         n = total_num_coeffs(geometry, Lmax, Nmax)
         N[:,2*n:3*n] = -N[:,2*n:3*n]
         return N
@@ -825,7 +857,7 @@ def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype
     return sparse.hstack(ops)
 
 
-def convert(geometry, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exact=True, dtype='float64', internal='float128'):
+def convert(geometry, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exact=True, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Convert alpha to alpha + (ntimes if not adjoint else -1).
     The adjoint operator lowers alpha by multiplying the field in grid space by
@@ -868,7 +900,7 @@ def convert(geometry, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exac
     if ntimes > 1 and adjoint:
         raise ValueError('Lowering alpha more than once not supported')
 
-    ops = ajacobi.operators([geometry.h], dtype=internal, internal=internal)
+    ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
     A, C = ops('A'), ops('C')
     cpower = 1 if geometry.root_h else 2
     if adjoint:
@@ -889,7 +921,7 @@ def convert(geometry, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exac
     op = (make_op(0, L0) + make_op(2*p, L2))
 
     if ntimes > 1:
-        C = convert(geometry, m, Lmax, Nmax, alpha+1, sigma, ntimes=ntimes-1, adjoint=False, exact=exact, dtype=internal, internal=internal)
+        C = convert(geometry, m, Lmax, Nmax, alpha+1, sigma, ntimes=ntimes-1, adjoint=False, exact=exact, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
         op = C @ op
 
     op = op.astype(dtype)
@@ -900,7 +932,7 @@ def convert(geometry, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exac
     return op
 
 
-def project(geometry, m, Lmax, Nmax, alpha, sigma, direction, shift=0, Lstop=0, dtype='float64', internal='float128'):
+def project(geometry, m, Lmax, Nmax, alpha, sigma, direction, shift=0, Lstop=0, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Project modes with parameter alpha onto highest modes with parameter alpha+1.
     This is used to implement tau corrections equations when enforcing boundary conditions.
@@ -936,7 +968,7 @@ def project(geometry, m, Lmax, Nmax, alpha, sigma, direction, shift=0, Lstop=0, 
     Sparse matrix with projection operator coefficients
 
     """
-    C = convert(geometry, m, Lmax, Nmax, alpha, sigma, dtype=dtype, internal=internal)
+    C = convert(geometry, m, Lmax, Nmax, alpha, sigma, dtype=dtype, internal=internal, recurrence_kwargs=recurrence_kwargs)
     _, offsets = coeff_sizes(geometry, Lmax, Nmax)
     if direction == 'z':
         # Size Nmax-(Lmax-1-shift), projecting onto all radial coefficients of fixed vertical degree
@@ -951,7 +983,7 @@ def project(geometry, m, Lmax, Nmax, alpha, sigma, direction, shift=0, Lstop=0, 
     return col
 
 
-def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', internal='float128'):
+def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Construct the boundary evaluation operator acting on a scalar field or component of a vector field
 
@@ -990,7 +1022,7 @@ def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', in
 
     # Helper function to create the basis polynomials
     def make_basis(eta=None, t=None, has_h_scaling=False):
-        return Basis(geometry, m, Lmax, Nmax, alpha, sigma, eta=eta, t=t, has_m_scaling=False, has_h_scaling=has_h_scaling, dtype=internal)
+        return Basis(geometry, m, Lmax, Nmax, alpha, sigma, eta=eta, t=t, has_m_scaling=False, has_h_scaling=has_h_scaling, dtype=internal, recurrence_kwargs=recurrence_kwargs)
 
     # Get the evaluation surface from the surface argument
     if not isinstance(surface, str):
@@ -1017,7 +1049,7 @@ def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', in
         # For each ell we eat the h(t)^{ell} height function by lowering the C parameter
         # ell times.  The highest mode (ell = Lmax-1) is left with C parameter (Lmax-1 + 2*alpha +1).
         # We then raise all C indices to match this highest mode.
-        ops = ajacobi.operators([geometry.h], dtype=internal, internal=internal)
+        ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
         C = ops('C')
         radial_params = _radial_jacobi_parameters(geometry, m, alpha, sigma)
 
@@ -1067,17 +1099,17 @@ def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', in
 
 
 @decorators.cached
-def _operator(name, geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', **kwargs):
+def _operator(name, geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', recurrence_kwargs=None, **kwargs):
     """Operator dispatch function with caching of results"""
     valid_names = ['gradient', 'divergence', 'curl', 'scalar_laplacian', 'vector_laplacian',
                    'normal_component', 'boundary', 'convert', 'project']
     if name not in valid_names:
         raise ValueError(f'Invalid operator name {name}')
     function = eval(name)
-    return function(geometry, m, Lmax, Nmax, alpha, dtype=dtype, internal=internal, **kwargs)
+    return function(geometry, m, Lmax, Nmax, alpha, dtype=dtype, internal=internal, recurrence_kwargs=recurrence_kwargs, **kwargs)
     
 
-def operators(geometry, m=None, Lmax=None, Nmax=None, alpha=None, dtype='float64', internal='float128'):
+def operators(geometry, m=None, Lmax=None, Nmax=None, alpha=None, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Bind common arguments to an operator dispatcher so that they can be specified once instead
     of each time we construct a different operator.
@@ -1112,7 +1144,7 @@ def operators(geometry, m=None, Lmax=None, Nmax=None, alpha=None, dtype='float64
         LL = kwargs.pop('Lmax', Lmax)
         NN = kwargs.pop('Nmax', Nmax)
         aa = kwargs.pop('alpha', alpha)
-        return _operator(name, geometry, m=mm, Lmax=LL, Nmax=NN, alpha=aa, dtype=dtype, internal=internal, **kwargs)
+        return _operator(name, geometry, m=mm, Lmax=LL, Nmax=NN, alpha=aa, dtype=dtype, internal=internal, recurrence_kwargs=recurrence_kwargs, **kwargs)
     return dispatcher
 
 

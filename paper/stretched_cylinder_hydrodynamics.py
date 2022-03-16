@@ -16,6 +16,7 @@ from cylinder_inertial_waves import analytic_eigenvalues, analytic_mode
 
 
 g_file_prefix = 'stretched_cylinder_hydrodynamics'
+g_recurrence_kwargs = {'use_jacobi_quadrature': True}
 
 
 def Lshift(sigma):
@@ -104,7 +105,7 @@ def build_matrices_tau(geometry, m, Lmax, Nmax, Ekman, alpha):
 
 @cached
 def galerkin_matrix(geometry, m, Lmax, Nmax, alpha):
-    Sp, Sm, Sz = [sc.convert(geometry, m, Lmax-Lshift(sigma), Nmax, alpha+1, sigma=sigma, adjoint=True) for sigma in [+1,-1,0]]
+    Sp, Sm, Sz = [sc.convert(geometry, m, Lmax-Lshift(sigma), Nmax, alpha+1, sigma=sigma, adjoint=True, recurrence_kwargs=g_recurrence_kwargs) for sigma in [+1,-1,0]]
     I = sparse.eye(sc.total_num_coeffs(geometry, Lmax, Nmax))
     return sparse.block_diag([Sp,Sm,Sz,I])
 
@@ -112,8 +113,8 @@ def galerkin_matrix(geometry, m, Lmax, Nmax, alpha):
 @profile
 def build_matrices_galerkin(geometry, m, Lmax, Nmax, Ekman, alpha):
     dL, dN = 2, 3
-    operatorsu = sc.operators(geometry, m, Lmax+dL, Nmax+dN)
-    operatorsp = sc.operators(geometry, m, Lmax,    Nmax)
+    operatorsu = sc.operators(geometry, m, Lmax+dL, Nmax+dN, recurrence_kwargs=g_recurrence_kwargs)
+    operatorsp = sc.operators(geometry, m, Lmax,    Nmax,    recurrence_kwargs=g_recurrence_kwargs)
 
     ncoeffu = sc.total_num_coeffs(geometry, Lmax+dL,   Nmax+dN)
     ncoeffp = sc.total_num_coeffs(geometry, Lmax, Nmax)
@@ -281,8 +282,8 @@ def create_bases(geometry, m, Lmax, Nmax, alpha, t, eta, boundary_method):
         dL, dN = 2, 3
     else:
         dL, dN = 0, 0
-    vbases = [sc.Basis(geometry, m, Lmax+dL-Lshift(sig), Nmax+dN, alpha=alpha,   sigma=sig, t=t, eta=eta) for sig in [+1,-1,0]]
-    pbasis =  sc.Basis(geometry, m, Lmax,                Nmax,    alpha=alpha+1, sigma=0,   t=t, eta=eta)
+    vbases = [sc.Basis(geometry, m, Lmax+dL-Lshift(sig), Nmax+dN, alpha=alpha,   sigma=sig, t=t, eta=eta, recurrence_kwargs=g_recurrence_kwargs) for sig in [+1,-1,0]]
+    pbasis =  sc.Basis(geometry, m, Lmax,                Nmax,    alpha=alpha+1, sigma=0,   t=t, eta=eta, recurrence_kwargs=g_recurrence_kwargs)
     return {'p': pbasis, 'up': vbases[0], 'um': vbases[1], 'w': vbases[2]}
 
 
