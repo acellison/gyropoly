@@ -383,7 +383,12 @@ def recurrence(system, n, return_mass=False, dtype='float64', internal='float128
         Algorithm for computing the recurrence coefficients.
         One of ['stieltjes', 'chebyshev']
     quadrature_kwargs : dict, optional
-        Keyword arguments to pass to the recurrence computation subroutine
+        Keyword arguments to pass to the recurrence computation subroutine.
+        Supported keys:
+            'algorithm': 'stieltjes' or 'chebyshev', default 'chebyshev'
+            'verbose': bool, default False
+            'tol': float, default 1e-14
+            'nquad_ratio': float, default 1.25
 
     Returns
     -------
@@ -505,7 +510,7 @@ def project(system, n, m, f, offsets, use_jacobi_quadrature=False, dtype='float6
 
     """
     def fun(z, w=None):
-        Q = system.polynomials(n+m, z, dtype=internal)
+        Q = system.polynomials(n+m, z, dtype=internal, **quadrature_kwargs)
         fz = f(z)
         shape = (len(offsets), n)
         if w is None:
