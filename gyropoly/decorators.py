@@ -38,6 +38,8 @@ def hashable(a):
 def deep_list_to_tuple(a):
     if hashable(a):
         return a
+    elif isinstance(a, dict):
+        return tuple((deep_list_to_tuple(k), deep_list_to_tuple(v)) for k,v in a.items())
     elif hasattr(a, '__len__'):
         return tuple(deep_list_to_tuple(b) for b in a)
     else:
