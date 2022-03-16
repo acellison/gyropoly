@@ -2,6 +2,7 @@ import os
 from functools import partial
 import numpy as np
 import scipy.sparse as sparse
+import matplotlib.pyplot as plt
 from pathos.multiprocessing import ProcessingPool as Pool
 from dedalus_sphere import jacobi
 from . import augmented_jacobi as ajacobi
@@ -81,19 +82,42 @@ class Geometry():
     def side(self):
         return 's=S'
 
+    def height(self, t):
+        ht = np.polyval(self.h, t)
+        if self.root_h:
+            ht = np.sqrt(ht)
+        if self.sphere:
+            ht = np.sqrt(1-t) * ht
+        return ht
+
     def s(self, t):
         return self.radius*np.sqrt((1+t.ravel())/2)
 
     def z(self, t, eta):
         tt, ee = t.ravel()[np.newaxis,:], eta.ravel()[:,np.newaxis]
-        ht = np.polyval(self.h, tt)
-        if self.root_h:
-            ht = np.sqrt(ht)
-        if self.sphere:
-            ht = np.sqrt(1-t) * ht
+        ht = self.height(tt)
         if self.cylinder_type == 'half':
             ee = (ee+1)/2
         return ee * ht
+
+    def plot_height(self, n=1000, fig=None, ax=None):
+        if fig is None or ax is None:
+            fig, ax = plt.subplots()
+        t = np.linspace(-1,1,n)
+        s, h = self.s(t), self.height(t)
+        ax.plot( s,  h, color='tab:blue')
+        ax.plot( s, -h, color='tab:blue')
+        ax.plot(-s,  h, color='tab:blue')
+        ax.plot(-s, -h, color='tab:blue')
+        if not self.sphere:
+            ax.plot([ 1, 1], [-h[-1],h[-1]], color='tab:blue')
+            ax.plot([-1,-1], [-h[-1],h[-1]], color='tab:blue')
+        ax.set_xlabel('s')
+        ax.set_ylabel('h(s)')
+        ax.set_title('Stretched Cylinder Boundary')
+        ax.grid(True)
+        fig.set_tight_layout(True)
+        return fig, ax
 
     def __repr__(self):
         radius = f'-radius={float(self.radius)}'

@@ -303,10 +303,11 @@ def plot_solution(data):
 
 
 def main():
-    cylinder_type, m, Lmax, Nmax, Ekman, alpha, omega, radius, root_h, sphere, nev = 'full', 14, 30, 120, 1e-5, 0, 4, 1., False, True, 400
+    cylinder_type, m, Lmax, Nmax, Ekman, alpha, omega, radius, root_h, sphere, nev = 'full', 14, 40, 120, 1e-5, 0, 4, 1., False, True, 400
 
     boundary_method = 'galerkin'
     force_construct, force_solve = True, True
+    plot_height = False
 
     evalue_target = 0.
 
@@ -317,6 +318,10 @@ def main():
         H = 0.5 if cylinder_type == 'full' else 1.
         h = H*np.array([omega/(2+omega), 1.])
     geometry = sc.Geometry(cylinder_type=cylinder_type, h=h, radius=radius, root_h=root_h, sphere=sphere)
+
+    if plot_height:
+        geometry.plot_height()
+        plt.show()
 
     print(f'geometry: {geometry}, m = {m}, Lmax = {Lmax}, Nmax = {Nmax}, alpha = {alpha}, omega = {omega}')
     data = solve_eigenproblem(geometry, m, Lmax, Nmax, boundary_method, omega, \
