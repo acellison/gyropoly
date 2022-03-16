@@ -404,6 +404,7 @@ def recurrence(system, n, return_mass=False, dtype='float64', internal='float128
     if algorithm not in algorithms.keys():
         raise ValueError(f'Unknown algorithm {algorithm}')
     fun = algorithms[algorithm]
+    quadrature_kwargs.pop('use_jacobi_quadrature', None)
     return fun(system, n, return_mass=return_mass, dtype=dtype, internal=internal, **quadrature_kwargs)
 
 

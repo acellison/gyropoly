@@ -341,7 +341,7 @@ class Basis():
             ht = self._make_height(t)
             systems = self.__systems
             polys = lambda ell: systems[ell].polynomials(_radial_size(self.geometry, self.Nmax, ell), t, dtype=self.dtype, **self.recurrence_kwargs)
-            self.__Q = [prefactor * ht**ell * polys(ell) for ell in range(Lmax)]
+            self.__Q = [prefactor * ht**ell * polys(ell) for ell in range(self.Lmax)]
 
     def _make_height(self, t):
         if self.has_h_scaling:
