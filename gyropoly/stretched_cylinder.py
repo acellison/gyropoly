@@ -812,8 +812,12 @@ def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype
         Lm = -scale * R @ B(+1)
         if geometry.root_h:
             if geometry.sphere:
-                Lp = scale * (C(-1) @ C(+1) - A(-1) @ A(+1) @ R) @ B(-1)
-                Lm = scale * (C(-1) @ C(+1) - A(-1) @ A(+1) @ R) @ B(+1)
+                if geometry.degree == 0:
+                    Lp = scale * C(-1) @ C(+1) @ B(-1)
+                    Lm = scale * C(-1) @ C(+1) @ B(+1)
+                else:
+                    Lp = scale * (C(-1) @ C(+1) - A(-1) @ A(+1) @ R) @ B(-1)
+                    Lm = scale * (C(-1) @ C(+1) - A(-1) @ A(+1) @ R) @ B(+1)
                 Lzp1 = A(+1) @ C(+1)
                 Lzm1 = A(-1) @ C(-1)
                 dl, dn = 1, 1 + geometry.degree
