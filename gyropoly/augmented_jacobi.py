@@ -35,6 +35,7 @@ class AugmentedJacobiSystem():
         self.__total_degree = self.__polynomial_product.total_degree(weighted=True) if self.is_polynomial else None
         self.__unweighted_degree = self.__polynomial_product.total_degree(weighted=False)
         self.__has_even_parity = self.a == self.b and self.__polynomial_product.has_even_parity
+        self.__is_scaled_jacobi = self.__unweighted_degree == 0
 
     @property
     def factors(self):
@@ -75,6 +76,10 @@ class AugmentedJacobiSystem():
     @property
     def is_unweighted(self):
         return self.__is_unweighted
+
+    @property
+    def is_scaled_jacobi(self):
+        return self.__is_scaled_jacobi
 
     def apply_arrow(self, da, db, dc):
         if len(dc) != self.num_augmented_factors:
@@ -176,8 +181,6 @@ def _make_poly_config(coeffs):
     # coeffs are monomial-basis list of coefficients
     if not isinstance(coeffs, (tuple,list,np.ndarray)):
         raise ValueError('coeffs must be a list')
-    if len(coeffs) < 2:
-        raise ValueError('polynomial must have degree at least one')
     if coeffs[0] == 0:
         raise ValueError('polynomial must have non-zero leading coefficient')
 
@@ -344,7 +347,7 @@ def modified_chebyshev(system, n, return_mass=False, dtype='float64', internal='
         for key in ['max_iters', 'nquad']:
             quadrature_kwargs.pop(key, None)
         # When c is an integer we can integrate exactly
-        npoly, max_iters = system.total_degree+1, 1
+        npoly, max_iters = max(1,system.total_degree)+1, 1
         nquad = npoly
     else:
         # Otherwise we run the Chebyshev process multiple times and check for convergence
@@ -395,6 +398,9 @@ def recurrence(system, n, return_mass=False, dtype='float64', internal='float128
     sparse matrix representation of Jacobi operator and optionally floating point mass
 
     """
+    if system.is_scaled_jacobi:
+        # FIXME: this can be done directly from jacobi polynomials
+        pass
     if system.is_unweighted:
         Z = jacobi.operator('Z', dtype=internal)(n, system.a, system.b).astype(dtype)
         return (Z, system.mass(dtype=dtype, internal=internal)) if return_mass else Z
@@ -436,6 +442,9 @@ def polynomials(system, n, z, init=None, dtype='float64', internal='float128', *
     the degree k polynomial is accessed via P[k-1]
 
     """
+    if system.is_scaled_jacobi:
+        # FIXME: this can be done directly from jacobi polynomials
+        pass
     if system.is_unweighted:
         return jacobi.polynomials(n, system.a, system.b, z, dtype=dtype, internal=internal)
 
@@ -456,6 +465,9 @@ def jacobi_mass(a, b, log=False, dtype='float64'):
 
 
 def jacobi_quadrature(system, f, fdegree=None, dtype='float64', internal='float128', **quadrature_kwargs):
+    if system.is_scaled_jacobi:
+        # FIXME: this can be done directly from jacobi polynomials
+        pass
     if system.is_polynomial and fdegree is not None:
         max_iters = 1
         nquad = int(np.ceil((fdegree+system.total_degree+1)/2))
@@ -655,7 +667,7 @@ def rhoprime_multiplication(system, n, weighted=True, dtype='float64', internal=
     parity = system.has_even_parity
     use_jacobi_quadrature = recurrence_kwargs.pop('use_jacobi_quadrature', False)
 
-    m = system.unweighted_degree-1
+    m = max(system.unweighted_degree-1, 0)
     offsets = np.arange(-m,m+1)
     if parity:
         offsets = offsets[::2]

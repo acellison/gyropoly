@@ -116,21 +116,37 @@ def test_mass():
     target = 17.880080063595035
     check_close(mass, target, 6e-15)
 
+    # Test 5
+    a, b = 2, 3
+    rho, c = [0.5], 1
+    system = make_system(a, b, [(rho, c)])
+    assert system.is_polynomial
+    assert system.total_degree == 0
+    assert system.unweighted_degree == 0
+    assert not system.has_even_parity
+    assert not system.is_unweighted
+    mass = system.mass(dtype='float128')
+    target = 0.53333333333333333
+    check_close(mass, target, 6e-15)
+
 
 def test_recurrence():
     print('test_recurrence')
+    # Test 1
     n, a, b, rho, c = 10, 1, 1, [1,0,0,3], 2
     system = make_system(a,b,[(rho,c)])
     ZS = system.recurrence(n, algorithm='stieltjes')
     ZC = system.recurrence(n, algorithm='chebyshev')
     check_close(ZS, ZC, 1e-16)
 
+    # Test 2
     n, a, b, rho, c = 10, 1, 1, [1,0,0,3], 0.5
     system = make_system(a,b,[(rho,c)])
     ZS = system.recurrence(n, algorithm='stieltjes')
     ZC = system.recurrence(n, algorithm='chebyshev')
     check_close(ZS, ZC, 1e-16)
 
+    # Test 3
     n, a, b = 10, -0.5, -0.5
     rho1, c1 =   [1,0,1], 0.5
     rho2, c2 = [1,0,0,3], 2
@@ -139,9 +155,23 @@ def test_recurrence():
     ZC = system.recurrence(n, algorithm='chebyshev')
     check_close(ZS, ZC, 5e-14)
 
+    # Test 4
+    n, a, b, rho, c = 10, 2, 3, [0.5], 1
+    system = make_system(a,b,[(rho,c)])
+    ZS = system.recurrence(n, algorithm='stieltjes')
+    ZC = system.recurrence(n, algorithm='chebyshev')
+    check_close(ZS, ZC, 6e-17)
+
 
 def test_polynomials():
     print('test_polynomials')
+    def check_orthogonal(n, w, P, tol):
+        for i in range(n):
+            check_close(np.sum(w*P[i]*P[i]), 1, tol)
+            if i < n-1:
+                check_close([np.sum(w*P[i]*P[j]) for j in range(i+1,n)], 0, tol)
+
+    # Test 1
     n, a, b, rho, c = 10, 1, 1, [1,0,0,3], 2
     system = make_system(a,b,[(rho,c)])
 
@@ -149,11 +179,17 @@ def test_polynomials():
     P = system.polynomials(n, z)
 
     # Check mutually orthonormal
-    tol = 1e-14
-    for i in range(n):
-        check_close(np.sum(w*P[i]*P[i]), 1, tol)
-        if i < n-1:
-            check_close([np.sum(w*P[i]*P[j]) for j in range(i+1,n)], 0, tol)
+    check_orthogonal(n, w, P, tol=1e-14)
+
+    # Test 2
+    n, a, b, rho, c = 10, 2, 3, [0.5], 1
+    system = make_system(a,b,[(rho,c)])
+
+    z, w = system.quadrature(n)
+    P = system.polynomials(n, z)
+
+    # Check mutually orthonormal
+    check_orthogonal(n, w, P, tol=1e-15)
 
 
 def test_embedding_operators():
@@ -217,16 +253,22 @@ def test_embedding_operators():
     run_tests(a, b, [(rho1,c1),(rho2,c2)], {'A+': 3e-16, 'B+': 5e-16, 'C+': [3e-16,5e-16],
                                             'A-': 5e-16, 'B-': 3e-16, 'C-': [5e-16,2e-15]})
 
-
     # Test 4: Stretched Cylinder Polynomials
     m, alpha, sigma, ell = 10, 1, 1, 0
     a, b, rho, c = alpha, m+sigma, [1/3,1], 2*ell+2*alpha+1
     run_tests(a, b, [(rho,c)], {'A+': 8e-15, 'B+': 2e-14, 'C+': [4e-15],
                                 'A-': 8e-15, 'B-': 2e-14, 'C-': [8e-15]})
 
+    # Test 5: Ellipsoid Polynomials
+    m, alpha, sigma, ell = 10, 1, 1, 0
+    a, b, rho, c = ell+alpha+1/2, m+sigma, [0.5], 2*ell+2*alpha+1
+    run_tests(a, b, [(rho,c)], {'A+': 3e-14, 'B+': 3e-14, 'C+': [2e-14],
+                                'A-': 6e-14, 'B-': 3e-14, 'C-': [8e-15]}, verbose=True)
+
 
 def test_rhoprime_multiplication():
     print('test_rhoprime_multiplication')
+    # Test 1
     n, a, b = 10, 1, 1
     rho, c = [1/2,0,1], 3
     Z = ajacobi.operator('Z', [rho])
@@ -236,7 +278,7 @@ def test_rhoprime_multiplication():
     op2 = c*Z(n, a, b, (c,))
     check_close(op1, op2, 4.5e-16)
 
-    # Test 3
+    # Test 2
     a, b = 0.5, 0.5
     rho1, c1 = [2,3], 1
     rho2, c2 = [1/2,0,3], 2
@@ -247,7 +289,6 @@ def test_rhoprime_multiplication():
     op1 = ajacobi.rhoprime_multiplication(system, n)
     op2 = (c1*2*(1/2*Z@Z+3) + c2*(2*Z+3)@Z)(n, a, b, (c1,c2))
     check_close(op1, op2, 1.8e-15)
-
 
 def test_differential_operators():
     print('test_differential_operators')
@@ -311,6 +352,11 @@ def test_differential_operators():
     rho1, rho2, rho3 = [1,2], [1,3], [1,4]
     c1, c2, c3 = 1,2,3
     run_tests(a, b, [(rho1,c1),(rho2,c2),(rho3,c3)], {'D': 4.3e-14, 'E': 3.2e-14, 'F': 8.9e-14, 'G': 2.2e-14})
+
+    # Test 5: Ellipsoid Polynomials
+    m, alpha, sigma, ell = 10, 1, 1, 0
+    a, b, rho, c = ell+alpha+1/2, m+sigma, [0.5], 2*ell+2*alpha+1
+    run_tests(a, b, [(rho,c)], {'D': 6.6e-14, 'E': 1.6e-13, 'F': 1.5e-13, 'G': 2.9e-13})
 
 
 def test_differential_operator_adjoints():
@@ -383,6 +429,11 @@ def test_differential_operator_adjoints():
     rho1, rho2, rho3 = [1,2], [1,3], [1,4]
     c1, c2, c3 = 1,2,3
     run_tests(a, b, [(rho1,c1),(rho2,c2),(rho3,c3)], {'D': 1.6e-13, 'E': 2.8e-13, 'F': 2.2e-13, 'G': 1.4e-13})
+
+    # Test 5: Ellipsoid Polynomials
+    m, alpha, sigma, ell = 10, 1, 1, 0
+    a, b, rho, c = ell+alpha+1/2, m+sigma, [0.5], 2*ell+2*alpha+1
+    run_tests(a, b, [(rho,c)], {'D': 1.5e-13, 'E': 7.2e-14, 'F': 7.6e-14, 'G': 3.3e-14})
 
 
 def test_operator_codomains():
