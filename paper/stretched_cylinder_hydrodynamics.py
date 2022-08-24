@@ -2,7 +2,6 @@ import os, pickle
 import numpy as np
 import scipy as sp
 from scipy import sparse
-from scipy.special import jv, jvp, jn_zeros
 
 import matplotlib
 matplotlib.rcParams.update({'font.size': 14})
@@ -11,8 +10,6 @@ import matplotlib.pyplot as plt
 from spherinder.eigtools import eigsort, plot_spectrum, scipy_sparse_eigs
 import gyropoly.stretched_cylinder as sc
 from gyropoly.decorators import cached, profile
-
-from cylinder_inertial_waves import analytic_eigenvalues, analytic_mode
 
 
 g_file_prefix = 'stretched_cylinder_hydrodynamics'
@@ -43,7 +40,10 @@ def combined_projection(geometry, m, Lmax, Nmax, alpha, sigma):
         return sc.project(geometry, m, Lmax, Nmax, alpha, sigma=sigma, direction=direction, shift=shift, Lstop=Lstop)
 
     top_shifts = [1,0]     # size Nmax-(Lmax-2) and Nmax-(Lmax-1), total = 2*Nmax-2*Lmax+3
-    side_shifts = [2,1,0]  # total size 3*(Lmax-2) = 3*Lmax-6, top+side = 2*Nmax+Lmax-3 ok
+    if geometry.degree == 0:
+        side_shifts = [0]  # total size 3*(Lmax-2) = 3*Lmax-6, top+side = 2*Nmax+Lmax-3 ok
+    else:
+        side_shifts = [2,1,0]  # total size 3*(Lmax-2) = 3*Lmax-6, top+side = 2*Nmax+Lmax-3 ok
     opt = [make_op(direction='z', shift=shift) for shift in top_shifts]
     ops = [make_op(direction='s', shift=shift, Lstop=-2) for shift in side_shifts]
     return sparse.hstack(opt+ops)
@@ -64,7 +64,8 @@ def build_projections(geometry, m, Lmax, Nmax, alpha, boundary_method):
         Z = sparse.lil_matrix((sc.total_num_coeffs(geometry, Lmax, Nmax), np.shape(col)[1]))
         return sparse.vstack([col, Z])
     else:
-        make_op = lambda sigma, dalpha, dL: combined_projection(geometry, m, Lmax+2-dL, Nmax+3, alpha+dalpha, sigma)
+        dN = 1+(2-int(geometry.root_h))*geometry.degree
+        make_op = lambda sigma, dalpha, dL: combined_projection(geometry, m, Lmax+2-dL, Nmax+dN, alpha+dalpha, sigma)
         return sparse.block_diag([make_op(sigma, dalpha, dL) for sigma, dalpha, dL in [(+1,1,0), (-1,1,0), (0,1,Lshift(0)), (0,0,0)]])
 
 
@@ -112,7 +113,7 @@ def galerkin_matrix(geometry, m, Lmax, Nmax, alpha):
 
 @profile
 def build_matrices_galerkin(geometry, m, Lmax, Nmax, Ekman, alpha):
-    dL, dN = 2, 3
+    dL, dN = 2, 1+(2-int(geometry.root_h))*geometry.degree
     operatorsu = sc.operators(geometry, m, Lmax+dL, Nmax+dN, recurrence_kwargs=g_recurrence_kwargs)
     operatorsp = sc.operators(geometry, m, Lmax,    Nmax,    recurrence_kwargs=g_recurrence_kwargs)
 
@@ -205,6 +206,7 @@ def solve_eigenproblem(geometry, m, Lmax, Nmax, boundary_method, omega, Ekman, a
             evalues, evectors = eigsort(L.todense(), M.todense(), profile=True)
         else:
             matsolver = 'SuperluColamdFactorized'
+#            matsolver = 'UmfpackFactorized64'
             evalues, evectors = scipy_sparse_eigs(L, M, N=nev, target=evalue_target, matsolver=matsolver, profile=True)
 
         # Recombine the eigenvectors
@@ -279,7 +281,7 @@ def plot_spectrum_callback(index, evalues, evectors, bases, fig=None, ax=None):
 
 def create_bases(geometry, m, Lmax, Nmax, alpha, t, eta, boundary_method):
     if boundary_method == 'galerkin':
-        dL, dN = 2, 3
+        dL, dN = 2, 1+(2-int(geometry.root_h))*geometry.degree
     else:
         dL, dN = 0, 0
     vbases = [sc.Basis(geometry, m, Lmax+dL-Lshift(sig), Nmax+dN, alpha=alpha,   sigma=sig, t=t, eta=eta, recurrence_kwargs=g_recurrence_kwargs) for sig in [+1,-1,0]]
@@ -304,10 +306,10 @@ def plot_solution(data):
 
 
 def main():
-    cylinder_type, m, Lmax, Nmax, Ekman, alpha, omega, radius, root_h, sphere, nev = 'full', 14, 40, 120, 1e-5, 0, 4, 1., False, True, 400
+    cylinder_type, m, Lmax, Nmax, Ekman, alpha, omega, radius, root_h, sphere, nev = 'full', 14, 40, 160, 1e-5, 0, 2, 1., False, False, 100
 
     boundary_method = 'galerkin'
-    force_construct, force_solve = True, True
+    force_construct, force_solve = (True,True)
     plot_height = False
 
     evalue_target = 0.
@@ -318,6 +320,7 @@ def main():
     else:
         H = 0.5 if cylinder_type == 'full' else 1.
         h = H*np.array([omega/(2+omega), 1.])
+#        h = np.array([omega/(2+omega), 1.])/(1-omega/(2+omega))/np.sqrt(2)
     geometry = sc.Geometry(cylinder_type=cylinder_type, h=h, radius=radius, root_h=root_h, sphere=sphere)
 
     if plot_height:
