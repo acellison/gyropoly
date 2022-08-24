@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from functools import partial
 
 from dedalus_sphere import jacobi
 
@@ -290,6 +291,7 @@ def test_rhoprime_multiplication():
     op2 = (c1*2*(1/2*Z@Z+3) + c2*(2*Z+3)@Z)(n, a, b, (c1,c2))
     check_close(op1, op2, 1.8e-15)
 
+
 def test_differential_operators():
     print('test_differential_operators')
     dtype = 'float128'
@@ -436,6 +438,108 @@ def test_differential_operator_adjoints():
     run_tests(a, b, [(rho,c)], {'D': 1.5e-13, 'E': 7.2e-14, 'F': 7.6e-14, 'G': 3.3e-14})
 
 
+def test_differential_operator_c():
+    print('test_differential_operator_c')
+    import sympy
+    z = sympy.Symbol('z')
+    Z, Id = np.array([[z]]), np.array([[1]])
+    coeffs = [3,2,1]
+    f = ajacobi.matrix_polyval(coeffs, Z, Id)[0,0]
+    assert f == np.polyval(coeffs, z)
+    assert sympy.simplify(f - (3*z**2+2*z+1)) == 0
+
+    coeffs = [1,2]
+    f = ajacobi.matrix_polyval(coeffs, Z, Id)[0,0]
+    assert f == np.polyval(coeffs, z)
+    assert sympy.simplify(f - (z+2)) == 0
+
+    coeffs = [3]
+    f = ajacobi.matrix_polyval(coeffs, Z, Id)[0,0]
+    assert f == np.polyval(coeffs, z)
+    assert f == 3
+
+    dtype = 'float128'
+    zz = np.linspace(-1,1,1000, dtype=dtype)
+
+    N = 8  # one more than degree of f
+    def make_functions(a, b, rhoc):
+        fmono = [0.2, 0.0, -1.0, 1.0, 2.0, 4.0]
+        f  = lambda z: np.polyval(fmono, z)
+        df = lambda z: np.polyval(np.polyder(fmono), z)
+
+        coeffs, c = zip(*rhoc)
+        def operator_fun(index, z):
+            return np.polyval(coeffs[index], z) * df(z) + c[index] * np.polyval(np.polyder(coeffs[index]), z) * f(z)
+        Hf = [partial(operator_fun, i) for i in range(len(coeffs))]
+        return f, Hf
+
+    def check_grid(system, op, da, db, dc, fin, fout, tol, verbose=False):
+        zsym = sympy.Symbol('z')
+        n = np.shape(op)[1]
+        z, w = system.quadrature(n, dtype=dtype)
+        finz = fin(z)
+        P = system.polynomials(n, z, dtype=dtype)
+        projP = [np.sum(w*finz*P[k]) for k in range(n)]
+        coeffs = op @ projP
+
+        cosystem = system.apply_arrow(da,db,dc)
+        fcoeff = cosystem.expand(coeffs, zz, dtype=dtype)
+        foutz = fout(zz)
+
+        check_close(fcoeff, foutz, tol, verbose=verbose)
+
+    kwargs = {'use_jacobi_quadrature': True}
+    diff = lambda index, system, n: ajacobi.differential_operator(('H', index), system, n, dtype=dtype, **kwargs)
+
+    def run_tests(a, b, rhoc, tol, verbose=True):
+        system = make_system(a,b,rhoc)
+        nc = len(rhoc)
+
+        H = [diff(index, system, N) for index in range(nc)]
+        f, Hf = make_functions(a, b, rhoc)
+        for i in range(nc):
+            dc = np.ones(nc, dtype=int)
+            dc[i] = -1
+            check_grid(system, H[i], +1, +1, dc, f, Hf[i], tol, verbose=verbose)
+
+    # Test 1a: Parity
+    a, b, rho, c = 1, 1, [1,0,1], 2
+    run_tests(a, b, [(rho,c)], 2e-14)
+
+    # Test 1b: Parity Again
+    a, b, rho1, c1, rho2, c2 = 1, 1, [1,0,1], 2, [2,0,0.5,0,1], 1
+    run_tests(a, b, [(rho1,c1),(rho2,c2)], 3e-14)
+
+    # Test 2
+    a, b, rho, c = 1, 1, [1,0,0,3], 2
+    run_tests(a, b, [(rho,c)], 5e-14)
+
+    # Test 3
+    a, b = 0.5, 0.5
+    rho1, c1 =   [1,0,1], 1
+    rho2, c2 = [1,0,0,3], 2
+    run_tests(a, b, [(rho1,c1),(rho2,c2)], 1e-13)
+
+    # Test 4
+    a, b = 0.5, 0.5
+    rho1, rho2, rho3 = [1,2], [1,3], [1,4]
+    c1, c2, c3 = 1,2,3
+    run_tests(a, b, [(rho1,c1),(rho2,c2),(rho3,c3)], 1e-12)
+
+    # Test 5: Ellipsoid Polynomials
+    m, alpha, sigma, ell = 10, 1, 1, 0
+    a, b, rho, c = ell+alpha+1/2, m+sigma, [0.5], 2*ell+2*alpha+1
+    run_tests(a, b, [(rho,c)], 1e-12)
+
+    # Test 6: Annulus Polynomials
+    m, alpha, sigma, ell = 10, 1, 1, 0
+    Si, So = 0.1, 1.2
+    H = [So**2-Si**2, So**2+Si**2+1]
+    S = [So**2-Si**2, So**2+Si**2]
+    a, b, c1, c2 = alpha, alpha, 2*ell+2*alpha+1, m+sigma
+    run_tests(a, b, [(H,c1),(S,c2)], 1e-10)
+
+
 def test_operator_codomains():
     print('test_operator_codomains')
     n, a, b = 10, 1, 1
@@ -446,7 +550,7 @@ def test_operator_codomains():
     nc = 2
 
     factors, c = (rho1,rho2), (c1, c2)
-    names = ['A', 'B', ('C',0), ('C',1), 'D', 'E', 'F', 'G', 'Id', 'N', 'Z']
+    names = ['A', 'B', ('C',0), ('C',1), 'D', 'E', 'F', 'G', ('H',0), ('H',1), 'Id', 'N', 'Z']
     ops = [ajacobi.operator(kind, factors) for kind in names]
 
     codomains = {'A': {+1: (0,1,0,(0,)*nc),  -1: (1,-1,0,(0,)*nc)},
@@ -457,6 +561,8 @@ def test_operator_codomains():
                  'E': {+1: ( 0,-1,+1,(+1,)*nc),  -1: (d,  +1,-1,(-1,)*nc)},
                  'F': {+1: ( 0,+1,-1,(+1,)*nc),  -1: (d,  -1,+1,(-1,)*nc)},
                  'G': {+1: (+1,-1,-1,(+1,)*nc),  -1: (d-1,+1,+1,(-1,)*nc)},
+                 ('H',0): {+1: (+1,+1,+1,(-1,+1)), -1: (0,-1,-1,(+1,-1))},
+                 ('H',1): {+1: (+2,+1,+1,(+1,-1)), -1: (0,-1,-1,(-1,+1))},
                  'Id': (0,0,0,(0,)*nc),
                  'N': (0,0,0,(0,)*nc),
                  'Z': (+1,0,0,(0,)*nc)}
@@ -476,7 +582,10 @@ def test_operator_codomains():
             # No parity
             assert np.shape(op(n,a,b,c)) == (op.codomain(n,a,b,c)[0],n)
             continue
-        for p in [+1,-1]:
+        deltas = [+1,-1]
+        if isinstance(name, tuple) and name[0] == 'H':
+            deltas = [+1]
+        for p in deltas:
             pstr = '+' if p == 1 else '-'
             assert np.shape(op(p)(n,a,b,c)) == (op(p).codomain(n,a,b,c)[0],n)
 
@@ -491,8 +600,8 @@ def test_operator_composition():
     nc = 2
 
     factors, c = (rho1,rho2), (c1, c2)
-    names = ['A', 'B', ('C',0), ('C',1), 'D', 'E', 'F', 'G', 'Id', 'N', 'Z']
-    A, B, C1, C2, D, E, F, G, Id, N, Z = [ajacobi.operator(kind, factors) for kind in names]
+    names = ['A', 'B', ('C',0), ('C',1), 'D', 'E', 'F', 'G', ('H',0), ('H',1), 'Id', 'N', 'Z']
+    A, B, C1, C2, D, E, F, G, H1, H2, Id, N, Z = [ajacobi.operator(kind, factors) for kind in names]
 
     # Check we can cascade all the embedding operators
     op = A(-1) @ A(+1) @ B(-1) @ B(+1) @ C1(-1) @ C1(+1) @ C2(-1) @ C2(+1)
@@ -571,6 +680,7 @@ def main():
     test_embedding_operators()
     test_rhoprime_multiplication()
     test_differential_operators()
+    test_differential_operator_c()
     test_differential_operator_adjoints()
     test_operator_codomains()
     test_operator_composition()

@@ -23,6 +23,7 @@ class AugmentedJacobiSystem():
 
         factors, params = zip(*factor_param_list)
         self.__augmented_factors, self.__augmented_params = factors, params
+        self.__factor_coeffs = factors
 
         # Augmented parameter index metadata.  The augmented weight is a polynomial if all parameters
         # are non-negative integers.  We have standard Jacobi(a,b) if all parameters are zero.
@@ -36,6 +37,10 @@ class AugmentedJacobiSystem():
         self.__unweighted_degree = self.__polynomial_product.total_degree(weighted=False)
         self.__has_even_parity = self.a == self.b and self.__polynomial_product.has_even_parity
         self.__is_scaled_jacobi = self.__unweighted_degree == 0
+
+    @property
+    def factor_coeffs(self):
+        return self.__factor_coeffs
 
     @property
     def factors(self):
@@ -735,6 +740,18 @@ def embedding_operator_adjoint(kind, system, n, dtype='float64', internal='float
     return diags(bands, offsets, shape=(n+m,n), dtype=dtype)
 
 
+def _matrix_polyval_impl(coeffs, Z, Id):
+    if len(coeffs) == 0:
+        return 0*Id
+    elif len(coeffs) == 1:
+        return Id*coeffs[0]
+    return coeffs[0] + Z @ _matrix_polyval_impl(coeffs[1:], Z, Id)
+
+
+def matrix_polyval(coeffs, Z, Id):
+    return _matrix_polyval_impl(coeffs[::-1], Z, Id)
+
+
 def differential_operator(kind, system, n, dtype='float64', internal='float128', **recurrence_kwargs):
     """
     Compute a differential operator
@@ -742,9 +759,7 @@ def differential_operator(kind, system, n, dtype='float64', internal='float128',
     Parameters
     ----------
     kind : str
-        D, E, F, G
-    n : integer
-        Number of polynomials in expansion, one less than max degree
+        D, E, F, G, ('H', index)
     system : AugmentedSystem
         OP system to augment with additional weight factor
     n : integer
@@ -765,27 +780,35 @@ def differential_operator(kind, system, n, dtype='float64', internal='float128',
     parity = system.has_even_parity
     degree = system.unweighted_degree
     use_jacobi_quadrature = recurrence_kwargs.pop('use_jacobi_quadrature', False)
+    A, B, C, D, Z, Id = [jacobi.operator(name, dtype=internal) for name in ['A', 'B', 'C', 'D', 'Z', 'Id']]
 
     dc = np.ones(system.num_augmented_factors, dtype=int)
     if kind == 'D':
         da, db, m = +1, +1, -1
-        op = jacobi.operator('D', dtype=internal)(+1)
+        op = D(+1)
         offsets = np.arange(1, min(n,2+degree))
     elif kind == 'E':
         da, db, m = -1, +1, 0
-        op = jacobi.operator('C', dtype=internal)(-1)
+        op = C(-1)
         offsets = np.arange(0, min(n,1+degree))
     elif kind == 'F':
         da, db, m = +1, -1, 0
-        op = jacobi.operator('C', dtype=internal)(+1)
+        op = C(+1)
         offsets = np.arange(0, min(n,1+degree))
     elif kind == 'G':
         da, db, m = -1, -1, 1
-        op = jacobi.operator('D', dtype=internal)(-1)
+        op = D(-1)
         offsets = np.arange(-1, min(n,degree))
+    elif isinstance(kind, tuple) and kind[0] == 'H':
+        index = kind[1]  # Grab the augmented parameter index
+        kind = kind[0]   # Set kind to 'H' for parity check
+        da, db, dc[index], m = +1, +1, -1, system.degrees[index]-1
+        c, pcoeff = system.augmented_params[index], system.factor_coeffs[index]
+        op = matrix_polyval(pcoeff, Z, Id) @ D(+1) + c * matrix_polyval(np.polyder(pcoeff), Z, Id) @ A(+1) @ B(+1)
+        offsets = np.arange(-m, min(n, 1+degree-m))
     else:
         raise ValueError(f'Invalid kind: {kind}')
-    if parity and kind in ['D', 'G']:
+    if parity and kind in ['D', 'G', 'H']:
         offsets = offsets[0::2]
 
     cosystem = system.apply_arrow(da, db, dc)
@@ -816,7 +839,7 @@ def differential_operator_adjoint(kind, system, n, dtype='float64', internal='fl
     Parameters
     ----------
     name : str
-        D, E, F, G
+        D, E, F, G, ('H', index)
     n : integer
         Number of polynomials in expansion, one less than max degree
     system : AugmentedSystem
@@ -858,6 +881,8 @@ def differential_operator_adjoint(kind, system, n, dtype='float64', internal='fl
         da, db, m = +1, +1, degree-1
         op1, op2 = D(+1), Id
         offsets = -np.arange(-1,m+1)
+    elif isinstance(kind, tuple) and kind[0] == 'H':
+        raise ValueError('Not implemented')
     else:
         raise ValueError(f'Invalid kind: {kind}')
     if parity and kind in ['D', 'G']:
@@ -923,11 +948,11 @@ def operator(name, factors, dtype='float64', internal='float128', **recurrence_k
         return AugmentedJacobiOperator.number(factors, dtype=dtype)
     if name == 'Z':
         return AugmentedJacobiOperator.recurrence(factors, dtype=dtype, internal=internal, **recurrence_kwargs)
-    if len(factors) == 1 and name == 'C':
-        name = ('C', 0)
     if name == 'rhoprime':
         weighted = recurrence_kwargs.pop('weighted', True)
         return AugmentedJacobiOperator.rhoprime(factors, weighted=weighted, dtype=dtype, internal=internal, **recurrence_kwargs)
+    if name in ['C', 'H'] and len(factors) == 1:
+        name = (name, 0)
     return AugmentedJacobiOperator(name, factors, dtype=dtype, internal=internal, **recurrence_kwargs)
 
 
@@ -1018,8 +1043,8 @@ class AugmentedJacobiOperator():
      B(+1) = 1      ....................................   0,  0, +1,  0
      B(-1) = 1+z    ....................................  +1,  0, -1,  0
 
-     C(+1) = 1      ....................................   0,  0,  0, +1
-     C(-1) = ρ(z)   ....................................   d,  0,  0, -1
+     Ci(+1) = 1     ....................................   0,  0,  0, +1
+     Ci(-1) = ρi(z) ....................................  di,  0,  0,  0 (ci -1)
 
      D(+1) = d/dz  .....................................  -1, +1, +1, +1
      D(-1) = ρ(z)*[(1+z)*a - (1-z)*b - (1-z**2)*d/dz]
@@ -1034,6 +1059,9 @@ class AugmentedJacobiOperator():
      G(+1) = (1+z)*a - (1-z)*b - (1-z**2)*d/dz .........  +1, -1, -1, +1
      G(-1) = ρ(z)*d/dz + c*ρ'(z) ....................... d-1, +1, +1, -1
 
+     Hi(+1) = ρi(z)*d/dz + ci*ρi'(z) .................. di-1, +1, +1, +1 (ci -1)
+     Hi(-1) = ???                                          0, -1, -1, -1 (ci +1)
+
      Each -1 operator is the adjoint of the coresponding +1 operator and
      d is the polynomial degree of ρ.
 
@@ -1043,6 +1071,19 @@ class AugmentedJacobiOperator():
 
         Number:   <n,a,b,c,z| -> [0*P(0,a,b,c,z),1*P(1,a,b,c,z),...,(n-1)*P(n-1,a,b,c,z)]
                   This operator doesn't have a local differential Left action.
+
+     In the paper we refer to the operators using slightly different notation.
+     We make the correspondence here:
+        A  <-> I_{a}
+        B  <-> I_{b}
+        Ci <-> I_{c_i}
+        D  <-> D_{z}
+        E  <-> D_{a}
+        F  <-> D_{b}
+        G  <-> D_{c}
+        Hi <-> D_{d_i}
+     The +1 arguments correspond to the operators while the -1 arguments correspond
+     to their adjoints, denoted in the text with dagger superscripts.
 
     Attributes
     ----------
@@ -1070,9 +1111,9 @@ class AugmentedJacobiOperator():
         if isinstance(name, tuple):
             # C operator
             name, index = name
-            if name != 'C':
-                raise ValueError("Invalid two-argument kind - must be ('C', index)")
-            self.__function = self._C(self, index)
+            if name not in ['C', 'H']:
+                raise ValueError("Invalid two-argument kind - must be ('C'|'H', index)")
+            self.__function = {'C': self._C, 'H': self._H}[name](self, index)
         else:
             self.__function = getattr(self,f'_{name}')
         self.__factors = factors
@@ -1212,22 +1253,32 @@ class AugmentedJacobiOperator():
         nc = len(self.weight)
         return op, AugmentedJacobiCodomain(dn,-p,-p,(p,)*nc)
 
+    class _H():
+        def __init__(self, op, i):
+            self.op, self.i = op, i
+
+        def __call__(self, p):
+            op = partial(AugmentedJacobiOperator._Dispatch(self.op), ('H',self.i), p)
+            dn = self.op.weight.degree(self.i)-1 if p == +1 else 0
+            nc = len(self.op.weight)
+            dc = p*np.ones(nc, dtype=int)
+            dc[self.i] = -p
+            return op, AugmentedJacobiCodomain(dn,p,p,dc)
+
     class _Dispatch():
         def __init__(self, op):
             self.op = op
 
         @decorators.cached
         def __call__(self,kind,p,n,a,b,c):
+            c_embed, c_diff = False, False
             if isinstance(kind, tuple):
-                if kind[0] == 'C':
-                    c_embed = True
-                else:
-                    raise ValueError("Invalid two-argument kind - must be ('C', index)")
-            else:
-                c_embed = False
+                if   kind[0] == 'C': c_embed = True
+                elif kind[0] == 'H': c_diff  = True
+                else: raise ValueError("Invalid two-argument kind - must be ('C'|'H', index)")
             if kind in ['A','B'] or c_embed:
                 fun = {+1: embedding_operator, -1: embedding_operator_adjoint}[p]
-            elif kind in ['D','E','F','G']:
+            elif kind in ['D','E','F','G'] or c_diff:
                 fun = {+1: differential_operator, -1: differential_operator_adjoint}[p]
             else:
                 raise ValueError(f'Unknown operator kind: {kind}')
