@@ -1166,7 +1166,7 @@ def resize(geometry, mat, Lin, Nin, Lout, Nout):
     Lin, Nin : int
         Corresponding maximal degrees of the input matrix
     Lout, Nout : int
-        Desirred maximal degrees of the output matrix
+        Desired maximal degrees of the output matrix
 
     Returns
     -------
@@ -1237,7 +1237,7 @@ def plotfield(s, z, f, fig, ax, colorbar=True, title=None, cmap='RdBu_r'):
         Axes object to plot
     colorbar : bool, optional
         If True, add a colorbar next to the plot axes
-    title : str, optionakl
+    title : str, optional
         Title for the axes
     cmap : str, optional
         Colormap specifier
