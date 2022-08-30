@@ -96,10 +96,8 @@ class AugmentedJacobiSystem():
     def rho(self, z):
         return self.__polynomial_product.evaluate(z, weighted=False)
 
-    def rhoprime(self, z, weighted=True):
-        if not weighted and self.num_augmented_factors != 1:
-            raise ValueError('Unweighted rhoprime multiplication only supported for one augmented factor')
-        return self.__polynomial_product.derivative(z, weighted=weighted)
+    def rhoprime(self, z, weighted=True, which=0):
+        return self.__polynomial_product.derivative(z, weighted=weighted, which=which)
 
     def augmented_weight(self, z):
         return self.__polynomial_product.evaluate(z, weighted=True)
@@ -163,11 +161,14 @@ class PolynomialProduct():
         c = self.powers if weighted else np.ones(n, int)
         return np.prod([factor(z)**c for factor, c in zip(self.factors, c)], axis=0)
 
-    def derivative(self, z, weighted=True):
+    def derivative(self, z, weighted=True, which=0):
         n = len(self)
-        if not weighted and n != 1:
-            raise ValueError('Unweighted derivative evaluation only supported for single-factor polynomial products')
-        c = self.powers if weighted else np.ones(n)
+        if not weighted:
+            # The derivative is unweighted - this means we only want to multiply by the
+            # derivative of the polynomial at index `which'
+            return self.__derivatives[which](z)
+
+        c = self.powers
         f, fprime = [[g(z) for g in feval] for feval in [self.__factors, self.__derivatives]]
         products = [np.prod([f[j] for j in range(n) if j != i], axis=0) for i in range(n)]
         return np.sum([c[i]*fprime[i]*products[i] for i in range(n)], axis=0)
@@ -668,7 +669,7 @@ def embedding_operator(kind, system, n, dtype='float64', internal='float128', **
     return diags(bands, offsets, shape=(n,n), dtype=dtype)
 
 
-def rhoprime_multiplication(system, n, weighted=True, dtype='float64', internal='float128', **recurrence_kwargs):
+def rhoprime_multiplication(system, n, weighted=True, which=0, dtype='float64', internal='float128', **recurrence_kwargs):
     parity = system.has_even_parity
     use_jacobi_quadrature = recurrence_kwargs.pop('use_jacobi_quadrature', False)
 
@@ -678,7 +679,7 @@ def rhoprime_multiplication(system, n, weighted=True, dtype='float64', internal=
         offsets = offsets[::2]
 
     def fun(z):
-        return system.rhoprime(z, weighted=weighted) * system.polynomials(n, z, dtype=internal, **recurrence_kwargs)
+        return system.rhoprime(z, weighted=weighted, which=which) * system.polynomials(n, z, dtype=internal, **recurrence_kwargs)
 
     bands = project(system, n, m, fun, offsets, dtype=internal, use_jacobi_quadrature=use_jacobi_quadrature, **recurrence_kwargs)
     return diags(bands, offsets, shape=(n+m,n), dtype=dtype)
@@ -950,7 +951,8 @@ def operator(name, factors, dtype='float64', internal='float128', **recurrence_k
         return AugmentedJacobiOperator.recurrence(factors, dtype=dtype, internal=internal, **recurrence_kwargs)
     if name == 'rhoprime':
         weighted = recurrence_kwargs.pop('weighted', True)
-        return AugmentedJacobiOperator.rhoprime(factors, weighted=weighted, dtype=dtype, internal=internal, **recurrence_kwargs)
+        which = recurrence_kwargs.pop('which', 0)
+        return AugmentedJacobiOperator.rhoprime(factors, weighted=weighted, which=which, dtype=dtype, internal=internal, **recurrence_kwargs)
     if name in ['C', 'H'] and len(factors) == 1:
         name = (name, 0)
     return AugmentedJacobiOperator(name, factors, dtype=dtype, internal=internal, **recurrence_kwargs)
@@ -1187,20 +1189,20 @@ class AugmentedJacobiOperator():
         return Operator(factors,AugmentedJacobiOperator._Recurrence(factors,dtype,internal,**recurrence_kwargs),AugmentedJacobiCodomain(1,0,0,(0,)*nc))
 
     class _Rhoprime():
-        def __init__(self, factors, weighted, dtype, internal, **kwargs):
-            self.factors, self.weighted, self.dtype, self.internal, self.kwargs = factors, weighted, dtype, internal, kwargs
+        def __init__(self, factors, weighted, which, dtype, internal, **kwargs):
+            self.factors, self.weighted, self.which, self.dtype, self.internal, self.kwargs = factors, weighted, which, dtype, internal, kwargs
 
         @decorators.cached
         def __call__(self,n,a,b,c):
             system = AugmentedJacobiSystem(a, b, zip(self.factors,c))
-            op = rhoprime_multiplication(system, n, weighted=self.weighted, dtype=self.dtype, internal=self.internal, **self.kwargs)
+            op = rhoprime_multiplication(system, n, weighted=self.weighted, which=self.which, dtype=self.dtype, internal=self.internal, **self.kwargs)
             return infinite_csr(op)
 
     @staticmethod
-    def rhoprime(factors, weighted=True, dtype='float64', internal='float128', **recurrence_kwargs):
+    def rhoprime(factors, weighted=True, which=0, dtype='float64', internal='float128', **recurrence_kwargs):
         nc = len(factors)
         dn = PolynomialProduct(factors).total_degree(weighted=False)-1
-        return Operator(factors,AugmentedJacobiOperator._Rhoprime(factors,weighted,dtype,internal,**recurrence_kwargs),AugmentedJacobiCodomain(dn,0,0,(0,)*nc))
+        return Operator(factors,AugmentedJacobiOperator._Rhoprime(factors,weighted,which,dtype,internal,**recurrence_kwargs),AugmentedJacobiCodomain(dn,0,0,(0,)*nc))
 
     def __call__(self,p):
         return Operator(self.factors,*self.__function(p))
