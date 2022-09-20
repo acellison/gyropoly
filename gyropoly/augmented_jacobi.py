@@ -120,7 +120,7 @@ class AugmentedJacobiSystem():
     def expand(self, coeffs, z, dtype=dtype, internal=internal, **kwargs):
         n = np.shape(coeffs)[0]
         Z, mass = self.recurrence(n, dtype=internal, internal=internal, return_mass=True, **kwargs)
-        return tools.clenshaw_summation(coeffs, Z, mass, z, dtype=dtype, internal=internal)
+        return tools.clenshaw_summation(coeffs, Z, mass, z, dtype=internal).astype(dtype)
 
 
 class PolynomialProduct():
@@ -260,7 +260,7 @@ def mass(system, dtype='float64', internal='float128', **quadrature_kwargs):
     return mu.astype(dtype)
 
 
-def stieltjes(system, n, return_mass=False, dtype='float64', internal='float128', **quadrature_kwargs):
+def stieltjes(system, n, return_mass=False, dtype='float64', **quadrature_kwargs):
     """
     Compute the three-term recurrence coefficients for the orthogonal polynomial system
     on the interval (-1,1) using the Stieltjes Procedure
@@ -275,8 +275,6 @@ def stieltjes(system, n, return_mass=False, dtype='float64', internal='float128'
         Flag to return the integral of the weight function
     dtype : data-type, optional
         Desired data-type for the output
-    internal : data-type, optional
-        Internal data-type for compuatations
     quadrature_kwargs : dict, optional, containing keys:
         verbose : boolean, optional
             Flag to print error diagnostics
@@ -306,14 +304,14 @@ def stieltjes(system, n, return_mass=False, dtype='float64', internal='float128'
         max_iters = quadrature_kwargs.pop('max_iters', 10)
         nquad = quadrature_kwargs.pop('nquad', 2*(n+1))
 
-    base_quadrature = lambda nquad: jacobi.quadrature(nquad, system.a, system.b, dtype=internal)
+    base_quadrature = lambda nquad: jacobi.quadrature(nquad, system.a, system.b, dtype=dtype)
     augmented_weight = system.augmented_weight
 
     return tools.stieltjes(base_quadrature, augmented_weight, n, nquad, max_iters, \
-                           return_mass=return_mass, dtype=dtype, internal=internal, **quadrature_kwargs)
+                           return_mass=return_mass, dtype=dtype, **quadrature_kwargs)
 
 
-def modified_chebyshev(system, n, return_mass=False, dtype='float64', internal='float128', **quadrature_kwargs):
+def modified_chebyshev(system, n, return_mass=False, dtype='float64', **quadrature_kwargs):
     """
     Compute the three-term recurrence coefficients for the orthogonal polynomial system
     on the interval (-1,1) using the Modified Chebyshev algorithm
@@ -328,8 +326,6 @@ def modified_chebyshev(system, n, return_mass=False, dtype='float64', internal='
         Flag to return the integral of the weight function
     dtype : data-type, optional
         Desired data-type for the output
-    internal : data-type, optional
-        Internal data-type for compuatations
     quadrature_kwargs : dict, optional, containing keys:
         verbose : boolean, optional
             Flag to print error diagnostics
@@ -362,13 +358,13 @@ def modified_chebyshev(system, n, return_mass=False, dtype='float64', internal='
         nquad = quadrature_kwargs.pop('nquad', npoly)
 
     # Get the recurrence coefficients for a nearby weight function
-    base_operator = lambda n: jacobi.operator('Z', dtype=internal)(n, system.a, system.b)
-    base_quadrature = lambda nquad: jacobi.quadrature(nquad, system.a, system.b, dtype=internal)
-    base_polynomials = lambda npoly, z: jacobi.polynomials(npoly, system.a, system.b, z, dtype=internal)
+    base_operator = lambda n: jacobi.operator('Z', dtype=dtype)(n, system.a, system.b)
+    base_quadrature = lambda nquad: jacobi.quadrature(nquad, system.a, system.b, dtype=dtype)
+    base_polynomials = lambda npoly, z: jacobi.polynomials(npoly, system.a, system.b, z, dtype=dtype)
     augmented_weight = system.augmented_weight
 
     return tools.chebyshev(base_operator, base_quadrature, base_polynomials, augmented_weight, n, npoly, nquad, max_iters, \
-                           return_mass=return_mass, dtype=dtype, internal=internal, **quadrature_kwargs)
+                           return_mass=return_mass, dtype=dtype, **quadrature_kwargs)
 
 
 def recurrence(system, n, return_mass=False, dtype='float64', internal='float128', algorithm='stieltjes', **quadrature_kwargs):
@@ -417,7 +413,12 @@ def recurrence(system, n, return_mass=False, dtype='float64', internal='float128
         raise ValueError(f'Unknown algorithm {algorithm}')
     fun = algorithms[algorithm]
     quadrature_kwargs.pop('use_jacobi_quadrature', None)
-    return fun(system, n, return_mass=return_mass, dtype=dtype, internal=internal, **quadrature_kwargs)
+
+    result = fun(system, n, return_mass=return_mass, dtype=internal, **quadrature_kwargs)
+    if return_mass:
+        return tuple(r.astype(dtype) for r in result)
+    else:
+        return result.astype(dtype)
 
 
 def polynomials(system, n, z, init=None, dtype='float64', internal='float128', **recurrence_kwargs):
@@ -455,7 +456,7 @@ def polynomials(system, n, z, init=None, dtype='float64', internal='float128', *
         return jacobi.polynomials(n, system.a, system.b, z, dtype=dtype, internal=internal)
 
     Z, mass = recurrence(system, n, return_mass=True, dtype=internal, **recurrence_kwargs)
-    return tools.polynomials(Z, mass, z, init=init, dtype=dtype, internal=internal)
+    return tools.polynomials(Z, mass, z, init=init, dtype=internal).astype(dtype)
 
 
 def jacobi_mass(a, b, log=False, dtype='float64'):
@@ -603,7 +604,7 @@ def quadrature(system, n, quick=False, days=3, dtype='float64', internal='float1
     JZ = jacobi.operator('Z', dtype=internal)(n, a+1, b+1)
     Jmass = jacobi_mass(a+1, b+1, dtype=internal)
 
-    z = tools.quadrature_nodes(Z, mass, n=n, dtype=internal)
+    z = tools.quadrature_nodes(Z, n=n, dtype=internal)
     for i in range(days):
         P = tools.polynomials(Z, mass, z, dtype=internal)[n]
         Pprime = tools.clenshaw_summation(c, JZ, Jmass, z, dtype=internal)

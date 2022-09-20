@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.sparse import diags
 from scipy.sparse import dia_matrix as banded
-from scipy.linalg import eigvalsh_tridiagonal
+from scipy.linalg import eigvalsh_tridiagonal, eigvals
 
 
 def quadrature_iteration(fun, nquad, max_iters, label='', verbose=False, tol=1e-14, nquad_ratio=1.25):
@@ -24,7 +24,7 @@ def quadrature_iteration(fun, nquad, max_iters, label='', verbose=False, tol=1e-
     return current, other
 
 
-def stieltjes(base_quadrature, augmented_weight, n, nquad, max_iters, return_mass=False, dtype='float64', internal='float128', **quadrature_kwargs):
+def stieltjes(base_quadrature, augmented_weight, n, nquad, max_iters, return_mass=False, dtype='float64', **quadrature_kwargs):
     """
     Compute the three-term recurrence coefficients for the weight function
         w(z) = base_quadrature(z) * augmented_weight(z)
@@ -47,8 +47,6 @@ def stieltjes(base_quadrature, augmented_weight, n, nquad, max_iters, return_mas
         Flag to return the integral of the weight function
     dtype : data-type, optional
         Desired data-type for the output
-    internal : data-type, optional
-        Internal data-type for compuatations
     quadrature_kwargs : dict, optional, containing keys:
         verbose : boolean, optional
             Flag to print error diagnostics
@@ -69,9 +67,9 @@ def stieltjes(base_quadrature, augmented_weight, n, nquad, max_iters, return_mas
         dmu = w * augmented_weight(z)
         mass = np.sum(dmu)
 
-        beta, alpha = np.zeros(n+1, dtype=internal), np.zeros(n, dtype=internal)
-        beta[0] = np.sqrt(mass, dtype=internal)
-        pnm1, pnm2 = np.ones(len(dmu), dtype=internal)/beta[0], np.zeros(len(dmu), dtype=internal)
+        beta, alpha = np.zeros(n+1, dtype=dtype), np.zeros(n, dtype=dtype)
+        beta[0] = np.sqrt(mass, dtype=dtype)
+        pnm1, pnm2 = np.ones(len(dmu), dtype=dtype)/beta[0], np.zeros(len(dmu), dtype=dtype)
         for i in range(n):
             alpha[i] = np.sum(dmu*z*pnm1**2)
             beta[i+1] = np.sqrt(np.sum(dmu*((z-alpha[i])*pnm1 - beta[i]*pnm2)**2))
@@ -81,12 +79,12 @@ def stieltjes(base_quadrature, augmented_weight, n, nquad, max_iters, return_mas
         return beta[1:], (dmu, alpha)
 
     beta, (dmu, alpha) = quadrature_iteration(fun, nquad, max_iters, label='Stieltjes', **quadrature_kwargs)
-    mass = np.sum(dmu).astype(dtype)
-    Z = diags([beta,alpha,beta], [-1,0,1], shape=(n+1,n), dtype=dtype)
+    mass = np.sum(dmu)
+    Z = diags([beta,alpha,beta], [-1,0,1], shape=(n+1,n))
     return (Z, mass) if return_mass else Z
 
 
-def chebyshev(base_operator, base_quadrature, base_polynomials, augmented_weight, n, npoly, nquad, max_iters, return_mass=False, dtype='float64', internal='float128', **quadrature_kwargs):
+def chebyshev(base_operator, base_quadrature, base_polynomials, augmented_weight, n, npoly, nquad, max_iters, return_mass=False, dtype='float64', **quadrature_kwargs):
     """
     Compute the three-term recurrence coefficients for the weight function
         w(z) = base_quadrature(z) * augmented_weight(z)
@@ -118,8 +116,6 @@ def chebyshev(base_operator, base_quadrature, base_polynomials, augmented_weight
         Flag to return the integral of the weight function
     dtype : data-type, optional
         Desired data-type for the output
-    internal : data-type, optional
-        Internal data-type for compuatations
     quadrature_kwargs : dict, optional, containing keys:
         verbose : boolean, optional
             Flag to print error diagnostics
@@ -136,6 +132,7 @@ def chebyshev(base_operator, base_quadrature, base_polynomials, augmented_weight
 
     """
     n = n+1
+    npoly = min(npoly, 2*n)
 
     # Get the recurrence coefficients for a nearby weight function
     Z = base_operator(2*n)
@@ -150,11 +147,11 @@ def chebyshev(base_operator, base_quadrature, base_polynomials, augmented_weight
         nu = np.sum(dmu*P, axis=1)
 
         # Initialize the modified moments
-        sigma = np.zeros((3,2*n), dtype=internal)
+        sigma = np.zeros((3,2*n), dtype=dtype)
         sigma[0,:len(nu)] = nu
 
         # Run the iteration, computing alpha[k] and beta[k] for k = 0...n-1
-        alpha, beta = np.zeros(n, dtype=internal), np.zeros(n, dtype=internal)
+        alpha, beta = np.zeros(n, dtype=dtype), np.zeros(n, dtype=dtype)
         alpha[0] = an[0] + cn[0]*nu[1]/nu[0]
         beta[0] = nu[0]
         for k in range(1,n):
@@ -168,17 +165,20 @@ def chebyshev(base_operator, base_quadrature, base_polynomials, augmented_weight
     beta, (dmu, alpha) = quadrature_iteration(fun, nquad, max_iters, label='Chebyshev', **quadrature_kwargs)
 
     # The algorithm computes the monic recurrence coefficients.  Orthonormalize.
-    mass = np.sum(dmu).astype(dtype)
+    mass = np.sum(dmu)
     beta = np.sqrt(beta[1:])
-    Z = diags([beta,alpha,beta],[-1,0,1],(n,n-1),dtype=dtype)
+    Z = diags([beta,alpha,beta], [-1,0,1], (n,n-1))
     return (Z, mass) if return_mass else Z
 
 
 def _truncate(mat, shape):
-    return banded((mat.data, mat.offsets), shape=shape)
+    if isinstance(mat, np.ndarray):
+        return mat[:shape[0],:shape[1]]
+    else:
+        return banded((mat.data, mat.offsets), shape=shape)
 
 
-def polynomials(Z, mass, z, n=None, init=None, dtype='float64', internal='float128'):
+def polynomials(Z, mass, z, n=None, init=None, dtype='float64'):
     """
     Generalized Jacobi polynomials, P(n,rho,a,b,c,z), of type (rho,a,b,c) up to degree n-1.
     These polynomials are orthogonal on the interval (-1,1) with weight function
@@ -196,8 +196,6 @@ def polynomials(Z, mass, z, n=None, init=None, dtype='float64', internal='float1
         Initial value for the recurrence. None -> 1/sqrt(mass)
     dtype : data-type, optional
         Desired data-type for the output
-    internal : data-type, optional
-        Internal data-type for compuatations
 
     Returns
     -------
@@ -210,15 +208,14 @@ def polynomials(Z, mass, z, n=None, init=None, dtype='float64', internal='float1
 
     n = np.shape(Z)[1]
     if init is None:
-        init = 1 + 0*z
-        init /= np.sqrt(mass, dtype=internal)
+        init = (1 + 0*z) / np.sqrt(mass, dtype=dtype)
 
     shape = n
     if type(z) == np.ndarray:
-        z = z.astype(internal)
+        z = z.astype(dtype)
         shape = (shape, len(z))
 
-    P    = np.empty(shape, dtype=internal)
+    P    = np.empty(shape, dtype=dtype)
     P[0] = init
 
     Z = banded(Z).data
@@ -231,10 +228,10 @@ def polynomials(Z, mass, z, n=None, init=None, dtype='float64', internal='float1
         for k in range(2,n):
             P[k] = ((z-Z[1,k-1])*P[k-1] - Z[0,k-2]*P[k-2])/Z[2,k]
 
-    return P.astype(dtype)
+    return P
 
 
-def quadrature_nodes(Z, mass, n=None, dtype='float64'):
+def quadrature_nodes(Z, n=None, dtype='float64'):
     """
     Compute the generalized Jacobi quadrature nodes from the
     three-term recurrence coefficients.
@@ -246,8 +243,6 @@ def quadrature_nodes(Z, mass, n=None, dtype='float64'):
     ----------
     Z : sparse matrix
         Jacobi operator with three-term recurrence coefficients
-    mass : float
-        Floating point integral of weight function
     dtype : data-type, optional
         Desired data-type for the output
 
@@ -260,9 +255,12 @@ def quadrature_nodes(Z, mass, n=None, dtype='float64'):
     if n is not None:
         Z = _truncate(Z, shape=(n+1,n))
 
-    Z = Z.astype('float64')  # eigvalsh requires double precision
-    zj = eigvalsh_tridiagonal(Z.diagonal(0), Z.diagonal(1))
-    indices = np.argsort(zj)
+    if Z.dtype in [np.dtype(f'complex{bits}') for bits in [64,128,256]]:
+        zj = eigvals(Z[:-1,:])
+        indices = np.argsort(zj.real)
+    else:
+        zj = eigvalsh_tridiagonal(Z.diagonal(0), Z.diagonal(1))
+        indices = np.argsort(zj)
     return zj[indices].astype(dtype)
 
 
@@ -289,13 +287,13 @@ def quadrature(Z, mass, n=None, dtype='float64'):
         Quadrature nodes and weights for integration under the generalize Jacobi weight
 
     """
-    z = quadrature_nodes(Z, mass, n=n, dtype=dtype)
+    z = quadrature_nodes(Z, n=n, dtype=dtype)
     P = polynomials(Z, mass, z, dtype=dtype)
     w = P[0]**2/np.sum(P**2,axis=0) * mass
     return z.astype(dtype), w.astype(dtype)
 
 
-def clenshaw_summation(f, Z, mass, z, dtype='float64', internal='float128'):
+def clenshaw_summation(f, Z, mass, z, dtype='float64'):
     """
     Clenshaw summation algorithm to sum a finite polynomial series.
     The algorithm uses the three-term recurrence coefficients to
@@ -315,8 +313,6 @@ def clenshaw_summation(f, Z, mass, z, dtype='float64', internal='float128'):
         Locations to evaluate the polynomial series
     dtype : data-type, optional
         Desired data-type for the output
-    internal : data-type, optional
-        Internal data-type for compuatations
 
     Returns
     -------
@@ -324,9 +320,9 @@ def clenshaw_summation(f, Z, mass, z, dtype='float64', internal='float128'):
     of each column of f coefficients at locations z
 
     """
-    init = np.sqrt(mass, dtype=internal)
+    init = np.sqrt(mass, dtype=dtype)
     alpha, bn = Z.diagonal(0), np.append(init, Z.diagonal(1))
-    alpha, bn = [c.astype(internal) for c in [alpha, bn]]
+    alpha, bn = [c.astype(dtype) for c in [alpha, bn]]
     n = len(alpha)-1
     if np.shape(f)[0] != n+1:
         raise ValueError('Incorrect coefficient shape')
@@ -337,15 +333,15 @@ def clenshaw_summation(f, Z, mass, z, dtype='float64', internal='float128'):
     else:
         shape = np.shape(f)[1:] + np.shape(z)
 
-    v = np.empty(np.shape(f)+np.shape(z), dtype=internal)
+    v = np.empty(np.shape(f)+np.shape(z), dtype=dtype)
     f, z = f[:,:,np.newaxis], z[np.newaxis,:]
-    f, z = [c.astype(internal) for c in [f, z]]
+    f, z = [c.astype(dtype) for c in [f, z]]
 
     v[n] = f[n]/bn[n]
     v[n-1] = (f[n-1] + (z-alpha[n-1])*v[n])/bn[n-1]
     for k in range(n-2, -1, -1):
         v[k] = (f[k] + (z-alpha[k])*v[k+1] - bn[k+1]*v[k+2])/bn[k]
-    return v[0].reshape(shape).astype(dtype)
+    return v[0].reshape(shape)
 
 
 def remove_zero_rows(mat):
