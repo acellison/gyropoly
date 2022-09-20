@@ -1,9 +1,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy import sparse
 
 from dedalus_sphere import jacobi
 from gyropoly import augmented_jacobi
-from gyropoly.christoffel_darboux import christoffel_darboux
+from gyropoly.christoffel_darboux import christoffel_darboux, _christoffel_darboux_quadratic_impl
 
 from gyropoly import tools
 
@@ -98,7 +99,7 @@ def test_christoffel_darboux_quadratic_complex_roots():
        Christoffel-Darboux to each (x-xi).  This seems to works except for the
        presence of alternating signs in the beta coefficients
     """
-    n, a, b, c = 20, 1, 2, 1
+    n, a, b, c = 20, 1, 2, 2
 
     # Quadratic augmenting factor, imaginary roots
     y = 1 + 1j  # rho = x**2 + 2*x + 2
@@ -107,7 +108,7 @@ def test_christoffel_darboux_quadratic_complex_roots():
 
     # Compute the base system recurrence
     Zbase = jacobi.operator('Z', dtype='float128')(n + 2*(c+1), a, b)
-    mu0, alpha0, beta0 = jacobi.mass(a, b), Zbase.diagonal(0), Zbase.diagonal(-1)
+    mu0, alpha0, beta0 = jacobi.mass(a, b, dtype='float128'), Zbase.diagonal(0), Zbase.diagonal(-1)
 
     # Compute the augmented polynomials
     mu1, alpha1, beta1 = christoffel_darboux(n+c+1, mu0, alpha0, beta0, rhoi[0], c, dtype='complex256', internal='complex256')
@@ -133,19 +134,9 @@ def test_christoffel_darboux_quadratic_complex_roots():
     assert np.max(abs(alpha2 - Z.diagonal(0))) < 1e-15
     assert np.max(abs(beta2 - Z.diagonal(-1))) < 1e-15
 
-    Zbase = jacobi.operator('Z', dtype='float128')(n+1, a, b)
-    mu0, alpha0, beta0 = jacobi.mass(a, b), Zbase.diagonal(0), Zbase.diagonal(-1)
-    P = jacobi.polynomials(n+2, a, b, 1j*y, dtype='complex256', internal='complex256')
-    zq, wq = jacobi.quadrature(2, a, b, dtype='float128')
-    mu = np.sum(wq * np.polyval(rho, zq))
-
-    Pc = np.cumsum(abs(P).real**2)
-    Pr, Pcr = (P[:-1]/P[1:]).real, Pc[1:]/Pc[:-1]
-    beta = np.sqrt( Pc[:n]*Pc[2:n+2] / Pc[1:n+1]**2 ) * beta0[1:n+1]
-    alpha = (Pcr[1:n+1] - 1)*Pr[1:n+1] * beta0[1:n+1] \
-          - (Pcr[:n]    - 1)*Pr[:n]    * beta0[:n] \
-          + alpha0[1:n+1]
-    assert np.max(abs(mu - mu2)) < 1e-15
+    # Compute the system using the quadratic C-D algorithm
+    mu, alpha, beta = christoffel_darboux(n, mu0, alpha0, beta0, rho, c, dtype='float128', internal='complex256')
+    assert abs(mu - mu2) < 1e-15
     assert np.max(abs(alpha - alpha2)) < 1e-15
     assert np.max(abs(beta - beta2)) < 1e-15
 
@@ -230,13 +221,13 @@ def test_factor_quadratic():
     poly3 = [1,-z3]
     poly = a0 * np.polymul(np.polymul(poly1, poly2), poly3)
     gain, factors = factor_into_real_quadratics(poly)
-    print(gain, factors)
 
 
 if __name__ == '__main__':
     test_christoffel_darboux_one_factor()
     test_christoffel_darboux_two_factors()
-    test_christoffel_darboux_quadratic_complex_roots()
     test_christoffel_darboux_quadratic_real_roots()
     test_christoffel_darboux_annulus()
+    test_christoffel_darboux_quadratic_complex_roots()
     test_factor_quadratic()
+
