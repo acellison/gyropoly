@@ -86,6 +86,9 @@ class AugmentedJacobiSystem():
     def is_scaled_jacobi(self):
         return self.__is_scaled_jacobi
 
+    def unweighted_subdegree(self, which):
+        return sum(np.asarray(self.__polynomial_product.degrees)[which])
+
     def apply_arrow(self, da, db, dc):
         if len(dc) != self.num_augmented_factors:
             raise ValueError('Invalid number of parameters')
@@ -93,10 +96,10 @@ class AugmentedJacobiSystem():
         c = [c+d for c,d in zip(self.augmented_params, dc)]
         return AugmentedJacobiSystem(a, b, zip(self.__augmented_factors, c))
 
-    def rho(self, z):
-        return self.__polynomial_product.evaluate(z, weighted=False)
+    def rho(self, z, which='all'):
+        return self.__polynomial_product.evaluate(z, weighted=False, which=which)
 
-    def rhoprime(self, z, weighted=True, which=0):
+    def rhoprime(self, z, weighted=True, which='all'):
         return self.__polynomial_product.derivative(z, weighted=weighted, which=which)
 
     def augmented_weight(self, z):
@@ -142,6 +145,10 @@ class PolynomialProduct():
         return self.__factors
 
     @property
+    def derivatives(self):
+        return self.__derivatives
+
+    @property
     def degrees(self):
         return self.__degrees
 
@@ -156,20 +163,38 @@ class PolynomialProduct():
     def __len__(self):
         return self.__n
 
-    def evaluate(self, z, weighted=True):
+    def evaluate(self, z, weighted=True, which='all'):
         n = len(self)
         c = self.powers if weighted else np.ones(n, int)
-        return np.prod([factor(z)**c for factor, c in zip(self.factors, c)], axis=0)
+        factors = np.asarray(self.factors)
+        if isinstance(which, str) and which == 'all':
+            indices = np.arange(n)
+        else:
+            if isinstance(which, int): which = [which]
+            n, indices = len(which), np.array([w for w in which], dtype=int)
 
-    def derivative(self, z, weighted=True, which=0):
-        n = len(self)
+        if n == 0:
+            return 0*z+1
+
+        c, factors = [np.asarray(a)[indices] for a in [c, factors]]
+        return np.prod([factor(z)**c for factor, c in zip(factors, c)], axis=0)
+
+    def derivative(self, z, weighted=True, which='all'):
+        if isinstance(which, str) and which == 'all':
+            n = len(self)
+            indices = np.arange(n)
+        else:
+            if isinstance(which, int): which = [which]
+            n, indices = len(which), np.array([w for w in which], dtype=int)
+
+        if n == 0:
+            return 0*z
+
+        c, factors, derivatives = [np.asarray(a)[indices] for a in [self.powers, self.factors, self.derivatives]]
         if not weighted:
-            # The derivative is unweighted - this means we only want to multiply by the
-            # derivative of the polynomial at index `which'
-            return self.__derivatives[which](z)
+            c = np.ones(n)
 
-        c = self.powers
-        f, fprime = [[g(z) for g in feval] for feval in [self.__factors, self.__derivatives]]
+        f, fprime = [[g(z) for g in feval] for feval in [factors, derivatives]]
         products = [np.prod([f[j] for j in range(n) if j != i], axis=0) for i in range(n)]
         return np.sum([c[i]*fprime[i]*products[i] for i in range(n)], axis=0)
 
@@ -670,7 +695,7 @@ def embedding_operator(kind, system, n, dtype='float64', internal='float128', **
     return diags(bands, offsets, shape=(n,n), dtype=dtype)
 
 
-def rhoprime_multiplication(system, n, weighted=True, which=0, dtype='float64', internal='float128', **recurrence_kwargs):
+def rhoprime_multiplication(system, n, weighted=True, which='all', dtype='float64', internal='float128', **recurrence_kwargs):
     parity = system.has_even_parity
     use_jacobi_quadrature = recurrence_kwargs.pop('use_jacobi_quadrature', False)
 
@@ -916,6 +941,71 @@ def differential_operator_adjoint(kind, system, n, dtype='float64', internal='fl
     return diags(bands, offsets, shape=(n+m,n), dtype=dtype)
 
 
+def _diffop_dn(da, db, dc, system):
+    which = np.where(np.asarray(dc) == -1)[0]
+    degree = system.unweighted_subdegree(which)
+    return degree - (da+db)//2
+    
+
+def general_differential_operator(da, db, dc, system, n, dtype='float64', internal='float128', **recurrence_kwargs):
+    """Define a general differential operator on the Augmented Jacobi system.
+    """
+    if len(dc) != system.num_augmented_factors:
+        raise ValueError('Must have one delta per Augmented Jacobi index')
+
+    which = np.where(np.asarray(dc) == -1)[0]
+    rho_fun, rho_der, degree = system.rho, system.rhoprime, system.unweighted_subdegree(which)
+    parity = system.has_even_parity
+    use_jacobi_quadrature = recurrence_kwargs.pop('use_jacobi_quadrature', False)
+
+    A, B, C, D, Id = [jacobi.operator(name, dtype=internal) for name in ['A', 'B', 'C', 'D', 'Id']]
+    if (da,db) == (+1,+1):
+        op1, op2 = D(+1), Id
+    elif (da,db) == (+1,-1):
+        op1, op2 = C(+1), B(-1)
+    elif (da,db) == (-1,+1):
+        op1, op2 = C(-1), -A(-1)
+    elif (da,db) == (-1,-1):
+        op1, op2 = D(-1), -A(-1) @ B(-1)
+    else:
+        raise ValueError('da and db must each be one of {+1,-1}')
+
+    m = _diffop_dn(da, db, dc, system)
+    offsets = np.arange(-m, min(n, system.unweighted_degree-m+1))
+
+    if parity and (da, db, dc) in [(+1,+1,(+1,)*nc), (+1,+1,(-1,)*nc), (-1,-1,(+1,)*nc), (-1,-1,(-1,)*nc)]:
+        offsets = offsets[0::2]
+
+    cosystem = system.apply_arrow(da, db, dc)
+    a, b = system.a, system.b
+
+    # Project Pn onto Jm
+    # i'th column of projPJ is the coefficients of P[i] w.r.t. J[j]
+    z, w = jacobi.quadrature(n, a, b, dtype=internal)
+    P = system.polynomials(n, z, dtype=internal, **recurrence_kwargs)
+    J = jacobi.polynomials(n, a, b, z, dtype=internal)
+    projPJ = np.array([np.sum(w*P*J[k], axis=1) for k in range(n)])
+
+    # Compute the operator on J
+    # i'th column of f is grid space evaluation of Op[P[i]]
+    coeffs = [op(n,a,b) @ projPJ for op in [op1,op2]]
+    Z = [jacobi.operator('Z', dtype=internal)(*op.codomain(n, a, b)) for op in [op1,op2]]
+    mass = [jacobi_mass(*op.codomain(n, a, b)[1:], dtype=internal) for op in [op1,op2]]
+    def evaluate_on_grid(z, index):
+        return tools.clenshaw_summation(coeffs[index], Z[index], mass[index], z, dtype=internal)
+    def fun(z):
+        f1, f2 = [evaluate_on_grid(z, index) for index in [0,1]]
+        z = z[np.newaxis,:]
+        return rho_fun(z, which=which)*f1 + rho_der(z, which=which)*f2
+
+    bands = project(cosystem, n, m, fun, offsets, dtype=internal, use_jacobi_quadrature=use_jacobi_quadrature, **recurrence_kwargs)
+    return diags(bands, offsets, shape=(n+m,n), dtype=dtype)
+
+
+def general_differential_operator_adjoint(da, db, dc, system, n, dtype='float64', internal='float128', **recurrence_kwargs):
+    return general_differential_operator(-da, -db, tuple(-c for c in dc), system, n, dtype=dtype, internal=internal, **recurrence_kwargs)
+
+
 @decorators.cached
 def operator(name, factors, dtype='float64', internal='float128', **recurrence_kwargs):
     """
@@ -952,7 +1042,7 @@ def operator(name, factors, dtype='float64', internal='float128', **recurrence_k
         return AugmentedJacobiOperator.recurrence(factors, dtype=dtype, internal=internal, **recurrence_kwargs)
     if name == 'rhoprime':
         weighted = recurrence_kwargs.pop('weighted', True)
-        which = recurrence_kwargs.pop('which', 0)
+        which = recurrence_kwargs.pop('which', 'all')
         return AugmentedJacobiOperator.rhoprime(factors, weighted=weighted, which=which, dtype=dtype, internal=internal, **recurrence_kwargs)
     if name in ['C', 'H'] and len(factors) == 1:
         name = (name, 0)
@@ -1200,7 +1290,7 @@ class AugmentedJacobiOperator():
             return infinite_csr(op)
 
     @staticmethod
-    def rhoprime(factors, weighted=True, which=0, dtype='float64', internal='float128', **recurrence_kwargs):
+    def rhoprime(factors, weighted=True, which='all', dtype='float64', internal='float128', **recurrence_kwargs):
         nc = len(factors)
         dn = PolynomialProduct(factors).total_degree(weighted=False)-1
         return Operator(factors,AugmentedJacobiOperator._Rhoprime(factors,weighted,which,dtype,internal,**recurrence_kwargs),AugmentedJacobiCodomain(dn,0,0,(0,)*nc))
