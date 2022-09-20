@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from functools import partial
+from itertools import product
 
 from dedalus_sphere import jacobi
 
@@ -26,7 +27,8 @@ def check_close(a, b, tol, verbose=False):
     error = np.max(abs(a-b))
     if verbose and error > tol:
         print(f'Error {error} exceeds tolerance {tol}')
-    assert error <= tol
+    if not verbose:
+        assert error <= tol
 
 
 def check_raises(f, e=ValueError):
@@ -655,6 +657,82 @@ def test_mismatching_augmented_weight():
     check_doesnt_raise(lambda: A1(+1) * A2(+1))
 
 
+def test_general_differential_operators():
+    print('test_general_differential_operators')
+    dtype = 'float128'
+    zz = np.linspace(-1,1,1000, dtype=dtype)
+
+    n = 6  # one more than degree of f
+    def make_functions(a, b):
+        f = lambda z: 4 + 2*z + z**2 - z**3 + 0.2*z**5
+        fprime = lambda z: 2 + 2*z - 3*z**2 + z**4
+        Df = fprime
+        Ef = lambda z: a*f(z) - (1-z)*fprime(z)
+        Ff = lambda z: b*f(z) + (1+z)*fprime(z)
+        Gf = lambda z: ((1+z)*a - (1-z)*b)*f(z) - (1-z**2)*fprime(z)
+        return f, Df, Ef, Ff, Gf
+
+    def check_grid(system, op, dn, da, db, dc, fin, fout, tol, verbose=False):
+        z, w = system.quadrature(n, dtype=dtype)
+        P = system.polynomials(n, z, dtype=dtype)
+        finz = fin(z)
+        projP = [np.sum(w*finz*P[k]) for k in range(n)]
+        coeffs = op @ projP
+
+        cosystem = system.apply_arrow(da,db,dc)
+        fcoeff = cosystem.expand(coeffs, zz, dtype=dtype)
+        foutz = fout(zz)
+        check_close(fcoeff, foutz, tol, verbose=verbose)
+
+    kwargs = {'use_jacobi_quadrature': False, 'algorithm': 'stieltjes'}
+    diff = lambda da, db, dc, system, n: ajacobi.general_differential_operator(da, db, dc, system, n, dtype=dtype, **kwargs)
+
+    def run_tests(a, b, rhoc, tol, verbose=False):
+        system = make_system(a,b,rhoc)
+        nc = len(rhoc)
+
+        make_n_args = lambda n: tuple([+1,-1] for _ in range(n))
+        kinds = list(product(*make_n_args(2), product(*make_n_args(nc))))
+
+        f, Df, Ef, Ff, Gf = make_functions(a, b)
+        for kind in kinds:
+            da, db, dc = kind
+            Op = diff(da, db, dc, system, n)
+            dn = -np.diff(np.shape(Op))[0]
+
+            which = np.where(np.asarray(dc) == -1)[0]
+            rho_fun = lambda z: system.rho(z, which=which)
+            rho_der = lambda z: system.rhoprime(z, which=which)
+
+            if   (da,db) == (+1,+1): D, I = Df, (lambda _: 1)
+            elif (da,db) == (+1,-1): D, I = Ff, (lambda z: 1+z)
+            elif (da,db) == (-1,+1): D, I = Ef, (lambda z: -(1-z))
+            elif (da,db) == (-1,-1): D, I = Gf, (lambda z: -(1-z**2))
+            fexact = lambda z: rho_fun(z) * D(z) + rho_der(z) * I(z) * f(z)
+
+            check_grid(system, Op, dn, da, db, dc, f, fexact, tol, verbose=verbose)
+
+    # Test 1
+    a, b = 0.5, 0.5
+    rho1, c1 =   [1,0,1], 1
+    rho2, c2 = [1,0,0,3], 2
+    run_tests(a, b, [(rho1,c1),(rho2,c2)], 1e-12, verbose=True)
+
+    # Test 2
+    a, b = 2, 0.5
+    rho1, rho2, rho3 = [1,2], [1,3], [1,4]
+    c1, c2, c3 = 1,2,3
+    run_tests(a, b, [(rho1,c1),(rho2,c2),(rho3,c3)], 1e-10, verbose=True)
+
+    # Test 3: Stretched Annulus
+    alpha, sigma, m, ell = 1, 0, 10, 4
+    Si, So = 0.5, 2.0
+    H = [(So**2-Si**2)/2, (So**2+Si**2)/2+1]  # 1+s**2
+    S = [So**2-Si**2, So**2+Si**2]
+    a, b, c1, c2 = alpha, alpha, 2*ell+2*alpha+1, m+sigma
+    run_tests(a, b, [(H,c1),(S,c2)], 1e-8, verbose=True)
+
+
 def profile_cache():
     rho = [(1,0,1)]
     n,a,b,c = 200, 1, 1, 3
@@ -674,6 +752,7 @@ def profile_cache():
 
 
 def main():
+    np.random.seed(42)
     test_mass()
     test_recurrence()
     test_polynomials()
@@ -685,6 +764,7 @@ def main():
     test_operator_codomains()
     test_operator_composition()
     test_mismatching_augmented_weight()
+    test_general_differential_operators()
     print('ok')
 
 
