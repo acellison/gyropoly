@@ -287,8 +287,11 @@ def quadrature(Z, mass, n=None, dtype='float64'):
         Quadrature nodes and weights for integration under the generalize Jacobi weight
 
     """
+    shape = np.shape(Z)
+    if shape[0] < n+1 or shape[1] < n:
+        raise ValueError('Recurrence is not large enough to generate n quadrature nodes')
     z = quadrature_nodes(Z, n=n, dtype=dtype)
-    P = polynomials(Z, mass, z, dtype=dtype)
+    P = polynomials(Z, mass, z, n=n+1, dtype=dtype)
     w = P[0]**2/np.sum(P**2,axis=0) * mass
     return z.astype(dtype), w.astype(dtype)
 
