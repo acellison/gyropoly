@@ -1,1 +1,1 @@
-parallel = True
+parallel = False
