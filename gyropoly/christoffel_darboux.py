@@ -4,6 +4,19 @@ from scipy.sparse import diags
 from . import tools
 
 
+def _complex_dtype_for_dtype(dtype):
+    dtype = np.dtype(dtype)
+    return {np.dtype('float64'):  'complex128',
+            np.dtype('float128'): 'complex256' }[dtype]
+
+
+def _complex_dtype_for_rho(rho, dtype):
+    if np.any(abs(np.asarray(rho).imag) > 0):
+        return _complex_dtype_for_dtype(dtype)
+    else:
+        return dtype
+
+
 def _christoffel_darboux_base(n, mu, alpha, beta, zintercept, dtype='float64'):
     Z = diags([beta, alpha, beta[:-1]], [-1,0,1], shape=(len(alpha)+1,len(alpha)))
     Pn = tools.polynomials(Z, mu, zintercept, n=n+1, dtype=dtype)
@@ -23,18 +36,19 @@ def _christoffel_darboux_impl(n, mu, alpha, beta, rho, c, dtype='float64'):
         raise ValueError('Base system recurrence is too small')
 
     # Manipulate rho into standard form, zintercept ± z
-    m, b = rho = np.array(rho, dtype=dtype)
+    complex_dtype = _complex_dtype_for_rho(rho, dtype)
+    m, b = np.array(rho, dtype=complex_dtype)
 
     # Recurse down
     if c == 0:
         zintercept = -b/m
-        return _christoffel_darboux_base(n, mu, alpha, beta, zintercept, dtype=dtype)
+        return _christoffel_darboux_base(n, mu, alpha, beta, zintercept, dtype=complex_dtype)
     else:
         mu, alpha, beta, P = _christoffel_darboux_impl(n+1, mu, alpha, beta, rho, c-1, dtype=dtype)
 
     # Compute the mass of the c polynomials
     Z0 = np.array([[alpha[0], beta[0]], [beta[0], alpha[1]]])
-    zq, wq = tools.quadrature(Z0, mu, n=1, dtype=dtype)
+    zq, wq = tools.quadrature(Z0, mu, n=1, dtype=complex_dtype)
     mu1 = np.sum(wq * np.polyval(rho, zq))
 
     # Compute the Cn coefficients from the c-1 polynomials.
@@ -78,12 +92,14 @@ def _christoffel_darboux_quadratic_impl(n, mu, alpha, beta, rho, c, dtype='float
     roots = np.roots(rho)
     zintercept = roots[0].real + 1j*abs(roots[0].imag)
 
+    complex_dtype = (1j*np.array(0, dtype=dtype)).dtype
+
     # Evaluate the new polynomials at the complex root
     Z = diags([beta, alpha, beta], [-1,0,1], shape=(len(alpha)+1,len(alpha)))
-    P = tools.polynomials(Z, mu, zintercept, n=n+2, dtype='complex256')
+    P = tools.polynomials(Z, mu, zintercept, n=n+2, dtype=complex_dtype)
 
     # Compute the mass of the c polynomials
-    zq, wq = tools.quadrature(Z, mu, n=2, dtype='float128')
+    zq, wq = tools.quadrature(Z, mu, n=2, dtype=dtype)
     mu1 = np.sum(wq * np.polyval(rho, zq))
 
     # Compute the recurrence coefficients
@@ -98,7 +114,7 @@ def _christoffel_darboux_quadratic_impl(n, mu, alpha, beta, rho, c, dtype='float
     return mu1, alpha1, beta1
 
 
-def christoffel_darboux(n, mu, alpha, beta, rho, c, dtype='float64', internal='float128'):
+def christoffel_darboux(n, mu, alpha, beta, rho, c, dtype='float64'):
     """Compute the recurrence corresponding to augmenting the weight function given
        by the base system's three-term recurrence (alpha,beta) by the factor rho**c
 
@@ -113,13 +129,11 @@ def christoffel_darboux(n, mu, alpha, beta, rho, c, dtype='float64', internal='f
        beta : float
            Off-diagonal of the three-term recurrence coefficients of the base OP system
        rho : array
-           Degree-one polynomial to augment the base OP system
+           Degree one or two polynomial to augment the base OP system
        c : non-negative integer
            Degree to which rho is raised in the augmented OP system           
        dtype : str, optional
-           Data type for the output
-       internal : str, optional
-           Data type for computations
+           Data type for computation
 
        Returns
        -------
@@ -134,6 +148,5 @@ def christoffel_darboux(n, mu, alpha, beta, rho, c, dtype='float64', internal='f
         fun = _christoffel_darboux_quadratic_impl
     else:
         raise ValueError('Polynomial must be either linear or quadratic')
-    result = fun(n, mu, alpha, beta, rho, c, dtype=internal)[:3]
-    return tuple(value.astype(dtype) for value in result)
+    return fun(n, mu, alpha, beta, rho, c, dtype=dtype)[:3]
 

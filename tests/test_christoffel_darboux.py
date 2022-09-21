@@ -4,7 +4,7 @@ from scipy import sparse
 
 from dedalus_sphere import jacobi
 from gyropoly import augmented_jacobi
-from gyropoly.christoffel_darboux import christoffel_darboux, _christoffel_darboux_quadratic_impl
+from gyropoly.christoffel_darboux import christoffel_darboux
 
 from gyropoly import tools
 
@@ -20,7 +20,7 @@ def test_christoffel_darboux_one_factor():
 
     for rho in rho_polys:
         # Compute the c=1 polynomials
-        mu1, alpha1, beta1 = christoffel_darboux(n, mu0, alpha0, beta0, rho, c)
+        mu1, alpha1, beta1 = christoffel_darboux(n, mu0, alpha0, beta0, rho, c, dtype='float128')
 
         # Compute the the standard (stieltjes) way
         system = augmented_jacobi.AugmentedJacobiSystem(a, b, [(rho, c)])
@@ -49,7 +49,7 @@ def test_christoffel_darboux_two_factors():
 
     for rho2 in rho_polys:
         # Compute the c=1 polynomials
-        mu1, alpha1, beta1 = christoffel_darboux(n, mu0, alpha0, beta0, rho2, c2)
+        mu1, alpha1, beta1 = christoffel_darboux(n, mu0, alpha0, beta0, rho2, c2, dtype='float128')
 
         # Compute the the standard (stieltjes) way, fixing up the normalization
         system = augmented_jacobi.AugmentedJacobiSystem(a, b, [(rho1, c1), (rho2,c2)])
@@ -111,8 +111,8 @@ def test_christoffel_darboux_quadratic_complex_roots():
     mu0, alpha0, beta0 = jacobi.mass(a, b, dtype='float128'), Zbase.diagonal(0), Zbase.diagonal(-1)
 
     # Compute the augmented polynomials
-    mu1, alpha1, beta1 = christoffel_darboux(n+c+1, mu0, alpha0, beta0, rhoi[0], c, dtype='complex256', internal='complex256')
-    mu2, alpha2, beta2 = christoffel_darboux(n,     mu1, alpha1, beta1, rhoi[1], c, dtype='complex256', internal='complex256')
+    mu1, alpha1, beta1 = christoffel_darboux(n+c+1, mu0, alpha0, beta0, rhoi[0], c, dtype='float128')
+    mu2, alpha2, beta2 = christoffel_darboux(n,     mu1, alpha1, beta1, rhoi[1], c, dtype='float128')
 
     # Compute the the standard (stieltjes) way, fixing up the normalization
     system = augmented_jacobi.AugmentedJacobiSystem(a, b, [(rho, c)])
@@ -135,7 +135,7 @@ def test_christoffel_darboux_quadratic_complex_roots():
     assert np.max(abs(beta2 - Z.diagonal(-1))) < 1e-15
 
     # Compute the system using the quadratic C-D algorithm
-    mu, alpha, beta = christoffel_darboux(n, mu0, alpha0, beta0, rho, c, dtype='float128', internal='complex256')
+    mu, alpha, beta = christoffel_darboux(n, mu0, alpha0, beta0, rho, c, dtype='float128')
     assert abs(mu - mu2) < 1e-15
     assert np.max(abs(alpha - alpha2)) < 1e-15
     assert np.max(abs(beta - beta2)) < 1e-15
