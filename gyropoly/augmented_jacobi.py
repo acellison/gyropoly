@@ -908,8 +908,6 @@ def differential_operator_adjoint(kind, system, n, dtype='float64', internal='fl
         da, db, m = +1, +1, degree-1
         op1, op2 = D(+1), Id
         offsets = -np.arange(-1,m+1)
-    elif isinstance(kind, tuple) and kind[0] == 'H':
-        raise ValueError('Not implemented')
     else:
         raise ValueError(f'Invalid kind: {kind}')
     if parity and kind in ['D', 'G']:

@@ -578,23 +578,23 @@ def _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma, dtype='
 
     # Construct the fundamental Augmented Jacobi operators
     ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
-    Id, A, B, C1, C2 = [ops(kind) for kind in ['Id', 'A', 'B', ('C',0),('C',1)]]
+    Id, A, B, H, S = [ops(kind) for kind in ['Id', 'A', 'B', ('C',0),('C',1)]]
     R = ops('rhoprime', weighted=False, which=0)
-    Dz, Da, Db, Dc, H1, H2 = [ops(kind) for kind in ['D', 'E', 'F', 'G', ('H',0), ('H',1)]]
+    Dz, Da, Db, Dc, DH, DS = [ops(kind) for kind in ['D', 'E', 'F', 'G', ('H',0), ('H',1)]]
 
     # Construct the radial part of the operators.  
     # L<n> is the operator that maps vertical index ell to ell-n
     cpower = 0 if geometry.root_h else 1
     if delta == +1:
         # Raising operator
-        L0 =   C1(+1)**cpower @ Dz(+1)
-        L1 = - R @ A(+1) @ B(+1) @ C2(+1)
-        L2 = - C1(-1)**cpower @ H1(+1)
+        L0 =   H(+1)**cpower @ Dz(+1)
+        L1 = - R @ A(+1) @ B(+1) @ S(+1)
+        L2 = - H(-1)**cpower @ DH(+1)
     elif delta == -1:
         # Lowering operator
-        L0 =   C1(+1)**cpower @ H2(+1)
-        L1 = - R @ A(+1) @ B(+1) @ C2(-1)
-        L2 = - C1(-1)**cpower @ Dc(-1)
+        L0 =   H(+1)**cpower @ DS(+1)
+        L1 = - R @ A(+1) @ B(+1) @ S(-1)
+        L2 = - H(-1)**cpower @ Dc(-1)
     else:
         # Neutral operator
         L0 = 0
@@ -834,22 +834,23 @@ def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype
 
     """
     ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
-    A, B, C, R, Id = ops('A'), ops('B'), ops('C'), ops('rhoprime', weighted=False, which=0), ops('Id')
+    A, B, H, S, R, Id = ops('A'), ops('B'), ops(('C',0)), ops(('C',1)), ops('rhoprime', weighted=False, which=0), ops('Id')
     Zero = 0*Id
 
     if surface == 'z=h':
         root_h_scale = 1 if geometry.root_h else 2
-        scale = root_h_scale/geometry.radius
-        Lp = -scale * R @ B(-1)
-        Lm = -scale * R @ B(+1)
+        Si, So = geometry.radii
+        scale = root_h_scale/(So**2 - Si**2)
+        Lp = -scale * R @ S(-1)
+        Lm = -scale * R @ S(+1)
         if geometry.root_h:
-            Lzp1 = C(+1)
-            Lzm1 = C(-1)
+            Lzp1 = H(+1)
+            Lzm1 = H(-1)
             dl, dn = 1, 1 + R.codomain.dn
             zop = jacobi.operator('Z', dtype=internal)(Lmax, alpha, alpha)
         else:
             Lz = Id
-            dl, dn = 0, 1 + R.codomain.dn
+            dl, dn = 0, Lp.codomain.dn
     elif surface == 'z=-h':
         if geometry.cylinder_type != 'full':
                 raise ValueError('Half cylinder cannot be evaluated at z=-h')
@@ -863,9 +864,11 @@ def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype
         Lm = Zero
         Lz = -Id
         dl, dn = 0, 0
-    elif surface == 's=S':
-        Lp = geometry.radius/2 * B(-1)
-        Lm = geometry.radius/2 * B(+1)
+    elif surface in ['s=So', 's=Si']:
+        Lp = 1/2 * S(-1)
+        Lm = 1/2 * S(+1)
+        if surface == 's=Si':
+            Lp, Lm = -Lp, -Lm
         Lz = Zero
         dl, dn = 0, 1
     else:
@@ -1053,10 +1056,14 @@ def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', in
             raise ValueError('Half cylinder cannot be evaluated at z=-h')
         coordinate_value = {'h': 1., '-h': -1., '0': {'full': 0., 'half': -1.}[geometry.cylinder_type]}[location]
     elif direction == 's':
-        if location == 'S':
+        if location == 'So':
             coordinate_value = 1.
+        elif location == 'Si':
+            coordinate_value = -1.
         else:
-            coordinate_value = 2*float(location/geometry.radius)**2 - 1
+            s = float(location)
+            Si, So = geometry.radii
+            coordinate_value = (2*s**2-(So**2+Si**2))/(So**2-Si**2) 
     else:
         raise ValueError(f'Invalid surface coordinate (={direction}')
 
@@ -1069,20 +1076,16 @@ def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', in
         # ell times.  The highest mode (ell = Lmax-1) is left with C parameter (Lmax-1 + 2*alpha +1).
         # We then raise all C indices to match this highest mode.
         ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
-        C = ops('C')
+        H = ops(('C',0))
         radial_params = _radial_jacobi_parameters(geometry, m, alpha, sigma)
 
         div = 2 if geometry.root_h else 1
-        if geometry.sphere:
-            A = ops('A')
-            make_op = lambda ell: bc[ell] * (A(+1)**((Lmax-1-ell)//2) @ C(+1)**((Lmax-1-ell)//div) @ A(-1)**(ell//2) @ C(-1)**(ell//div))(lengths[ell], *radial_params(ell))
-        else:
-            make_op = lambda ell: bc[ell] * (C(+1)**((Lmax-1-ell)//div) @ C(-1)**(ell//div))(lengths[ell], *radial_params(ell))
+        make_op = lambda ell: bc[ell] * (H(+1)**((Lmax-1-ell)//div) @ H(-1)**(ell//div))(lengths[ell], *radial_params(ell))
         even_only = (coordinate_value, geometry.cylinder_type) == (0., 'full')
         ell_range = range(0, Lmax, 2 if even_only else 1)
 
         # Construct the operator.
-        if geometry.root_h or geometry.sphere:
+        if geometry.root_h:
             # Boundary evaluation splits into even and odd ell components.
             # For this reason the 'z=-h' evaluation operator is linearly dependent
             # with the 'z=h' evaluation operator.
@@ -1108,7 +1111,7 @@ def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', in
         bc = basis.radial_polynomials
 
         # Construct the operator
-        nrows = 1 if geometry.sphere else Lmax
+        nrows = Lmax
         B = zeros((nrows,ncols))
         for ell in range(nrows):
             n, index = lengths[ell], offsets[ell]

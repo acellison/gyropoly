@@ -269,8 +269,7 @@ def test_laplacian(geometry, m, Lmax, Nmax, alpha, operators):
 def test_ndot_top(geometry, m, Lmax, Nmax, alpha, operators):
     # Build the operator
     exact = True
-    root_sphere = geometry.sphere and geometry.root_h
-    dl, dn = ((1 if geometry.root_h else 0),geometry.degree+(1 if root_sphere else 0)) if exact else (0,0)
+    dl, dn = ((1 if geometry.root_h else 0), 1+geometry.degree) if exact else (0,0)
     op = operators('normal_component', surface=geometry.top, exact=exact)
 
     # Construct the coefficient vector and apply the operator
@@ -293,12 +292,10 @@ def test_ndot_top(geometry, m, Lmax, Nmax, alpha, operators):
     u = 1/np.sqrt(2) * (up + um)
     hp = np.polyval(np.polyder(geometry.hcoeff), t)
     uscale = 1/2 if geometry.root_h else 1
-    wscale = geometry.z(t, eta) if geometry.root_h else 1
-    if root_sphere:
-        ht = np.polyval(geometry.hcoeff, t)
-        ndotu_grid = np.sqrt(2*(1+t))/geometry.radius * (ht - (1-t)*hp) * u + wscale * w
-    else:
-        ndotu_grid = -2*uscale*np.sqrt(2*(1+t))/geometry.radius * hp * u + wscale * w
+    Si, So = geometry.radii
+    s = geometry.s(t)
+    z = geometry.z(t, eta) if geometry.root_h else 1
+    ndotu_grid = -4/(So**2-Si**2) * uscale * s * hp * u + z * w
 
     # Compute the error
     check_close(ndotu, ndotu_grid, 4e-13)
@@ -335,8 +332,7 @@ def test_ndot_bottom(geometry, m, Lmax, Nmax, alpha, operators):
         raise ValueError('z=-h not in half domain')
     # Build the operator
     exact = True
-    root_sphere = geometry.sphere and geometry.root_h
-    dl, dn = ((1 if geometry.root_h else 0),geometry.degree+(1 if root_sphere else 0)) if exact else (0,0)
+    dl, dn = ((1 if geometry.root_h else 0), 1+geometry.degree) if exact else (0,0)
     op = operators('normal_component', surface=geometry.bottom, exact=exact)
 
     # Construct the coefficient vector and apply the operator
@@ -359,14 +355,10 @@ def test_ndot_bottom(geometry, m, Lmax, Nmax, alpha, operators):
     u = 1/np.sqrt(2) * (up + um)
     hp = np.polyval(np.polyder(geometry.hcoeff), t)
     uscale = 1/2 if geometry.root_h else 1
-    wscale = geometry.z(t, eta) if geometry.root_h else 1
-    ndotu_grid = -2*uscale*np.sqrt(2*(1+t))/geometry.radius * hp * u - wscale * w
-    if root_sphere:
-        ht = np.polyval(geometry.hcoeff, t)
-        ndotu_grid = np.sqrt(2*(1+t))/geometry.radius * (ht - (1-t)*hp) * u - wscale * w
-    else:
-        ndotu_grid = -2*uscale*np.sqrt(2*(1+t))/geometry.radius * hp * u - wscale * w
-
+    Si, So = geometry.radii
+    s = geometry.s(t)
+    z = geometry.z(t, eta) if geometry.root_h else 1
+    ndotu_grid = -4/(So**2-Si**2) * uscale * s * hp * u - z * w
 
     # Compute the error
     check_close(ndotu, ndotu_grid, 4e-13)
@@ -376,7 +368,7 @@ def test_ndot_side(geometry, m, Lmax, Nmax, alpha, operators):
     # Build the operator
     exact = True
     dn = 1 if exact else 0
-    op = operators('normal_component', surface=geometry.side, exact=exact)
+    op = operators('normal_component', surface=geometry.outer_side, exact=exact)
 
     # Construct the coefficient vector and apply the operator
     ncoeff = sa.total_num_coeffs(geometry, Lmax, Nmax)
@@ -430,7 +422,7 @@ def test_convert(geometry, m, Lmax, Nmax, alpha, operators):
     g1 = basis1.expand(d1)
     g2 = basis2.expand(d2)
 
-    check_close(f, g1, 1.8e-13)
+    check_close(f, g1, 2.5e-13)
     check_close(f, g2, 1.8e-12)
 
 
@@ -456,145 +448,75 @@ def test_convert_adjoint(geometry, m, Lmax, Nmax, alpha, operators):
     check_close(f, g, 2e-14)
 
 
-def rank_deficiency(mat):
-    try:
-        mat = mat.todense()
-    except:
-        pass
-    rank = np.linalg.matrix_rank(mat)
-    return np.shape(mat)[0] - rank
+def test_boundary(geometry, m, Lmax, Nmax, alpha, operators):
+    sigma = 0
+    ncoeff = sa.total_num_coeffs(geometry, Lmax, Nmax)
 
-
-def create_boundary_combination(geometry, m, Lmax, Nmax, alpha, bottom):
-    if bottom not in ['z=0', 'z=-h']:
-        raise ValueError(f'Unknown bottom surface {bottom}')
-
-    operators = sa.operators(geometry, m, Lmax, Nmax, alpha)
-    op1 = operators('boundary', sigma=0, surface=geometry.top)
-    op2 = operators('boundary', sigma=0, surface=bottom)
-    op3 = operators('boundary', sigma=0, surface=geometry.side)
-
-    if geometry.sphere:
-        # In all cases we throw away op1[Nmax-1,:].  This equation is
-        # linearly dependent with equations from the odd ell set, op1[Nmax:,:].
-        if bottom == 'z=-h':
-            if geometry.root_h:
-                if geometry.degree == 0:
-                    ops = [op1,op3]
-                else:
-                    ops = [op1[:Nmax-1,:],op1[Nmax:,:],op3]
-            else:
-                if geometry.degree == 0:
-                    ops = [op1[:Nmax-1,:],op1[Nmax:,:],op3]
-                else:
-                    ops = [op1[:Nmax-1,:],op1[Nmax:-1,:],op3]
-        elif bottom == 'z=0':
-            if geometry.root_h:
-                if geometry.degree == 0:
-                    ops = [op1,op2,op3]
-                else:
-                    ops = [op1[:Nmax-1,:],op1[Nmax:,:],op2[:-2,:],op3]
-            else:
-                if geometry.degree == 0:
-                    ops = [op1,op2,op3]
-                else:
-                    ops = [op1[:Nmax-1,:],op1[Nmax:-1,:],op2[:-3,:],op3]
-    elif geometry.root_h:
-        if bottom == 'z=-h':
-            if Lmax%2 == 0:
-                ops = [op1[:-1,:],op3[:-2,:],op3[-1,:]]
-            else:
-                ops = [op1[:-1,:],op3[:-1,:]]
-        elif bottom == 'z=0':
-            if Lmax%2 == 0:
-                if geometry.degree == 0:
-                    ops = [op1[:Nmax-1,:],op1[Nmax:,:],op2[:-1,:],op3[:-1,:]]
-                else:
-                    ops = [op1[:Nmax-1,:],op1[Nmax:,:],op2[:-2,:],op3[:-1,:]]
-            else:
-                ops = [op1[:-1,:],op2[:-2,:],op3[:-1,:]]
-    else:
-        if Lmax%2 == 0:
-            if geometry.degree == 0:
-                ops = [op1[:-1,:],op2[:-1,:],op3]
-            else:
-                ops = [op1[:-1,:],op2[:-1,:],op3[:-1,:]]
-        else:
-            ops = [op1[:-1,:],op2[:-1,:],op3[:-2,:],op3[-1,:]]
-
-    return sparse.vstack(ops)
-
-
-def test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom):
-    # The three boundary operators have linearly dependent rows.  There are three cases:
-    # 1. Full Cylinder, evaluating at z=0
-    #    -> chuck the last equation from each surface evaluation operator
-    # 2. Full Cylinder, evaluating at z=-h
-    #    -> a. Lmax even ? chuck last equation
-    #    -> b. Lmax odd  ? chuck last equation from top, bottom, second to last from side
-    # 3. Half Cylinder
-    #    -> Same as 2b.
-    op = create_boundary_combination(geometry, m, Lmax, Nmax, alpha, bottom)
+    # Check the top
+    t = np.linspace(-1,1,100)
+    eta = np.array([1.])
+    basis = create_scalar_basis(geometry, m, Lmax, Nmax, alpha, t, eta)
+    op = operators('boundary', sigma=sigma, surface='z=h')
     nullspace = sp.linalg.null_space(op.todense())
-
-    # Create the evaluation basis
-    eta = np.linspace(-1,1,257)
-    t = np.linspace(-1,1,256)
-    basis = sa.Basis(geometry, m, Lmax, Nmax, alpha, sigma=0, eta=eta, t=t)
-
-    boundary_rows, num_coeffs = np.shape(op)
     dim = np.shape(nullspace)[1]
-    boundary_deficiency = dim - (num_coeffs-boundary_rows)
-#    if geometry.degree <= 1:
-#        check_close(rank_deficiency(op), 0, 0)
-#        check_close(boundary_deficiency, 0, 0)
-#    else:
-#        print('  Warning: skipping boundary_combination deficiency test for h polynomial with degree > 1')
-
-    errors = np.zeros((dim,3))
-    bottom_index = len(eta)//2 if bottom == 'z=0' and geometry.cylinder_type == 'full' else 0
+    deficit = 2*Nmax if geometry.root_h else Nmax
+    assert dim == ncoeff - deficit
+    errors = np.zeros(dim)
     for i in range(dim):
         f = basis.expand(nullspace[:,i])
-        fmax = np.max(abs(f))
-        errors[i,:] = [np.max(abs(a))/fmax for a in [f[-1,:], f[bottom_index,:], f[:,-1]]]
-    max_error = np.max(abs(errors))
-    check_close(max_error, 0, 4e-14)
+        errors[i] = np.max(np.abs(f))
+    check_close(errors, 0, 1e-13)
 
+    # Check the bottom
+    t = np.linspace(-1,1,100)
+    eta = np.array([-1.])
+    basis = create_scalar_basis(geometry, m, Lmax, Nmax, alpha, t, eta)
+    op = operators('boundary', sigma=sigma, surface=geometry.bottom)
+    nullspace = sp.linalg.null_space(op.todense())
+    dim = np.shape(nullspace)[1]
+    deficit = 2*Nmax if geometry.root_h else Nmax
+    assert dim == ncoeff - deficit
+    errors = np.zeros(dim)
+    for i in range(dim):
+        f = basis.expand(nullspace[:,i])
+        errors[i] = np.max(np.abs(f))
+    check_close(errors, 0, 1e-13)
 
-def test_boundary(geometry, m, Lmax, Nmax, alpha, operators):
-    test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom='z=0')
-    if geometry.cylinder_type == 'full':
-        test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom='z=-h')
+    # Check the outer side
+    t = np.array([1.])
+    eta = np.linspace(-1,1,100)
+    basis = create_scalar_basis(geometry, m, Lmax, Nmax, alpha, t, eta)
+    op = operators('boundary', sigma=sigma, surface='s=So')
+    nullspace = sp.linalg.null_space(op.todense())
+    dim = np.shape(nullspace)[1]
+    deficit = Lmax
+    assert dim == ncoeff - deficit
+    errors = np.zeros(dim)
+    for i in range(dim):
+        f = basis.expand(nullspace[:,i])
+        errors[i] = np.max(np.abs(f))
+    check_close(errors, 0, 1e-13)
 
-
-def test_project(geometry, m, Lmax, Nmax, alpha, operators):
-    if geometry.sphere:
-        print('  Warning: skipping project test for sphere geometry')
-        return
-
-    if geometry.degree > 1:
-        print('  Warning: skipping project test for h polynomial with degree > 1')
-        return
-
-    def project(direction, shift, Lstop=0): 
-        return operators('project', sigma=0, direction=direction, shift=shift, Lstop=Lstop)
-
-    top_shifts = [1,0]     # size Nmax-(Lmax-2) and Nmax-(Lmax-1), total = 2*Nmax-2*Lmax+3
-    side_shifts = [2,1,0]  # total size 3*(Lmax-2) = 3*Lmax-6, top+side = 2*Nmax+Lmax-3 ok
-    opt = [project(direction='z', shift=shift) for shift in top_shifts]
-    ops = [project(direction='s', shift=shift, Lstop=-2) for shift in side_shifts]
-
-    all_ops = ops + opt
-    ns = [np.shape(op)[1] for op in all_ops]
-    n = sum(ns)
-    target = 2*Nmax+Lmax-3 if not geometry.root_h else 2*Nmax+2*Lmax-4
-    check_close(n, target, 0)
+    # Check the inner side
+    t = np.array([-1.])
+    eta = np.linspace(-1,1,100)
+    basis = create_scalar_basis(geometry, m, Lmax, Nmax, alpha, t, eta)
+    op = operators('boundary', sigma=sigma, surface='s=Si')
+    nullspace = sp.linalg.null_space(op.todense())
+    dim = np.shape(nullspace)[1]
+    deficit = Lmax
+    assert dim == ncoeff - deficit
+    errors = np.zeros(dim)
+    for i in range(dim):
+        f = basis.expand(nullspace[:,i])
+        errors[i] = np.max(np.abs(f))
+    check_close(errors, 0, 1e-13)
 
 
 def main():
     Omega = 0.9
     alpha = 1.
-    degree = 0
+    degree = 1
     if degree == 0:
         h = [Omega]
         m, Lmax, Nmax = 3, 4, 10
@@ -608,12 +530,12 @@ def main():
         h = np.random.rand(degree+1)
         m, Lmax, Nmax = 3, 4, 10
         
-    funs = [test_gradient, test_divergence, test_curl, test_laplacian,
+    funs = [
+            test_gradient, test_divergence, test_curl, test_laplacian,
             test_convert,
             test_convert_adjoint,
-#            test_normal_component,
-#            test_boundary,
-#            test_project]
+            test_normal_component,
+            test_boundary,
         ]
 
     def test(geometry):
@@ -626,8 +548,6 @@ def main():
     geometries = [sa.Geometry(cylinder_type='full', hcoeff=h, radii=(0.5,2.0)),
                   sa.Geometry(cylinder_type='half', hcoeff=h, radii=(0.5,2.0)),
                   sa.Geometry(cylinder_type='full', hcoeff=h, radii=(0.5,2.0), root_h=True),
-#                  sa.Geometry(cylinder_type='full', hcoeff=h, radii=(0.5,2.0), sphere_inner=True),
-#                  sa.Geometry(cylinder_type='full', hcoeff=h, radii=(0.5,2.0), sphere_outer=True),
                   ]
     for geometry in geometries:
         test(geometry)
@@ -635,38 +555,7 @@ def main():
     print('ok')
 
 
-def plot_boundary():
-    Si, So = 0.5, 2.0
-    h = [So**2-Si**2, So**2+Si**2+1]
-    geometries = [
-        sa.Geometry(cylinder_type='full', hcoeff=h, radii=(Si,So)),
-#        sa.Geometry(cylinder_type='half', hcoeff=h, radii=(Si,So)),
-#        sa.Geometry(cylinder_type='full', hcoeff=h, radii=(Si,So), sphere_outer=True),
-#        sa.Geometry(cylinder_type='full', hcoeff=h, radii=(Si,So), sphere_inner=True, sphere_outer=True),
-        ]
-
-    nplots = len(geometries)
-    fig, axes = plt.subplots(1,nplots, figsize=plt.figaspect(1/nplots))
-    for ax,geometry in zip(axes,geometries):
-        geometry.plot_height(fig=fig, ax=ax)
-
-    t = np.linspace(-1,1,30)
-    phi = np.linspace(0,2*np.pi,40)
-    for geometry in geometries:
-        fig = plt.figure()
-        ax = plt.axes(projection='3d')
-
-        s, height = geometry.s(t), geometry.height(t)
-        ss, pp = s[:,np.newaxis], phi[np.newaxis,:]
-        x, y = ss * np.cos(pp), ss * np.sin(pp)
-        z = np.tile(height, (len(phi),1)).T
-        ax.plot_surface(x, y, z, edgecolor='none')
-
-    plt.show()
-
-
 if __name__=='__main__':
-#    plot_boundary()
     test_jacobi_params()
     test_scalar_basis()
     main()
