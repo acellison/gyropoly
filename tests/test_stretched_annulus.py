@@ -17,7 +17,7 @@ def check_close(value, target, tol, verbose=False):
         print(f'Error {error:1.4e}')
     if error > tol:
         print(f'Error {error:1.4e} exceeds tolerance {tol}')
-#    assert error <= tol
+    assert error <= tol
 
 
 def plotfield(s, z, f, fig=None, ax=None):
@@ -25,6 +25,17 @@ def plotfield(s, z, f, fig=None, ax=None):
         fig, ax = plt.subplots()
     im = ax.pcolormesh(s, z, f, shading='gouraud')
     fig.colorbar(im, ax=ax)
+
+
+def test_spoly_to_tpoly():
+    radii = 0.5, 2.0
+    scoeff = [1,1,1,1]
+    tcoeff = sa.scoeff_to_tcoeff(radii, scoeff)
+
+    geometry = sa.Geometry('full', tcoeff, radii)
+    t = np.linspace(-1,1,100)
+    s = geometry.s(t)
+    check_close(np.polyval(tcoeff, t), np.polyval(scoeff, s**2), 1e-13)
 
 
 def test_jacobi_params():
@@ -556,6 +567,7 @@ def main():
 
 
 if __name__=='__main__':
+    test_spoly_to_tpoly()
     test_jacobi_params()
     test_scalar_basis()
     main()

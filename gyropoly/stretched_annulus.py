@@ -2,6 +2,7 @@ import os
 from functools import partial
 import numpy as np
 import scipy.sparse as sparse
+from scipy.special import comb
 import matplotlib.pyplot as plt
 from dedalus_sphere import jacobi
 from . import augmented_jacobi as ajacobi
@@ -14,6 +15,22 @@ __all__ = ['Basis', 'total_num_coeffs', 'coeff_sizes', 'operators'
            'gradient', 'divergence', 'curl', 'scalar_laplacian', 'vector_laplacian',
            'normal_component', 'convert', 'project', 'boundary',
            'resize', 'plotfield']
+
+
+def scoeff_to_tcoeff(radii, scoeff, dtype='float64'):
+    """Convert a polynomial in s**2 to a polynomial in t, where
+         t    = (2*s**2 - (So**2 + Si**2))/(So**2 - Si**2)
+         s**2 = 1/2*((So**2 - Si**2)*t + So**2 + Si**2)
+    """
+    n = len(scoeff)
+    Si, So = radii
+    c = [(So**2 - Si**2)/2, (So**2+Si**2)/2]
+    T = np.zeros((n,n), dtype=dtype)
+    for i in range(n):
+        m = n-1-i
+        for j in range(m+1):
+            T[j+i,i] = comb(m, j) * c[0]**(m-j) * c[1]**j
+    return T @ scoeff
 
 
 class Geometry():
