@@ -446,7 +446,7 @@ def recurrence(system, n, return_mass=False, dtype='float64', internal='float128
         return result.astype(dtype)
 
 
-def polynomials(system, n, z, init=None, dtype='float64', internal='float128', **recurrence_kwargs):
+def polynomials(system, n, z, init=None, return_derivatives=False, dtype='float64', internal='float128', **recurrence_kwargs):
     """
     Generalized Jacobi polynomials, P(n,a,b,c,z), of type (a,b,c) up to degree n-1.
     These polynomials are orthogonal on the interval (-1,1) with weight function system.weight(z)
@@ -461,6 +461,8 @@ def polynomials(system, n, z, init=None, dtype='float64', internal='float128', *
         Grid locations to evaluate the polynomials
     init : float or np.ndarray, optional
         Initial value for the recurrence. None -> 1/sqrt(mass)
+    return_derivatives : bool
+        If True, return both the polynomials and their derivatives evaluated at z
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -481,7 +483,11 @@ def polynomials(system, n, z, init=None, dtype='float64', internal='float128', *
         return jacobi.polynomials(n, system.a, system.b, z, dtype=dtype, internal=internal)
 
     Z, mass = recurrence(system, n, return_mass=True, dtype=internal, **recurrence_kwargs)
-    return tools.polynomials(Z, mass, z, init=init, dtype=internal).astype(dtype)
+    if return_derivatives:
+        P, Pprime = tools.polynomials_and_derivatives(Z, mass, z, init=init, dtype=internal)
+        return P.astype(dtype), Pprime.astype(dtype)
+    else:
+        return tools.polynomials(Z, mass, z, init=init, dtype=internal).astype(dtype)
 
 
 def jacobi_mass(a, b, log=False, dtype='float64'):
@@ -618,22 +624,10 @@ def quadrature(system, n, quick=False, days=3, dtype='float64', internal='float1
         return z.astype(dtype), w.astype(dtype)
 
     Z, mass = recurrence(system, n+1, dtype=internal, internal=internal, return_mass=True, **recurrence_kwargs)
-
-    # Compute the projection of the derivative of the n'th polynomial onto Jacobi polynomials
-    a, b = system.a, system.b
-    z, w = jacobi.quadrature(n+1, a, b, dtype=internal)
-    J = jacobi.polynomials(n+1, a, b, z, dtype=internal)
-    P = tools.polynomials(Z, mass, z, dtype=internal)[n]
-    c = jacobi.operator('D', dtype=internal)(+1)(n+1, a, b) @ np.sum(w*P*J, axis=1)
-
-    JZ = jacobi.operator('Z', dtype=internal)(n, a+1, b+1)
-    Jmass = jacobi_mass(a+1, b+1, dtype=internal)
-
     z = tools.quadrature_nodes(Z, n=n, dtype=internal)
     for i in range(days):
-        P = tools.polynomials(Z, mass, z, dtype=internal)[n]
-        Pprime = tools.clenshaw_summation(c, JZ, Jmass, z, dtype=internal)
-        z -= P/Pprime
+        P, Pprime = tools.polynomials_and_derivatives(Z, mass, z, dtype=internal)
+        z -= P[n]/Pprime[n]
 
     P = tools.polynomials(Z, mass, z, n=n, dtype=internal)
     w = P[0]**2/np.sum(P**2,axis=0) * mass
@@ -695,22 +689,6 @@ def embedding_operator(kind, system, n, dtype='float64', internal='float128', **
     return diags(bands, offsets, shape=(n,n), dtype=dtype)
 
 
-def rhoprime_multiplication(system, n, weighted=True, which='all', dtype='float64', internal='float128', **recurrence_kwargs):
-    parity = system.has_even_parity
-    use_jacobi_quadrature = recurrence_kwargs.pop('use_jacobi_quadrature', False)
-
-    m = max(system.unweighted_degree-1, 0)
-    offsets = np.arange(-m,m+1)
-    if parity:
-        offsets = offsets[::2]
-
-    def fun(z):
-        return system.rhoprime(z, weighted=weighted, which=which) * system.polynomials(n, z, dtype=internal, **recurrence_kwargs)
-
-    bands = project(system, n, m, fun, offsets, dtype=internal, use_jacobi_quadrature=use_jacobi_quadrature, **recurrence_kwargs)
-    return diags(bands, offsets, shape=(n+m,n), dtype=dtype)
-
-
 def embedding_operator_adjoint(kind, system, n, dtype='float64', internal='float128', **recurrence_kwargs):
     """
     Compute an embedding operator adjoint
@@ -767,16 +745,20 @@ def embedding_operator_adjoint(kind, system, n, dtype='float64', internal='float
     return diags(bands, offsets, shape=(n+m,n), dtype=dtype)
 
 
-def _matrix_polyval_impl(coeffs, Z, Id):
-    if len(coeffs) == 0:
-        return 0*Id
-    elif len(coeffs) == 1:
-        return Id*coeffs[0]
-    return coeffs[0] + Z @ _matrix_polyval_impl(coeffs[1:], Z, Id)
+def rhoprime_multiplication(system, n, weighted=True, which='all', dtype='float64', internal='float128', **recurrence_kwargs):
+    parity = system.has_even_parity
+    use_jacobi_quadrature = recurrence_kwargs.pop('use_jacobi_quadrature', False)
 
+    m = max(system.unweighted_degree-1, 0)
+    offsets = np.arange(-m,m+1)
+    if parity:
+        offsets = offsets[::2]
 
-def matrix_polyval(coeffs, Z, Id):
-    return _matrix_polyval_impl(coeffs[::-1], Z, Id)
+    def fun(z):
+        return system.rhoprime(z, weighted=weighted, which=which) * system.polynomials(n, z, dtype=internal, **recurrence_kwargs)
+
+    bands = project(system, n, m, fun, offsets, dtype=internal, use_jacobi_quadrature=use_jacobi_quadrature, **recurrence_kwargs)
+    return diags(bands, offsets, shape=(n+m,n), dtype=dtype)
 
 
 def differential_operator(kind, system, n, dtype='float64', internal='float128', **recurrence_kwargs):
@@ -807,54 +789,56 @@ def differential_operator(kind, system, n, dtype='float64', internal='float128',
     parity = system.has_even_parity
     degree = system.unweighted_degree
     use_jacobi_quadrature = recurrence_kwargs.pop('use_jacobi_quadrature', False)
-    A, B, C, D, Z, Id = [jacobi.operator(name, dtype=internal) for name in ['A', 'B', 'C', 'D', 'Z', 'Id']]
 
+    a, b = system.a, system.b
     dc = np.ones(system.num_augmented_factors, dtype=int)
+    polys_and_derivs = lambda z: system.polynomials(n, z, return_derivatives=True, dtype=internal, **recurrence_kwargs)
+
     if kind == 'D':
         da, db, m = +1, +1, -1
-        op = D(+1)
         offsets = np.arange(1, min(n,2+degree))
+        def fun(z):
+            _, Pprime = polys_and_derivs(z)
+            return Pprime
+
     elif kind == 'E':
         da, db, m = -1, +1, 0
-        op = C(-1)
         offsets = np.arange(0, min(n,1+degree))
+        def fun(z):
+            P, Pprime = polys_and_derivs(z)
+            return a*P - (1-z)*Pprime
+
     elif kind == 'F':
         da, db, m = +1, -1, 0
-        op = C(+1)
         offsets = np.arange(0, min(n,1+degree))
+        def fun(z):
+            P, Pprime = polys_and_derivs(z)
+            return b*P + (1+z)*Pprime
+
     elif kind == 'G':
         da, db, m = -1, -1, 1
-        op = D(-1)
         offsets = np.arange(-1, min(n,degree))
+        def fun(z):
+            P, Pprime = polys_and_derivs(z)
+            return (a-b + (a+b)*z)*P - (1-z**2)*Pprime
+
     elif isinstance(kind, tuple) and kind[0] == 'H':
         index = kind[1]  # Grab the augmented parameter index
         kind = kind[0]   # Set kind to 'H' for parity check
         da, db, dc[index], m = +1, +1, -1, system.degrees[index]-1
         c, pcoeff = system.augmented_params[index], system.factor_coeffs[index]
-        op = matrix_polyval(pcoeff, Z, Id) @ D(+1) + c * matrix_polyval(np.polyder(pcoeff), Z, Id) @ A(+1) @ B(+1)
         offsets = np.arange(-m, min(n, 1+degree-m))
+        def fun(z):
+            P, Pprime = polys_and_derivs(z)
+            return c * np.polyval(np.polyder(pcoeff), z) * P + np.polyval(pcoeff, z) * Pprime
+
     else:
         raise ValueError(f'Invalid kind: {kind}')
+
     if parity and kind in ['D', 'G', 'H']:
         offsets = offsets[0::2]
 
     cosystem = system.apply_arrow(da, db, dc)
-    a, b = system.a, system.b
-
-    # Project Pn onto Jm
-    # i'th column of projPJ is the coefficients of P[i] w.r.t. J[j]
-    z, w = jacobi.quadrature(n, a, b, dtype=internal)
-    P = system.polynomials(n, z, dtype=internal, **recurrence_kwargs)
-    J = jacobi.polynomials(n, a, b, z, dtype=internal)
-    projPJ = np.array([np.sum(w*P*J[k], axis=1) for k in range(n)])
-
-    # Compute the operator on J
-    coeffs = op(n,a,b) @ projPJ
-    Z = jacobi.operator('Z', dtype=internal)(*op.codomain(n, a, b))
-    mass = jacobi_mass(*op.codomain(n, a, b)[1:], dtype=internal)
-    def fun(z):
-        return tools.clenshaw_summation(coeffs, Z, mass, z, dtype=internal)
-
     bands = project(cosystem, n, m, fun, offsets, dtype=internal, use_jacobi_quadrature=use_jacobi_quadrature, **recurrence_kwargs)
     return diags(bands, offsets, shape=(n+m,n), dtype=dtype)
 
@@ -890,53 +874,48 @@ def differential_operator_adjoint(kind, system, n, dtype='float64', internal='fl
     parity = system.has_even_parity
     use_jacobi_quadrature = recurrence_kwargs.pop('use_jacobi_quadrature', False)
 
-    A, B, C, D, Id = [jacobi.operator(name, dtype=internal) for name in ['A', 'B', 'C', 'D', 'Id']]
+    a, b = system.a, system.b
     dc = -np.ones(system.num_augmented_factors, dtype=int)
+    polys_and_derivs = lambda z: system.polynomials(n, z, return_derivatives=True, dtype=internal, **recurrence_kwargs)
+
     if kind == 'D':
         da, db, m = -1, -1, 1+degree
-        op1, op2 = D(-1), -A(-1) @ B(-1)
         offsets = -np.arange(1,m+1)
+        def ops(z):
+            P, Pprime = polys_and_derivs(z)
+            return -(1-z**2)*P, (a-b + (a+b)*z)*P - (1-z**2)*Pprime
+
     elif kind == 'E':
         da, db, m = +1, -1, degree
-        op1, op2 = C(+1), B(-1)
         offsets = -np.arange(0,m+1)
+        def ops(z):
+            P, Pprime = polys_and_derivs(z)
+            return (1+z)*P, b*P + (1+z)*Pprime
+
     elif kind == 'F':
         da, db, m = -1, +1, degree
-        op1, op2 = C(-1), -A(-1)
         offsets = -np.arange(0,m+1)
+        def ops(z):
+            P, Pprime = polys_and_derivs(z)
+            return -(1-z)*P, a*P - (1-z)*Pprime
+
     elif kind == 'G':
         da, db, m = +1, +1, degree-1
-        op1, op2 = D(+1), Id
         offsets = -np.arange(-1,m+1)
-    elif isinstance(kind, tuple) and kind[0] == 'H':
-        raise ValueError('Not implemented')
+        def ops(z):
+            return polys_and_derivs(z)
+
     else:
         raise ValueError(f'Invalid kind: {kind}')
+
     if parity and kind in ['D', 'G']:
         offsets = offsets[0::2]
 
-    cosystem = system.apply_arrow(da, db, dc)
-    a, b = system.a, system.b
-
-    # Project Pn onto Jm
-    # i'th column of projPJ is the coefficients of P[i] w.r.t. J[j]
-    z, w = jacobi.quadrature(n, a, b, dtype=internal)
-    P = system.polynomials(n, z, dtype=internal, **recurrence_kwargs)
-    J = jacobi.polynomials(n, a, b, z, dtype=internal)
-    projPJ = np.array([np.sum(w*P*J[k], axis=1) for k in range(n)])
-
-    # Compute the operator on J
-    # i'th column of f is grid space evaluation of Op[P[i]]
-    coeffs = [op(n,a,b) @ projPJ for op in [op1,op2]]
-    Z = [jacobi.operator('Z', dtype=internal)(*op.codomain(n, a, b)) for op in [op1,op2]]
-    mass = [jacobi_mass(*op.codomain(n, a, b)[1:], dtype=internal) for op in [op1,op2]]
-    def evaluate_on_grid(z, index):
-        return tools.clenshaw_summation(coeffs[index], Z[index], mass[index], z, dtype=internal)
     def fun(z):
-        f1, f2 = [evaluate_on_grid(z, index) for index in [0,1]]
-        z = z[np.newaxis,:]
-        return rho_fun(z)*f1 + rho_der(z)*f2
+        f1, f2 = ops(z)
+        return rho_der(z)*f1 + rho_fun(z)*f2
 
+    cosystem = system.apply_arrow(da, db, dc)
     bands = project(cosystem, n, m, fun, offsets, dtype=internal, use_jacobi_quadrature=use_jacobi_quadrature, **recurrence_kwargs)
     return diags(bands, offsets, shape=(n+m,n), dtype=dtype)
 
@@ -958,15 +937,28 @@ def general_differential_operator(da, db, dc, system, n, dtype='float64', intern
     parity = system.has_even_parity
     use_jacobi_quadrature = recurrence_kwargs.pop('use_jacobi_quadrature', False)
 
-    A, B, C, D, Id = [jacobi.operator(name, dtype=internal) for name in ['A', 'B', 'C', 'D', 'Id']]
+    a, b = system.a, system.b
+    polys_and_derivs = lambda z: system.polynomials(n, z, return_derivatives=True, dtype=internal, **recurrence_kwargs)
+
     if (da,db) == (+1,+1):
-        op1, op2 = D(+1), Id
+        def ops(z):
+            return polys_and_derivs(z)
+
     elif (da,db) == (+1,-1):
-        op1, op2 = C(+1), B(-1)
+        def ops(z):
+            P, Pprime = polys_and_derivs(z)
+            return (1+z)*P, b*P + (1+z)*Pprime
+
     elif (da,db) == (-1,+1):
-        op1, op2 = C(-1), -A(-1)
+        def ops(z):
+            P, Pprime = polys_and_derivs(z)
+            return -(1-z)*P, a*P - (1-z)*Pprime
+
     elif (da,db) == (-1,-1):
-        op1, op2 = D(-1), -A(-1) @ B(-1)
+        def ops(z):
+            P, Pprime = polys_and_derivs(z)
+            return -(1-z**2)*P, (a-b + (a+b)*z)*P - (1-z**2)*Pprime
+
     else:
         raise ValueError('da and db must each be one of {+1,-1}')
 
@@ -976,28 +968,11 @@ def general_differential_operator(da, db, dc, system, n, dtype='float64', intern
     if parity and (da, db, dc) in [(+1,+1,(+1,)*nc), (+1,+1,(-1,)*nc), (-1,-1,(+1,)*nc), (-1,-1,(-1,)*nc)]:
         offsets = offsets[0::2]
 
-    cosystem = system.apply_arrow(da, db, dc)
-    a, b = system.a, system.b
-
-    # Project Pn onto Jm
-    # i'th column of projPJ is the coefficients of P[i] w.r.t. J[j]
-    z, w = jacobi.quadrature(n, a, b, dtype=internal)
-    P = system.polynomials(n, z, dtype=internal, **recurrence_kwargs)
-    J = jacobi.polynomials(n, a, b, z, dtype=internal)
-    projPJ = np.array([np.sum(w*P*J[k], axis=1) for k in range(n)])
-
-    # Compute the operator on J
-    # i'th column of f is grid space evaluation of Op[P[i]]
-    coeffs = [op(n,a,b) @ projPJ for op in [op1,op2]]
-    Z = [jacobi.operator('Z', dtype=internal)(*op.codomain(n, a, b)) for op in [op1,op2]]
-    mass = [jacobi_mass(*op.codomain(n, a, b)[1:], dtype=internal) for op in [op1,op2]]
-    def evaluate_on_grid(z, index):
-        return tools.clenshaw_summation(coeffs[index], Z[index], mass[index], z, dtype=internal)
     def fun(z):
-        f1, f2 = [evaluate_on_grid(z, index) for index in [0,1]]
-        z = z[np.newaxis,:]
-        return rho_fun(z, which=which)*f1 + rho_der(z, which=which)*f2
+        f1, f2 = ops(z)
+        return rho_der(z, which=which)*f1 + rho_fun(z, which=which)*f2
 
+    cosystem = system.apply_arrow(da, db, dc)
     bands = project(cosystem, n, m, fun, offsets, dtype=internal, use_jacobi_quadrature=use_jacobi_quadrature, **recurrence_kwargs)
     return diags(bands, offsets, shape=(n+m,n), dtype=dtype)
 
