@@ -231,6 +231,70 @@ def polynomials(Z, mass, z, n=None, init=None, dtype='float64'):
     return P
 
 
+def polynomials_and_derivatives(Z, mass, z, n=None, init=None, dtype='float64'):
+    """
+    Generalized Jacobi polynomials, P(n,rho,a,b,c,z), of type (rho,a,b,c) up to degree n-1.
+    These polynomials are orthogonal on the interval (-1,1) with weight function
+        w(z) = base_system.weight(z) * rho(z)**c
+
+    Parameters
+    ----------
+    Z : sparse matrix
+        Jacobi operator with three-term recurrence coefficients
+    mass : float
+        Integral of the weight function used to generate the recurrence
+    z : array_like
+        Grid locations to evaluate the polynomials
+    init : float or np.ndarray, optional
+        Initial value for the recurrence. None -> 1/sqrt(mass)
+    dtype : data-type, optional
+        Desired data-type for the output
+
+    Returns
+    -------
+    pair of np.ndarrays
+        The first element is the polynomials evaluated at grid points z, so that
+            the degree k polynomial is accessed via P[k-1]
+        The second element is the first derivative of the polynomials P'(z)
+    """
+    if np.shape(z)[-1] < 2:
+        raise ValueError('Need at least two evaluation points to compute normalization')
+
+    if n is not None:
+        Z = _truncate(Z, shape=(n+1,n))
+
+    n = np.shape(Z)[1]
+    if init is None:
+        init = (1 + 0*z) / np.sqrt(mass, dtype=dtype)
+
+    shape = n
+    if type(z) == np.ndarray:
+        z = z.astype(dtype)
+        shape = (shape, len(z))
+
+    P    = np.empty(shape, dtype=dtype)
+    P[0] = init
+
+    Q    = np.empty(shape, dtype=dtype)
+    Q[0] = 0
+
+    Z = banded(Z).data
+    if len(Z) == 2:
+        P[1] = z*P[0]/Z[1,1]
+        Q[1] = (P[1][...,-1]-P[1][...,0])/(z[...,-1]-z[...,0])
+        for k in range(2,n):
+            P[k] = (z*P[k-1] - Z[0,k-2]*P[k-2])/Z[1,k]
+            Q[k] = (z*Q[k-1] - Z[0,k-2]*Q[k-2] + P[k-1])/Z[1,k]
+    else:
+        P[1] = (z-Z[1,0])*P[0]/Z[2,1]
+        Q[1] = (P[1][...,-1]-P[1][...,0])/(z[...,-1]-z[...,0])
+        for k in range(2,n):
+            P[k] = ((z-Z[1,k-1])*P[k-1] - Z[0,k-2]*P[k-2])/Z[2,k]
+            Q[k] = ((z-Z[1,k-1])*Q[k-1] - Z[0,k-2]*Q[k-2] + P[k-1])/Z[2,k]
+
+    return P, Q
+
+
 def quadrature_nodes(Z, n=None, dtype='float64'):
     """
     Compute the generalized Jacobi quadrature nodes from the

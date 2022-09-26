@@ -7,6 +7,7 @@ from dedalus_sphere import jacobi
 
 from gyropoly import augmented_jacobi as ajacobi
 from gyropoly.decorators import profile
+from gyropoly import tools as tools
 make_system = ajacobi.AugmentedJacobiSystem
 
 
@@ -180,9 +181,12 @@ def test_polynomials():
 
     z, w = system.quadrature(n)
     P = system.polynomials(n, z)
-
-    # Check mutually orthonormal
     check_orthogonal(n, w, P, tol=1e-14)
+
+    z = np.linspace(-1,1,100)
+    P1 = system.polynomials(n, z)
+    P2 = system.polynomials(n, z, init=1) / np.sqrt(system.mass())
+    check_close(P1, P2, 8.9e-16)
 
     # Test 2
     n, a, b, rho, c = 10, 2, 3, [0.5], 1
@@ -190,9 +194,32 @@ def test_polynomials():
 
     z, w = system.quadrature(n)
     P = system.polynomials(n, z)
-
-    # Check mutually orthonormal
     check_orthogonal(n, w, P, tol=1e-15)
+
+    z = np.linspace(-1,1,100)
+    P1 = system.polynomials(n, z)
+    P2 = system.polynomials(n, z, init=1) / np.sqrt(system.mass())
+    check_close(P1, P2, 2.9e-14)
+
+
+def test_polynomial_derivatives():
+    print('test_polynomial_derivatives')
+    # Test 1
+    n, a, b = 5, 1, 2
+    rho, c = [1,3], 3
+
+    system = ajacobi.AugmentedJacobiSystem(a, b, [(rho,c)])
+    cosystem = ajacobi.AugmentedJacobiSystem(a+1, b+1, [(rho,c+1)])
+
+    z = np.linspace(-1,1,1000)
+    Z, mass = system.recurrence(n, return_mass=True)
+    _, Pprime = tools.polynomials_and_derivatives(Z, mass, z)
+
+    D = ajacobi.differential_operator('D', system, n)
+    Q = cosystem.polynomials(n-1, z)
+    Q = (Q.T @ D).T
+
+    check_close(Pprime, Q, 8e-15)
 
 
 def test_embedding_operators():
@@ -201,7 +228,7 @@ def test_embedding_operators():
     z = np.linspace(-1,1,1000, dtype=dtype)
     n = 4
 
-    kwargs = {'use_jacobi_quadrature': True}
+    kwargs = {'use_jacobi_quadrature': False}
     embed = lambda kind, system, n: ajacobi.embedding_operator(kind, system, n, dtype=dtype, **kwargs)
     embed_adjoint = lambda kind, system, n: ajacobi.embedding_operator_adjoint(kind, system, n, dtype=dtype, **kwargs)
 
@@ -339,17 +366,17 @@ def test_differential_operators():
 
     # Test 1: Parity
     a, b, rho, c = 1, 1, [1,0,1], 2
-    run_tests(a, b, [(rho,c)], {'D': 7.9e-16, 'E': 8.4e-16, 'F': 3.3e-15, 'G': 9.1e-16})
+    run_tests(a, b, [(rho,c)], {'D': 8.5e-16, 'E': 1.2e-15, 'F': 3.3e-15, 'G': 9.1e-16})
 
     # Test 2
     a, b, rho, c = 1, 1, [1,0,0,3], 2
-    run_tests(a, b, [(rho,c)], {'D': 1.2e-15, 'E': 3.5e-15, 'F': 1.7e-15, 'G': 1.2e-15})
+    run_tests(a, b, [(rho,c)], {'D': 1.2e-15, 'E': 3.5e-15, 'F': 2.2e-15, 'G': 1.2e-15})
 
     # Test 3
     a, b = 0.5, 0.5
     rho1, c1 =   [1,0,1], 1
     rho2, c2 = [1,0,0,3], 2
-    run_tests(a, b, [(rho1,c1),(rho2,c2)], {'D': 1.2e-15, 'E': 2.1e-15, 'F': 1.7e-15, 'G': 1.9e-15})
+    run_tests(a, b, [(rho1,c1),(rho2,c2)], {'D': 1.2e-15, 'E': 3.1e-15, 'F': 1.7e-15, 'G': 1.9e-15})
 
     # Test 4
     a, b = 2, 0.5
@@ -420,19 +447,19 @@ def test_differential_operator_adjoints():
 
     # Test 2
     a, b, rho, c = 1, 1, [1,0,0,3], 2
-    run_tests(a, b, [(rho,c)], {'D': 2.4e-15, 'E': 8.5e-15, 'F': 5.1e-15, 'G': 2.2e-15})
+    run_tests(a, b, [(rho,c)], {'D': 2.4e-15, 'E': 8.9e-15, 'F': 5.1e-15, 'G': 2.8e-15})
 
     # Test 3
     a, b = 0.5, 0.5
     rho1, c1 =   [1,0,1], 1
     rho2, c2 = [1,0,0,3], 2
-    run_tests(a, b, [(rho1,c1),(rho2,c2)], {'D': 3.3e-14, 'E': 4.7e-14, 'F': 1.1e-14, 'G': 1.5e-14})
+    run_tests(a, b, [(rho1,c1),(rho2,c2)], {'D': 3.3e-14, 'E': 4.7e-14, 'F': 1.3e-14, 'G': 1.5e-14})
 
     # Test 4
     a, b = 0.5, 0.5
     rho1, rho2, rho3 = [1,2], [1,3], [1,4]
     c1, c2, c3 = 1,2,3
-    run_tests(a, b, [(rho1,c1),(rho2,c2),(rho3,c3)], {'D': 1.6e-13, 'E': 2.8e-13, 'F': 2.2e-13, 'G': 1.4e-13})
+    run_tests(a, b, [(rho1,c1),(rho2,c2),(rho3,c3)], {'D': 1.6e-13, 'E': 2.8e-13, 'F': 2.3e-13, 'G': 1.4e-13})
 
     # Test 5: Ellipsoid Polynomials
     m, alpha, sigma, ell = 10, 1, 1, 0
@@ -442,24 +469,6 @@ def test_differential_operator_adjoints():
 
 def test_differential_operator_c():
     print('test_differential_operator_c')
-    import sympy
-    z = sympy.Symbol('z')
-    Z, Id = np.array([[z]]), np.array([[1]])
-    coeffs = [3,2,1]
-    f = ajacobi.matrix_polyval(coeffs, Z, Id)[0,0]
-    assert f == np.polyval(coeffs, z)
-    assert sympy.simplify(f - (3*z**2+2*z+1)) == 0
-
-    coeffs = [1,2]
-    f = ajacobi.matrix_polyval(coeffs, Z, Id)[0,0]
-    assert f == np.polyval(coeffs, z)
-    assert sympy.simplify(f - (z+2)) == 0
-
-    coeffs = [3]
-    f = ajacobi.matrix_polyval(coeffs, Z, Id)[0,0]
-    assert f == np.polyval(coeffs, z)
-    assert f == 3
-
     dtype = 'float128'
     zz = np.linspace(-1,1,1000, dtype=dtype)
 
@@ -476,7 +485,6 @@ def test_differential_operator_c():
         return f, Hf
 
     def check_grid(system, op, da, db, dc, fin, fout, tol, verbose=False):
-        zsym = sympy.Symbol('z')
         n = np.shape(op)[1]
         z, w = system.quadrature(n, dtype=dtype)
         finz = fin(z)
@@ -490,7 +498,7 @@ def test_differential_operator_c():
 
         check_close(fcoeff, foutz, tol, verbose=verbose)
 
-    kwargs = {'use_jacobi_quadrature': True}
+    kwargs = {'use_jacobi_quadrature': False}
     diff = lambda index, system, n: ajacobi.differential_operator(('H', index), system, n, dtype=dtype, **kwargs)
 
     def run_tests(a, b, rhoc, tol, verbose=True):
@@ -730,7 +738,7 @@ def test_general_differential_operators():
     H = [(So**2-Si**2)/2, (So**2+Si**2)/2+1]  # 1+s**2
     S = [So**2-Si**2, So**2+Si**2]
     a, b, c1, c2 = alpha, alpha, 2*ell+2*alpha+1, m+sigma
-    run_tests(a, b, [(H,c1),(S,c2)], 1e-8, verbose=True)
+    run_tests(a, b, [(H,c1),(S,c2)], 2.9e-9, verbose=True)
 
 
 def profile_cache():
@@ -756,6 +764,7 @@ def main():
     test_mass()
     test_recurrence()
     test_polynomials()
+    test_polynomial_derivatives()
     test_embedding_operators()
     test_rhoprime_multiplication()
     test_differential_operators()
