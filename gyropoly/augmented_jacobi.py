@@ -392,6 +392,30 @@ def modified_chebyshev(system, n, return_mass=False, dtype='float64', **quadratu
                            return_mass=return_mass, dtype=dtype, **quadrature_kwargs)
 
 
+def christoffel_darboux(system, n, return_mass=False, dtype='float64', **quadrature_kwargs):
+    a, b, degrees, factors, params = system.a, system.b, system.degrees, system.factor_coeffs, system.augmented_params
+
+    for param in params:
+        if int(param) != param:
+            raise ValueError('All parameters must be integers!')
+
+    N = n + sum([degree*(int(param)+1) for degree,param in zip(degrees, params)])
+    Z = jacobi.operator('Z', dtype=dtype)(N, a, b)
+
+    mu = jacobi_mass(a, b, dtype=dtype)
+    alpha, beta = [Z.diagonal(d) for d in [0,-1]]
+
+    for degree, factor, param in zip(degrees, factors, params):
+        N -= degree*(int(param)+1)
+        mu, alpha, beta = tools.christoffel_darboux(N, mu, alpha, beta, factor, param, dtype=dtype)
+
+    Z = diags([beta,alpha,beta], [-1,0,1], shape=(n+1,n))
+    if return_mass:
+        return Z, mu
+    else:
+        return Z
+
+
 def recurrence(system, n, return_mass=False, dtype='float64', internal='float128', algorithm='stieltjes', **quadrature_kwargs):
     """
     Compute the three-term recurrence coefficients for the orthogonal polynomial system
@@ -433,7 +457,7 @@ def recurrence(system, n, return_mass=False, dtype='float64', internal='float128
         return (Z, system.mass(dtype=dtype, internal=internal)) if return_mass else Z
 
     algorithm = quadrature_kwargs.pop('algorithm', algorithm)
-    algorithms = {'stieltjes': stieltjes, 'chebyshev': modified_chebyshev}
+    algorithms = {'stieltjes': stieltjes, 'chebyshev': modified_chebyshev, 'christoffel': christoffel_darboux}
     if algorithm not in algorithms.keys():
         raise ValueError(f'Unknown algorithm {algorithm}')
     fun = algorithms[algorithm]
@@ -522,7 +546,7 @@ def jacobi_quadrature(system, f, fdegree=None, dtype='float64', internal='float1
     return result.astype(dtype)
 
 
-def project(system, n, m, f, offsets, use_jacobi_quadrature=False, dtype='float64', internal='float128', **quadrature_kwargs):
+def project(system, n, m, f, offsets, init=None, use_jacobi_quadrature=False, dtype='float64', internal='float128', **quadrature_kwargs):
     """
     Compute the projection coefficients onto a system's OPs the function f(z), for which
     f has input polynomial degree at most n-1 and output polynomial degree at most n+m-1.
@@ -561,7 +585,7 @@ def project(system, n, m, f, offsets, use_jacobi_quadrature=False, dtype='float6
 
     """
     def fun(z, w=None):
-        Q = system.polynomials(n+m, z, dtype=internal, **quadrature_kwargs)
+        Q = system.polynomials(n+m, z, init=init, dtype=internal, **quadrature_kwargs)
         fz = f(z)
         shape = (len(offsets), n)
         if w is None:
@@ -937,8 +961,9 @@ def general_differential_operator(da, db, dc, system, n, dtype='float64', intern
     parity = system.has_even_parity
     use_jacobi_quadrature = recurrence_kwargs.pop('use_jacobi_quadrature', False)
 
+    init = None
     a, b = system.a, system.b
-    polys_and_derivs = lambda z: system.polynomials(n, z, return_derivatives=True, dtype=internal, **recurrence_kwargs)
+    polys_and_derivs = lambda z: system.polynomials(n, z, init=init, return_derivatives=True, dtype=internal, **recurrence_kwargs)
 
     if (da,db) == (+1,+1):
         def ops(z):
@@ -973,8 +998,11 @@ def general_differential_operator(da, db, dc, system, n, dtype='float64', intern
         return rho_der(z, which=which)*f1 + rho_fun(z, which=which)*f2
 
     cosystem = system.apply_arrow(da, db, dc)
-    bands = project(cosystem, n, m, fun, offsets, dtype=internal, use_jacobi_quadrature=use_jacobi_quadrature, **recurrence_kwargs)
-    return diags(bands, offsets, shape=(n+m,n), dtype=dtype)
+    bands = project(cosystem, n, m, fun, offsets, init=init, dtype=internal, use_jacobi_quadrature=use_jacobi_quadrature, **recurrence_kwargs)
+    Op = diags(bands, offsets, shape=(n+m,n), dtype=dtype)
+    if init is not None:
+        Op /= init**2 * np.sqrt(system.mass() * cosystem.mass())
+    return Op
 
 
 def general_differential_operator_adjoint(da, db, dc, system, n, dtype='float64', internal='float128', **recurrence_kwargs):

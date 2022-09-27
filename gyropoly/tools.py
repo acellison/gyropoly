@@ -3,6 +3,8 @@ from scipy.sparse import diags
 from scipy.sparse import dia_matrix as banded
 from scipy.linalg import eigvalsh_tridiagonal, eigvals
 
+from .christoffel_darboux import christoffel_darboux
+
 
 def quadrature_iteration(fun, nquad, max_iters, label='', verbose=False, tol=1e-14, nquad_ratio=1.25):
     current, other = fun(nquad)
