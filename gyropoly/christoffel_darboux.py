@@ -71,7 +71,7 @@ def _christoffel_darboux_impl(n, mu, alpha, beta, rho, c, dtype='float64'):
 def _christoffel_darboux_quadratic_impl(n, mu, alpha, beta, rho, c, dtype='float64'):
     if len(rho) != 3 or rho[0] == 0:
         raise ValueError('Augmenting polynomial must have degree exactly two')
-    if np.any(abs(rho.imag) > 0):
+    if np.any(abs(np.asarray(rho).imag) > 0):
         raise ValueError('Augmenting polynomial must have real coefficients')
     if c < 0:
         raise ValueError('Only non-negative c is possible for the Christoffel-Darboux recurrence')

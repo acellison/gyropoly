@@ -29,16 +29,16 @@ def bottom_boundary(cylinder_type, symmetric_domain):
     return 'z=-h' if symmetric_domain and cylinder_type == 'full' else 'z=0'
 
 
-def build_boundary(cylinder_type, h, m, Lmax, Nmax, alpha, exact=False, symmetric_domain=False):
-    operators = sc.operators(cylinder_type, h, m, Lmax, Nmax)
-    ncoeff = sc.total_num_coeffs(Lmax, Nmax)
+def build_boundary(geometry, m, Lmax, Nmax, alpha, exact=False, symmetric_domain=False):
+    operators = sc.operators(geometry, m, Lmax, Nmax)
+    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
 
     if exact:
-        operators1 = sc.operators(cylinder_type, h, m, Lmax, Nmax+1)
+        operators1 = sc.operators(geometry, m, Lmax, Nmax+1)
         Nmax1 = Nmax+1
     else:
         operators1, Nmax1 = operators, Nmax
-    bottom = bottom_boundary(cylinder_type, symmetric_domain)
+    bottom = bottom_boundary(geometry.cylinder_type, symmetric_domain)
     operatorsb, Nmaxb = (operators1, Nmax1) if bottom == 'z=-h' else (operators, Nmax)
 
     # Side Boundary Condition: e_{S} \cdot \vec{u} = 0 at s = 1
@@ -64,8 +64,8 @@ def build_boundary(cylinder_type, h, m, Lmax, Nmax, alpha, exact=False, symmetri
     return {'s=S': row1, 'z=h': row2, bottom: row3, 'combined': row}
 
 
-def build_projections(cylinder_type, h, m, Lmax, Nmax, alpha, exact=True, symmetric_domain=False):
-    operators = sc.operators(cylinder_type, h, m, Lmax, Nmax)
+def build_projections(geometry, m, Lmax, Nmax, alpha, exact=True, symmetric_domain=False):
+    operators = sc.operators(geometry, m, Lmax, Nmax)
 
     Lstop = 0 if exact else -1
     col1 = operators('project', alpha=alpha, sigma=+1, direction='s', Lstop=Lstop)
@@ -80,12 +80,12 @@ def build_projections(cylinder_type, h, m, Lmax, Nmax, alpha, exact=True, symmet
     return sparse.vstack([sparse.block_diag(cols), 0*sparse.hstack(cols)])
 
 
-def build_matrices_tau(cylinder_type, h, m, Lmax, Nmax, alpha, symmetric_domain):
-    operators = sc.operators(cylinder_type, h, m, Lmax, Nmax)
-#    exact_bc = bottom_boundary(cylinder_type, symmetric_domain) == 'z=0'
+def build_matrices_tau(geometry, m, Lmax, Nmax, alpha, symmetric_domain):
+    operators = sc.operators(geometry, m, Lmax, Nmax)
+#    exact_bc = bottom_boundary(geometry.cylinder_type, symmetric_domain) == 'z=0'
     exact_bc = False
 
-    ncoeff = sc.total_num_coeffs(Lmax, Nmax)
+    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
     I = sparse.eye(ncoeff)
     Z = sparse.lil_matrix((ncoeff,ncoeff))
 
@@ -99,10 +99,10 @@ def build_matrices_tau(cylinder_type, h, m, Lmax, Nmax, alpha, symmetric_domain)
     M = -sparse.block_diag([I, I, I, Z])
 
     # Build the combined boundary condition
-    row = build_boundary(cylinder_type, h, m, Lmax, Nmax, alpha, exact=exact_bc, symmetric_domain=symmetric_domain)['combined']
+    row = build_boundary(geometry, m, Lmax, Nmax, alpha, exact=exact_bc, symmetric_domain=symmetric_domain)['combined']
 
     # Tau projections for enforcing the boundaries
-    col = build_projections(cylinder_type, h, m, Lmax, Nmax, alpha, exact=exact_bc, symmetric_domain=symmetric_domain)
+    col = build_projections(geometry, m, Lmax, Nmax, alpha, exact=exact_bc, symmetric_domain=symmetric_domain)
 
     # Concatenate the boundary conditions and projections onto the system
     corner = sparse.lil_matrix((np.shape(row)[0], np.shape(col)[1]))
@@ -119,21 +119,21 @@ def _get_directory(prefix='data'):
     return directory
 
   
-def solve_eigenproblem(omega, cylinder_type, h, m, Lmax, Nmax, force_solve=True, alpha=0, symmetric_domain=False):
+def solve_eigenproblem(omega, geometry, m, Lmax, Nmax, force_solve=True, alpha=0, symmetric_domain=False):
     alphastr = '' if alpha == 0 else f'-alpha={alpha}'
-    symstr = '-symmetric' if bottom_boundary(cylinder_type, symmetric_domain) == 'z=-h' else ''
+    symstr = '-symmetric' if bottom_boundary(geometry.cylinder_type, symmetric_domain) == 'z=-h' else ''
 
     directory = _get_directory('data')
-    filename = os.path.join(directory, f'{g_file_prefix}-{cylinder_type}_cyl{symstr}-m={m}-Lmax={Lmax}-Nmax={Nmax}{alphastr}-omega={omega}.pckl')
+    filename = os.path.join(directory, f'{g_file_prefix}-{geometry.cylinder_type}_cyl{symstr}-m={m}-Lmax={Lmax}-Nmax={Nmax}{alphastr}-omega={omega}.pckl')
 
     if force_solve or not os.path.exists(filename):
-        L, M = build_matrices_tau(cylinder_type, h, m, Lmax, Nmax, alpha=alpha, symmetric_domain=symmetric_domain)
+        L, M = build_matrices_tau(geometry, m, Lmax, Nmax, alpha=alpha, symmetric_domain=symmetric_domain)
         print('Eigenproblem size: ', np.shape(L))
 
         evalues, evectors = eigsort(L.todense(), M.todense(), profile=True)
 
-        data = {'cylinder_type': cylinder_type, 'symmetric_domain': symmetric_domain,
-                'omega': omega, 'h': h, 'm': m, 'Lmax': Lmax, 'Nmax': Nmax, 'alpha': alpha,
+        data = {'geometry': geometry, 'symmetric_domain': symmetric_domain,
+                'omega': omega, 'm': m, 'Lmax': Lmax, 'Nmax': Nmax, 'alpha': alpha,
                 'evalues': evalues, 'evectors': evectors}
         with open(filename, 'wb') as file:
             pickle.dump(data, file)
@@ -168,7 +168,7 @@ def expand_evector(evector, bases, names='all', return_boundary_errors=False, ve
         p = scale_to_unity(larger(p))
 
     basis = bases['p']
-    h, t, eta = basis.h, basis.t, basis.eta
+    h, t, eta = basis.geometry.hcoeff, basis.t, basis.eta
 
     # Check the boundary
     if u is not None:
@@ -207,7 +207,7 @@ def plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, bases, fig=N
     fieldname = 'p'
     basis = bases[fieldname]
     s, z = basis.s(), basis.z()
-    ht = np.polyval(basis.h, basis.t)
+    ht = np.polyval(basis.geometry.hcoeff, basis.t)
 
     if fig is None or ax is None:
         fig, ax = plt.subplots()
@@ -232,7 +232,7 @@ def compare_mode(evalues, evectors, n, k, evalue_targets, roots, bases, plot=Fal
 
     # Compute the analytic_mode and make sure we have the right sign
     s, zcyl = basis.s(), basis.z()
-    ht = np.polyval(basis.h, basis.t)
+    ht = np.polyval(basis.geometry.hcoeff, basis.t)
     zcart = np.linspace(0,1,np.shape(zcyl)[0])
     f = analytic_mode(m, n, k, roots=roots, radius=1.)(s,zcart)
 
@@ -246,15 +246,15 @@ def compare_mode(evalues, evectors, n, k, evalue_targets, roots, bases, plot=Fal
             a.set_aspect('equal')
 
 
-def create_bases(cylinder_type, h, m, Lmax, Nmax, alpha, t, eta):
-    pbasis =  sc.Basis(cylinder_type, h, m, Lmax, Nmax, alpha=alpha+0, sigma=0,   t=t, eta=eta)
-    vbases = [sc.Basis(cylinder_type, h, m, Lmax, Nmax, alpha=alpha+1, sigma=sig, t=t, eta=eta) for sig in [+1,-1,0]]
+def create_bases(geometry, m, Lmax, Nmax, alpha, t, eta):
+    pbasis =  sc.Basis(geometry, m, Lmax, Nmax, alpha=alpha+0, sigma=0,   t=t, eta=eta)
+    vbases = [sc.Basis(geometry, m, Lmax, Nmax, alpha=alpha+1, sigma=sig, t=t, eta=eta) for sig in [+1,-1,0]]
     return {'p': pbasis, 'up': vbases[0], 'um': vbases[1], 'w': vbases[2]}
 
 
 def plot_solution(data):
-    cylinder_type, symmetric_domain = data['cylinder_type'], data['symmetric_domain']
-    h, m, Lmax, Nmax = [data[key] for key in ['h', 'm', 'Lmax', 'Nmax']]
+    geometry, symmetric_domain = data['geometry'], data['symmetric_domain']
+    m, Lmax, Nmax = [data[key] for key in ['m', 'Lmax', 'Nmax']]
     evalues, evectors = [data[key] for key in ['evalues', 'evectors']]
     alpha = data['alpha']
 
@@ -262,9 +262,9 @@ def plot_solution(data):
     evalues, evectors = evalues[good], evectors[:,good]
 
     t = np.linspace(-1,1,400)
-    etamin = -1 if cylinder_type == 'half' or symmetric_domain else 0
+    etamin = -1 if geometry.cylinder_type == 'half' or symmetric_domain else 0
     eta = np.linspace(etamin,1.,301)
-    bases = create_bases(cylinder_type, h, m, Lmax, Nmax, alpha, t, eta)
+    bases = create_bases(geometry, m, Lmax, Nmax, alpha, t, eta)
 
     n, kmax = 3, 12
     evalue_targets, roots = analytic_eigenvalues(m, n, kmax+1, maxiter=20, radius=1.)
@@ -292,8 +292,10 @@ def test_boundary():
     omega = .005
     h = H*np.array([omega/(2+omega), 1.])
 
+    geometry = sc.Geometry(cylinder_type, h)
+
     # Build the boundary operators
-    boundary = build_boundary(cylinder_type, h, m, Lmax, Nmax, alpha, exact=True, symmetric_domain=symmetric_domain)
+    boundary = build_boundary(geometry, m, Lmax, Nmax, alpha, exact=True, symmetric_domain=symmetric_domain)
 
     B = boundary['combined']
     nullspace = sp.linalg.null_space(B.todense())
@@ -305,7 +307,7 @@ def test_boundary():
     evaluate_bottom = bottom == 'z=-h'
 
     def compute_errors(surface, t, eta):
-        bases = create_bases(cylinder_type, h, m, Lmax, Nmax, alpha, t, eta)
+        bases = create_bases(geometry, m, Lmax, Nmax, alpha, t, eta)
         ncoeff = bases['p'].num_coeffs
         nullspace = sp.linalg.null_space(boundary[surface].todense())
         dim = np.shape(nullspace)[1]
@@ -327,7 +329,7 @@ def test_boundary():
         assert max(errors) < 6e-12
 
     if evaluate_midplane:
-        t, eta = np.linspace(-1,1,101), np.array([-1. if cylinder_type == 'half' else 0.])
+        t, eta = np.linspace(-1,1,101), np.array([-1. if geometry.cylinder_type == 'half' else 0.])
         errors = compute_errors('z=0', t, eta)
         assert max(errors) < 6e-13
 
@@ -340,16 +342,18 @@ def test_boundary():
 def main():
     cylinder_type = 'full'
     symmetric_domain = True
-    m, Lmax, Nmax, alpha = 14, 10, 40, -1/2
+    m, Lmax, Nmax, alpha = 14, 10, 40, 0
     force_solve = True
 
     omega = .05
     H = 0.5 if bottom_boundary(cylinder_type, symmetric_domain) == 'z=-h' else 1.
     h = H*np.array([omega/(2+omega), 1.])
 
+    geometry = sc.Geometry(cylinder_type, h)
+
     print(f'm = {m}, Lmax = {Lmax}, Nmax = {Nmax}, alpha = {alpha}, omega = {omega}')
     print(f'symmetric domain = {symmetric_domain}')
-    data = solve_eigenproblem(omega, cylinder_type, h, m, Lmax, Nmax, force_solve=force_solve, alpha=alpha, symmetric_domain=symmetric_domain)
+    data = solve_eigenproblem(omega, geometry, m, Lmax, Nmax, force_solve=force_solve, alpha=alpha, symmetric_domain=symmetric_domain)
     plot_solution(data)
 
 

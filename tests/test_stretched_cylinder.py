@@ -72,8 +72,8 @@ def test_gradient(geometry, m, Lmax, Nmax, alpha, operators):
 
     # Expand the scalar field and compute its gradient with finite differences
     f = scalar_basis.expand(c)
-    h = np.polyval(geometry.h, t)
-    dhdt = np.polyval(np.polyder(geometry.h), t)
+    h = np.polyval(geometry.hcoeff, t)
+    dhdt = np.polyval(np.polyder(geometry.hcoeff), t)
 
     ugrid = dS(geometry, f, t, eta, h, dhdt)
     vgrid = 1/s * dPhi(f, m)
@@ -120,8 +120,8 @@ def test_divergence(geometry, m, Lmax, Nmax, alpha, operators):
     u =   1/np.sqrt(2) * (up + um)
     v = -1j/np.sqrt(2) * (up - um)
 
-    h = np.polyval(geometry.h, t)
-    dhdt = np.polyval(np.polyder(geometry.h), t)
+    h = np.polyval(geometry.hcoeff, t)
+    dhdt = np.polyval(np.polyder(geometry.hcoeff), t)
 
     du = dS(geometry, u, t, eta, h, dhdt) + 1/s * u
     dv = 1/s * dPhi(v, m)
@@ -172,8 +172,8 @@ def test_curl(geometry, m, Lmax, Nmax, alpha, operators):
     # Expand the vector field and compute its divergence with finite differences
     u, v, w = expand(vector_basis_1, c)
 
-    h = np.polyval(geometry.h, t)
-    dhdt = np.polyval(np.polyder(geometry.h), t)
+    h = np.polyval(geometry.hcoeff, t)
+    dhdt = np.polyval(np.polyder(geometry.hcoeff), t)
 
     ds = lambda f: dS(geometry, f, t, eta, h, dhdt)
     dz = lambda f: dZ(geometry, f, t, eta, h)
@@ -236,11 +236,11 @@ def test_ndot_top(geometry, m, Lmax, Nmax, alpha, operators):
     Cp, Cm, Cz = [c[i*ncoeff:(i+1)*ncoeff] for i in range(3)]
     up, um, w = [vector_basis[key].expand(coeffs) for key,coeffs in [('up', Cp), ('um', Cm), ('w', Cz)]]
     u = 1/np.sqrt(2) * (up + um)
-    hp = np.polyval(np.polyder(geometry.h), t)
+    hp = np.polyval(np.polyder(geometry.hcoeff), t)
     uscale = 1/2 if geometry.root_h else 1
     wscale = geometry.z(t, eta) if geometry.root_h else 1
     if root_sphere:
-        ht = np.polyval(geometry.h, t)
+        ht = np.polyval(geometry.hcoeff, t)
         ndotu_grid = np.sqrt(2*(1+t))/geometry.radius * (ht - (1-t)*hp) * u + wscale * w
     else:
         ndotu_grid = -2*uscale*np.sqrt(2*(1+t))/geometry.radius * hp * u + wscale * w
@@ -302,12 +302,12 @@ def test_ndot_bottom(geometry, m, Lmax, Nmax, alpha, operators):
     Cp, Cm, Cz = [c[i*ncoeff:(i+1)*ncoeff] for i in range(3)]
     up, um, w = [vector_basis[key].expand(coeffs) for key,coeffs in [('up', Cp), ('um', Cm), ('w', Cz)]]
     u = 1/np.sqrt(2) * (up + um)
-    hp = np.polyval(np.polyder(geometry.h), t)
+    hp = np.polyval(np.polyder(geometry.hcoeff), t)
     uscale = 1/2 if geometry.root_h else 1
     wscale = geometry.z(t, eta) if geometry.root_h else 1
     ndotu_grid = -2*uscale*np.sqrt(2*(1+t))/geometry.radius * hp * u - wscale * w
     if root_sphere:
-        ht = np.polyval(geometry.h, t)
+        ht = np.polyval(geometry.hcoeff, t)
         ndotu_grid = np.sqrt(2*(1+t))/geometry.radius * (ht - (1-t)*hp) * u - wscale * w
     else:
         ndotu_grid = -2*uscale*np.sqrt(2*(1+t))/geometry.radius * hp * u - wscale * w
@@ -393,7 +393,7 @@ def test_convert_adjoint(geometry, m, Lmax, Nmax, alpha, operators):
     basis1 = create_scalar_basis(geometry, m, Lmax+2, Nmax+dn, alpha-1, t, eta)
 
     t, eta = t[np.newaxis,:], eta[:,np.newaxis]
-    ht = np.polyval(geometry.h, t)
+    ht = np.polyval(geometry.hcoeff, t)
     hpower = 1 if geometry.root_h else 2
     f = (1-eta**2) * (1-t) * ht**hpower * basis0.expand(c)
     g = basis1.expand(d)
@@ -551,14 +551,14 @@ def main():
         for fun in funs:
             fun(*args)
 
-    geometries = [sc.Geometry(cylinder_type='full', h=h),
-                  sc.Geometry(cylinder_type='half', h=h),
-                  sc.Geometry(cylinder_type='full', h=h, radius=2.),
-                  sc.Geometry(cylinder_type='half', h=h, radius=2.),
-                  sc.Geometry(cylinder_type='full', h=h, root_h=True),
-                  sc.Geometry(cylinder_type='full', h=h, root_h=True, radius=2.),
-                  sc.Geometry(cylinder_type='full', h=h, sphere=True),
-                  sc.Geometry(cylinder_type='full', h=h, root_h=True, sphere=True)]
+    geometries = [sc.Geometry(cylinder_type='full', hcoeff=h),
+                  sc.Geometry(cylinder_type='half', hcoeff=h),
+                  sc.Geometry(cylinder_type='full', hcoeff=h, radius=2.),
+                  sc.Geometry(cylinder_type='half', hcoeff=h, radius=2.),
+                  sc.Geometry(cylinder_type='full', hcoeff=h, root_h=True),
+                  sc.Geometry(cylinder_type='full', hcoeff=h, root_h=True, radius=2.),
+                  sc.Geometry(cylinder_type='full', hcoeff=h, sphere=True),
+                  sc.Geometry(cylinder_type='full', hcoeff=h, root_h=True, sphere=True)]
 
     for geometry in geometries:
         test(geometry)

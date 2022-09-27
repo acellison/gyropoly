@@ -35,7 +35,7 @@ class Geometry():
         If True, height function vanishes at s = radius via z = \eta \sqrt{1-t} h(t)
 
     """
-    def __init__(self, cylinder_type, h, radius=1., root_h=False, sphere=False):
+    def __init__(self, cylinder_type, hcoeff, radius=1., root_h=False, sphere=False):
         if cylinder_type not in ['half', 'full']:
             raise ValueError(f'Invalid cylinder type ({cylinder_type})')
         if root_h and cylinder_type == 'half':
@@ -43,7 +43,7 @@ class Geometry():
         if sphere and cylinder_type == 'half':
             raise ValueError('Half cylinder with sphere height is not supported')
         self.__cylinder_type = cylinder_type
-        self.__h = h
+        self.__hcoeff = hcoeff
         self.__radius = radius
         self.__root_h = root_h
         self.__sphere = sphere
@@ -53,8 +53,8 @@ class Geometry():
         return self.__cylinder_type
 
     @property
-    def h(self):
-        return self.__h
+    def hcoeff(self):
+        return self.__hcoeff
 
     @property
     def radius(self):
@@ -70,7 +70,7 @@ class Geometry():
 
     @property
     def degree(self):
-        return len(self.__h) - 1
+        return len(self.__hcoeff) - 1
 
     @property
     def top(self):
@@ -85,7 +85,7 @@ class Geometry():
         return 's=S'
 
     def height(self, t):
-        ht = np.polyval(self.h, t)
+        ht = np.polyval(self.hcoeff, t)
         if self.root_h:
             ht = np.sqrt(ht)
         if self.sphere:
@@ -189,7 +189,7 @@ class Basis():
         # Construct the radial polynomial systems
         make_radial_params = _radial_jacobi_parameters(geometry, m, alpha=alpha, sigma=sigma)
         radial_params = [make_radial_params(ell) for ell in range(Lmax)]
-        self.__systems = [ajacobi.AugmentedJacobiSystem(a, b, [(geometry.h,c[0])]) for a,b,c in radial_params]
+        self.__systems = [ajacobi.AugmentedJacobiSystem(a, b, [(geometry.hcoeff,c[0])]) for a,b,c in radial_params]
 
         # Construct the polynomials if eta and t are not None
         self.__has_m_scaling, self.__has_h_scaling = has_m_scaling, has_h_scaling
@@ -345,7 +345,7 @@ class Basis():
 
     def _make_height(self, t):
         if self.has_h_scaling:
-            ht = np.polyval(self.geometry.h, t)
+            ht = np.polyval(self.geometry.hcoeff, t)
             if self.geometry.root_h: ht = np.sqrt(ht)
             if self.geometry.sphere: ht = ht * np.sqrt(1-t)
         else:
@@ -500,7 +500,7 @@ def _form_kwargs(kwargs):
 
 
 def _ajacobi_operators(geometry, dtype, recurrence_kwargs):
-    return ajacobi.operators([geometry.h], dtype=dtype, internal=dtype, **_form_kwargs(recurrence_kwargs))
+    return ajacobi.operators([geometry.hcoeff], dtype=dtype, internal=dtype, **_form_kwargs(recurrence_kwargs))
 
 
 @decorators.cached
