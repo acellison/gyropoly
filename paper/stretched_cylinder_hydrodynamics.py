@@ -8,6 +8,10 @@ matplotlib.rcParams.update({'font.size': 14})
 import matplotlib.pyplot as plt
 
 from spherinder.eigtools import eigsort, plot_spectrum, scipy_sparse_eigs
+
+from gyropoly import config
+config.parallel = True
+
 import gyropoly.stretched_cylinder as sc
 from gyropoly.decorators import cached, profile
 
@@ -321,7 +325,7 @@ def main():
         H = 0.5 if cylinder_type == 'full' else 1.
         h = H*np.array([omega/(2+omega), 1.])
 #        h = np.array([omega/(2+omega), 1.])/(1-omega/(2+omega))/np.sqrt(2)
-    geometry = sc.Geometry(cylinder_type=cylinder_type, h=h, radius=radius, root_h=root_h, sphere=sphere)
+    geometry = sc.Geometry(cylinder_type=cylinder_type, hcoeff=h, radius=radius, root_h=root_h, sphere=sphere)
 
     if plot_height:
         geometry.plot_height()
