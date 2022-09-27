@@ -257,9 +257,6 @@ def polynomials_and_derivatives(Z, mass, z, n=None, init=None, dtype='float64'):
             the degree k polynomial is accessed via P[k-1]
         The second element is the first derivative of the polynomials P'(z)
     """
-    if np.shape(z)[-1] < 2:
-        raise ValueError('Need at least two evaluation points to compute normalization')
-
     if n is not None:
         Z = _truncate(Z, shape=(n+1,n))
 
@@ -281,15 +278,15 @@ def polynomials_and_derivatives(Z, mass, z, n=None, init=None, dtype='float64'):
     Z = banded(Z).data
     if len(Z) == 2:
         P[1] = z*P[0]/Z[1,1]
-        Q[1] = (P[1][...,-1]-P[1][...,0])/(z[...,-1]-z[...,0])
+        Q[1] =   P[0]/Z[1,1]
         for k in range(2,n):
-            P[k] = (z*P[k-1] - Z[0,k-2]*P[k-2])/Z[1,k]
+            P[k] = (z*P[k-1] - Z[0,k-2]*P[k-2]         )/Z[1,k]
             Q[k] = (z*Q[k-1] - Z[0,k-2]*Q[k-2] + P[k-1])/Z[1,k]
     else:
         P[1] = (z-Z[1,0])*P[0]/Z[2,1]
-        Q[1] = (P[1][...,-1]-P[1][...,0])/(z[...,-1]-z[...,0])
+        Q[1] =            P[0]/Z[2,1]
         for k in range(2,n):
-            P[k] = ((z-Z[1,k-1])*P[k-1] - Z[0,k-2]*P[k-2])/Z[2,k]
+            P[k] = ((z-Z[1,k-1])*P[k-1] - Z[0,k-2]*P[k-2]         )/Z[2,k]
             Q[k] = ((z-Z[1,k-1])*Q[k-1] - Z[0,k-2]*Q[k-2] + P[k-1])/Z[2,k]
 
     return P, Q
