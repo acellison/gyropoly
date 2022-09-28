@@ -533,7 +533,7 @@ def _make_operator(geometry, dell, zop, sop, m, Lmax, Nmax, alpha, sigma, Lpad=0
 
     shape = (Nout_offsets[-1],Nin_offsets[-1])
     if len(oprows) == 0:
-        return sparse.lil_matrix(shape)
+        return sparse.lil_matrix(shape).tocsr()
     return sparse.csr_matrix((opdata, (oprows, opcols)), shape=shape)
 
 
@@ -899,7 +899,7 @@ def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype
         ops.append(make_op(0, +1, zop.diagonal(1), Lzm1) + make_op(0, -1, zop.diagonal(-1), Lzp1))
     else:
         ops.append(make_op(0, 0, ones, Lz))
-    return sparse.hstack(ops)
+    return sparse.hstack(ops).tocsr()
 
 
 def convert(geometry, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exact=True, dtype='float64', internal='float128', recurrence_kwargs=None):
@@ -1135,7 +1135,7 @@ def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', in
             n, index = lengths[ell], offsets[ell]
             B[ell,index:index+n] = bc[ell]
 
-    return B.astype(dtype)
+    return B.astype(dtype).tocsr()
 
 
 @decorators.cached
