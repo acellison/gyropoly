@@ -5,6 +5,7 @@ from mpl_toolkits import mplot3d
 import matplotlib.pyplot as plt
 import sympy
 from gyropoly import stretched_annulus as sa
+from gyropoly import stretched_cylinder as sc
 from gyropoly import augmented_jacobi as ajacobi
 from dedalus_sphere import jacobi
 
@@ -69,7 +70,7 @@ def test_scalar_basis():
 
     eta, t = np.linspace(-1,1,100), np.linspace(-1,1,200)
 
-    m, Lmax, Nmax = 10, 5, 9
+    m, Lmax, Nmax = 10, 5, 12
     alpha, sigma = 1., 0.
     basis = sa.Basis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=0, eta=eta, t=t)
 
@@ -84,6 +85,39 @@ def test_scalar_basis():
             mode = basis.mode(ell, k)
             error = np.max(np.abs(poly-mode))
             assert error < 1e-14
+
+
+def plot_scalar_basis():
+    radii = (0.1, 1.0)
+    omega = 2
+    hs = np.array([omega/(2+omega), 1/(2+omega)])
+    eta, t = np.array([0.]), np.linspace(-1,1,1000)
+
+#    m, Lmax, Nmax = 10, 37, 50
+    m, Lmax, Nmax = 10, 3, 10
+    alpha, sigma = 0., 0.
+
+    nplots = 4
+    fig, ax = plt.subplots(1,nplots,figsize=plt.figaspect(1/2))
+
+    for i in range(nplots):
+        ht = sc.scoeff_to_tcoeff(radii[1], hs)
+        geometry = sc.Geometry('full', ht, radii[1])
+        basis = sc.Basis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=sigma, eta=eta, t=t)
+        mode = basis.mode(Lmax-1, Nmax-1-(Lmax-1)-(nplots-1-i))
+        ax[i].plot(basis.s(), mode.ravel(), label='cylinder')
+
+        ht = sa.scoeff_to_tcoeff(radii, hs)
+        geometry = sa.Geometry('full', ht, radii)
+        basis = sa.Basis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=sigma, eta=eta, t=t)
+        mode = basis.mode(Lmax-1, Nmax-1-(Lmax-1)-(nplots-1-i))
+        ax[i].plot(basis.s(), mode.ravel(), label='annulus')
+
+        ax[i].legend()
+        ax[i].grid(True)
+        ax[i].set_xlabel('s')
+
+    plt.show()
 
 
 def create_scalar_basis(geometry, m, Lmax, Nmax, alpha, t, eta):
@@ -457,6 +491,10 @@ def test_convert_adjoint(geometry, m, Lmax, Nmax, alpha, operators):
     g = basis1.expand(d)
 
     check_close(f, g, 2e-14)
+    check_close(g[0,:],  0, 4e-15)
+    check_close(g[-1,:], 0, 4e-15)
+    check_close(g[:,0],  0, 4e-15)
+    check_close(g[:,-1], 0, 4e-15)
 
 
 def test_boundary(geometry, m, Lmax, Nmax, alpha, operators):
@@ -571,4 +609,5 @@ if __name__=='__main__':
     test_jacobi_params()
     test_scalar_basis()
     main()
+#    plot_scalar_basis()
 
