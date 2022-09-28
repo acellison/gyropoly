@@ -909,7 +909,7 @@ def convert(geometry, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exac
         B(t, eta) = (1-eta**2) * (1-t) * h(t)**2
     This has the effect of both lowering alpha and causing the field to vanish on
     the boundary of the domain.  For h(t) a linear function of t the codomain of
-    the adjoint operator converts (Lmax, Nmax) -> (Lmax+2, Nmax+3)
+    the adjoint operator converts (Lmax, Nmax) -> (Lmax+2, Nmax+4)
 
     Parameters
     ----------
@@ -956,7 +956,8 @@ def convert(geometry, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exac
     L2 = -A(p) @ B(p) @ C(-p)**cpower
     mods = _get_ell_modifiers(Lmax, alpha, adjoint=adjoint, dtype=internal, internal=internal)
 
-    make_op = lambda dell, sop: _make_operator(geometry, dell, mods[abs(dell)], sop, m, Lmax, Nmax, alpha, sigma, Lpad=Lpad, Npad=L0.codomain.dn)
+    Npad = L0.codomain.dn
+    make_op = lambda dell, sop: _make_operator(geometry, dell, mods[abs(dell)], sop, m, Lmax, Nmax, alpha, sigma, Lpad=Lpad, Npad=Npad)
     op = (make_op(0, L0) + make_op(2*p, L2))
 
     if ntimes > 1:
@@ -966,7 +967,7 @@ def convert(geometry, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exac
     op = op.astype(dtype)
 
     if adjoint and not exact:
-        op = resize(geometry, op, Lmax+2, Nmax+3, Lmax, Nmax)
+        op = resize(geometry, op, Lmax+Lpad, Nmax+Npad, Lmax, Nmax)
 
     return op
 
@@ -1248,9 +1249,7 @@ def resize(geometry, mat, Lin, Nin, Lout, Nout):
         dn += nout-nin
         inoffset += nin
 
-    result = sparse.csr_matrix((opdata,(oprows,opcols)), shape=(nouttotal,ncols), dtype=mat.dtype)
-
-    return result
+    return sparse.csr_matrix((opdata,(oprows,opcols)), shape=(nouttotal,ncols), dtype=mat.dtype)
 
 
 def plotfield(s, z, f, fig, ax, colorbar=True, title=None, cmap='RdBu_r'):
