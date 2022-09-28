@@ -23,6 +23,17 @@ def plotfield(s, z, f, fig=None, ax=None):
     fig.colorbar(im, ax=ax)
 
 
+def test_spoly_to_tpoly():
+    radius = 2.0
+    scoeff = [1,2,3,4]
+    tcoeff = sc.scoeff_to_tcoeff(radius, scoeff)
+
+    geometry = sc.Geometry('full', tcoeff, radius)
+    t = np.linspace(-1,1,100)
+    s = geometry.s(t)
+    check_close(np.polyval(tcoeff, t), np.polyval(scoeff, s**2), 1e-13)
+
+
 def create_scalar_basis(geometry, m, Lmax, Nmax, alpha, t, eta):
     return sc.Basis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=0, eta=eta, t=t)
 
@@ -567,5 +578,6 @@ def main():
 
 
 if __name__=='__main__':
+    test_spoly_to_tpoly()
     main()
 
