@@ -93,7 +93,6 @@ def plot_scalar_basis():
     hs = np.array([omega/(2+omega), 1/(2+omega)])
     eta, t = np.array([0.]), np.linspace(-1,1,1000)
 
-#    m, Lmax, Nmax = 10, 37, 50
     m, Lmax, Nmax = 10, 3, 10
     alpha, sigma = 0., 0.
 
@@ -116,6 +115,27 @@ def plot_scalar_basis():
         ax[i].legend()
         ax[i].grid(True)
         ax[i].set_xlabel('s')
+
+    # Plot the 2D field
+    radii = (0.1, 1.0)
+    m, Lmax, Nmax = 10, 7, 20
+    omega = 2
+    hs = np.array([omega/(2+omega), 1/(2+omega)])
+    ht = sa.scoeff_to_tcoeff(radii, hs)
+    geometry = sa.Geometry('full', ht, radii)
+
+    fig, ax = plt.subplots(1,2, figsize=plt.figaspect(.6))
+    eta, t = np.linspace(-1,1,101), np.linspace(-1,1,200)
+
+    basis = sa.Basis(geometry, m, Lmax, Nmax, alpha=0, sigma=0, eta=eta, t=t)
+    mode = basis.mode(Lmax-1, Nmax-1-(Lmax-1)-(nplots-1-i))
+    sc.plotfield(basis.s(), basis.z(), mode, fig, ax[0])
+    ax[0].set_title(r'$\alpha = 0$')
+
+    basis = sa.Basis(geometry, m, Lmax, Nmax, alpha=-1/2, sigma=0, eta=eta, t=t)
+    mode = basis.mode(Lmax-1, Nmax-1-(Lmax-1)-(nplots-1-i))
+    sc.plotfield(basis.s(), basis.z(), mode, fig, ax[1])
+    ax[1].set_title(r'$\alpha = -\frac{1}{2}$')
 
     plt.show()
 

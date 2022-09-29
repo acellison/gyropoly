@@ -246,35 +246,29 @@ def plot_solution(data):
 
 
 def main():
-    cylinder_type, m, Lmax, Nmax, Ekman, alpha, omega, radii, nev = 'full', 14, 40, 160, 1e-5, 0, 2, (0.5, 1.), 100
-
+    config = {'cylinder_type': 'full', 'radii': (0.1,1.), 'm': 30, 'Lmax': 80, 'Nmax': 240, 'Ekman': 1e-6, 'alpha': 0, 'omega': 2}
     boundary_method = 'galerkin'
-    force_construct, force_solve = (True,True)
-#    force_construct, force_solve = (False,False)
-    plot_height = False
+#    force_construct, force_solve = (True,True)
+    force_construct, force_solve = (False,False)
+    nev, evalue_target = 200, 0.04j
 
-    evalue_target = 0.
+    cylinder_type, radii, omega = [config[key] for key in ['cylinder_type', 'radii', 'omega']]
 
     H = 0.5 if cylinder_type == 'full' else 1.
     hs = 2*H*np.array([omega/(2+omega), 1/(2+omega)])
-    ht = domain.scoeff_to_tcoeff(radii, hs)
+    ht = domain.scoeff_to_tcoeff(config['radii'], hs)
 
     geometry = domain.Geometry(cylinder_type=cylinder_type, hcoeff=ht, radii=radii)
 
-    if plot_height:
-        geometry.plot_height()
-        plt.show()
-
-    print(f'geometry: {geometry}, m = {m}, Lmax = {Lmax}, Nmax = {Nmax}, alpha = {alpha}, omega = {omega}')
-    data = solve_eigenproblem(geometry, m, Lmax, Nmax, boundary_method, omega, \
-                              Ekman=Ekman, alpha=alpha, \
+    print(f"geometry: {geometry}, m = {config['m']}, Lmax = {config['Lmax']}, Nmax = {config['Nmax']}, alpha = {config['alpha']}, omega = {config['omega']}")
+    data = solve_eigenproblem(geometry, config['m'], config['Lmax'], config['Nmax'], boundary_method, config['omega'], \
+                              Ekman=config['Ekman'], alpha=config['alpha'], \
                               force_construct=force_construct, force_solve=force_solve, \
                               nev=nev, evalue_target=evalue_target)
     plot_solution(data)
 
 
 if __name__=='__main__':
-#    test_boundary()
     main()
     plt.show()
 
