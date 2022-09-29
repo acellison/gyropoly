@@ -503,7 +503,7 @@ def _make_operator(geometry, dell, zop, sop, m, Lmax, Nmax, alpha, sigma, Lpad=0
 
     shape = (Nout_offsets[-1],Nin_offsets[-1])
     if len(oprows) == 0:
-        return sparse.lil_matrix(shape)
+        return sparse.lil_matrix(shape).tocsr()
     return sparse.csr_matrix((opdata, (oprows, opcols)), shape=shape)
 
 
@@ -640,7 +640,7 @@ def gradient(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128
 
     """
     make_dop = lambda delta: _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma=0, dtype=dtype, internal=internal, recurrence_kwargs=recurrence_kwargs)
-    return sparse.vstack([make_dop(delta) for delta in [+1,-1,0]])
+    return sparse.vstack([make_dop(delta) for delta in [+1,-1,0]]).tocsr()
 
 
 def divergence(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', recurrence_kwargs=None):
@@ -670,7 +670,7 @@ def divergence(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float1
 
     """
     make_dop = lambda sigma: _differential_operator(geometry, -sigma, m, Lmax, Nmax, alpha, sigma=sigma, dtype=dtype, internal=internal, recurrence_kwargs=recurrence_kwargs)
-    return sparse.hstack([make_dop(sigma) for sigma in [+1,-1,0]])
+    return sparse.hstack([make_dop(sigma) for sigma in [+1,-1,0]]).tocsr()
 
 
 def curl(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', recurrence_kwargs=None):
@@ -708,7 +708,7 @@ def curl(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', r
     Cz = -make_dop(+1,-1),  make_dop(-1,+1)
     return 1j * sparse.bmat([[Cp[0], Z,     Cp[1]],
                              [Z,     Cm[0], Cm[1]],
-                             [Cz[0], Cz[1], Z]])
+                             [Cz[0], Cz[1], Z]]).tocsr()
 
 
 def scalar_laplacian(geoemtry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', recurrence_kwargs=None):
@@ -739,7 +739,7 @@ def scalar_laplacian(geoemtry, m, Lmax, Nmax, alpha, dtype='float64', internal='
     """
     G =   gradient(geometry, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
     D = divergence(geometry, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
-    return (D @ G).astype(dtype)
+    return (D @ G).astype(dtype).tocsr()
 
 
 def vector_laplacian(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', recurrence_kwargs=None):
@@ -772,7 +772,7 @@ def vector_laplacian(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='
     G =   gradient(geometry, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
     C1 =      curl(geometry, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
     C2 =      curl(geometry, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
-    return (G @ D - (C2 @ C1).real).astype(dtype)
+    return (G @ D - (C2 @ C1).real).astype(dtype).tocsr()
     
 
 def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
@@ -876,7 +876,7 @@ def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype
         ops.append(make_op(0, +1, zop.diagonal(1), Lzm1) + make_op(0, -1, zop.diagonal(-1), Lzp1))
     else:
         ops.append(make_op(0, 0, ones, Lz))
-    return sparse.hstack(ops)
+    return sparse.hstack(ops).tocsr()
 
 
 def convert(geometry, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exact=True, dtype='float64', internal='float128', recurrence_kwargs=None):
@@ -1117,7 +1117,7 @@ def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', in
             n, index = lengths[ell], offsets[ell]
             B[ell,index:index+n] = bc[ell]
 
-    return B.astype(dtype)
+    return B.astype(dtype).tocsr()
 
 
 @decorators.cached
