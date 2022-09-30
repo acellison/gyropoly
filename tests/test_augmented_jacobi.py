@@ -741,6 +741,27 @@ def test_general_differential_operators():
     run_tests(a, b, [(H,c1),(S,c2)], 2.9e-9, verbose=True)
 
 
+def test_general_differential_operator_codomains():
+    print('test_general_differential_operator_codomains')
+    # Test 1
+    a, b = 0.5, 0.5
+    rho1, c1 =   [1,0,1], 1
+    rho2, c2 = [1,0,0,3], 2
+    factors = [(rho1,c1),(rho2,c2)]
+
+    system = ajacobi.AugmentedJacobiSystem(a, b, factors)
+
+    make_n_args = lambda n: tuple([+1,-1] for _ in range(n))
+    kinds = list(product(*make_n_args(2), product(*make_n_args(len(factors)))))
+    for kind in kinds:
+        da, db, dc = kind
+        Di = ajacobi.operator('Di', [rho1,rho2])
+        assert Di((da,db,dc)).codomain.dn == ajacobi._diffop_dn(da, db, dc, system)
+        assert Di((da,db,dc)).codomain.da == da
+        assert Di((da,db,dc)).codomain.db == db
+        assert Di((da,db,dc)).codomain.dc == dc
+
+
 def profile_cache():
     rho = [(1,0,1)]
     n,a,b,c = 200, 1, 1, 3
@@ -774,6 +795,7 @@ def main():
     test_operator_composition()
     test_mismatching_augmented_weight()
     test_general_differential_operators()
+    test_general_differential_operator_codomains()
     print('ok')
 
 

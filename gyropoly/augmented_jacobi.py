@@ -1206,6 +1206,8 @@ class AugmentedJacobiOperator():
     def __init__(self, name, factors, dtype='float64', internal='float128', **recurrence_kwargs):
         if isinstance(name, tuple):
             # C operator
+            if len(name) != 2:
+                raise ValueError("Invalid two-argument kind - must be ('C'|'H', index)")
             name, index = name
             if name not in ['C', 'H']:
                 raise ValueError("Invalid two-argument kind - must be ('C'|'H', index)")
@@ -1331,6 +1333,14 @@ class AugmentedJacobiOperator():
         nc = len(self.weight)
         return op, AugmentedJacobiCodomain(dn,p,p,(p,)*nc)
 
+    def _Di(self,p):
+        op = partial(AugmentedJacobiOperator._Dispatch(self), 'Di', p)
+        c = np.ones(len(self.weight), dtype=int)
+        dummy_system = AugmentedJacobiSystem(1, 1, zip(self.factors,c))
+        da, db, dc = p
+        dn = _diffop_dn(da, db, dc, dummy_system)
+        return op, AugmentedJacobiCodomain(dn,da,db,dc)
+
     def _E(self,p):
         op = partial(AugmentedJacobiOperator._Dispatch(self), 'E', p)
         dn = self.unweighted_degree if p == -1 else 0
@@ -1376,10 +1386,15 @@ class AugmentedJacobiOperator():
                 fun = {+1: embedding_operator, -1: embedding_operator_adjoint}[p]
             elif kind in ['D','E','F','G'] or c_diff:
                 fun = {+1: differential_operator, -1: differential_operator_adjoint}[p]
+            elif kind == 'Di':
+                fun = general_differential_operator
             else:
                 raise ValueError(f'Unknown operator kind: {kind}')
             system = AugmentedJacobiSystem(a, b, zip(self.op.factors,c))
-            op = fun(kind, system, n, dtype=self.op.dtype, internal=self.op.internal, **self.op.recurrence_kwargs)
+            if kind == 'Di':
+                op = fun(*p, system, n, dtype=self.op.dtype, internal=self.op.internal, **self.op.recurrence_kwargs)
+            else:
+                op = fun(kind, system, n, dtype=self.op.dtype, internal=self.op.internal, **self.op.recurrence_kwargs)
             return infinite_csr(op)
 
 
