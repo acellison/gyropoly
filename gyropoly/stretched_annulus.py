@@ -419,7 +419,7 @@ def _get_ell_modifiers(Lmax, alpha, adjoint=False, dtype='float64', internal='fl
 
 def _radial_size(geometry, Nmax, ell):
     """Get the triangular truncation size for a given ell"""
-    return Nmax - geometry.degree * (ell//2 if geometry.root_h else ell)
+    return Nmax - (geometry.degree * (ell//2 if geometry.root_h else ell) + int(geometry.sphere_inner + geometry.sphere_outer) * (ell//2))
 
 
 def _check_radial_degree(geometry, Lmax, Nmax):
@@ -484,10 +484,10 @@ def total_num_coeffs(geometry, Lmax, Nmax):
 
 def _radial_jacobi_parameters(geometry, m, alpha, sigma, ell=None):
     """Get the Augmented Jacobi parameters for the given (m, alpha, sigma, ell)"""
-    aparam = (lambda l: l+alpha+1/2) if geometry.sphere_outer else (lambda _: alpha)
-    bparam = (lambda l: l+alpha+1/2) if geometry.sphere_inner else (lambda _: alpha)
-    cparam = (lambda l: l+alpha+1/2) if geometry.root_h else (lambda l: 2*l+2*alpha+1)
-    fn = lambda l: (aparam(l), bparam(l), (cparam(l), m+sigma))
+    a = (lambda l: l+alpha+1/2) if geometry.sphere_outer else (lambda _: alpha)
+    b = (lambda l: l+alpha+1/2) if geometry.sphere_inner else (lambda _: alpha)
+    c = (lambda l: l+alpha+1/2) if geometry.root_h else (lambda l: 2*l+2*alpha+1)
+    fn = lambda l: (a(l), b(l), (c(l), m+sigma))
     return fn(ell) if ell is not None else fn
 
 
@@ -590,32 +590,36 @@ def _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma, dtype='
         raise ValueError('Cannot raise sigma = +1')
     if delta == -1 and sigma == -1:
         raise ValueError('Cannot lower sigma = -1')
-    if geometry.sphere_inner or geometry.sphere_outer:
-        raise ValueError('Not implemented')
 
     # Construct the fundamental Augmented Jacobi operators
     ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
-    Id, A, B, H, S = [ops(kind) for kind in ['Id', 'A', 'B', ('C',0),('C',1)]]
+    Id, A, B, H, S = [ops(kind) for kind in ['Id', 'A', 'B', ('C',0), ('C',1)]]
     R = ops('rhoprime', weighted=False, which=0)
-    Dz, Da, Db, Dc, DH, DS = [ops(kind) for kind in ['D', 'E', 'F', 'G', ('H',0), ('H',1)]]
+    Dz, DS, Di = [ops(kind) for kind in ['D', ('H',1), 'Di']]
 
     # Construct the radial part of the operators.  
     # L<n> is the operator that maps vertical index ell to ell-n
     cpower = 0 if geometry.root_h else 1
+    da = -1 if geometry.sphere_outer else +1
+    db = -1 if geometry.sphere_inner else +1
+#    s = -1 if geometry.sphere_outer or geometry.sphere_inner else 1
+    s = -1 if geometry.sphere_outer else 1
     if delta == +1:
         # Raising operator
         L0 =   H(+1)**cpower @ Dz(+1)
         L1 = - R @ A(+1) @ B(+1) @ S(+1)
-        L2 = - H(-1)**cpower @ DH(+1)
+        L2 = - s * H(-1)**cpower @ Di((da,db,(-1,+1)))
     elif delta == -1:
         # Lowering operator
         L0 =   H(+1)**cpower @ DS(+1)
         L1 = - R @ A(+1) @ B(+1) @ S(-1)
-        L2 = - H(-1)**cpower @ Dc(-1)
+        L2 = - s * H(-1)**cpower @ Di((da,db,(-1,-1)))
     else:
         # Neutral operator
         L0 = 0
-        L1 = A(+1) @ B(+1)
+        L1A = Id if geometry.sphere_outer else A(+1)
+        L1B = Id if geometry.sphere_inner else B(+1)
+        L1 = L1A @ L1B
         L2 = 0
 
     Ls = L0, L1, L2
@@ -850,6 +854,8 @@ def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype
     Sparse matrix with normal dot operator coefficients
 
     """
+    if geometry.sphere_inner or geometry.sphere_outer:
+        raise ValueError('Not implemented')
     ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
     A, B, H, S, R, Id = ops('A'), ops('B'), ops(('C',0)), ops(('C',1)), ops('rhoprime', weighted=False, which=0), ops('Id')
     Zero = 0*Id
@@ -952,8 +958,11 @@ def convert(geometry, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exac
         p, Lpad = -1, 2
     else:
         p, Lpad = +1, 0
-    L0 =  A(p) @ B(p) @ C( p)**cpower
-    L2 = -A(p) @ B(p) @ C(-p)**cpower
+
+    pa = -p if geometry.sphere_outer else p
+    pb = -p if geometry.sphere_inner else p
+    L0 =  A(p ) @ B(p ) @ C( p)**cpower
+    L2 = -A(pa) @ B(pb) @ C(-p)**cpower
     mods = _get_ell_modifiers(Lmax, alpha, adjoint=adjoint, dtype=internal, internal=internal)
 
     Npad = L0.codomain.dn
@@ -1094,16 +1103,20 @@ def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', in
         # ell times.  The highest mode (ell = Lmax-1) is left with C parameter (Lmax-1 + 2*alpha +1).
         # We then raise all C indices to match this highest mode.
         ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
-        H = ops(('C',0))
         radial_params = _radial_jacobi_parameters(geometry, m, alpha, sigma)
 
         div = 2 if geometry.root_h else 1
-        make_op = lambda ell: bc[ell] * (H(+1)**((Lmax-1-ell)//div) @ H(-1)**(ell//div))(lengths[ell], *radial_params(ell))
+        A, B, H, Id = [ops(key) for key in ['A', 'B', ('C',0), 'Id']]
+        Ac = (lambda ell: A(+1)**((Lmax-1-ell)//2) @ A(-1)**(ell//2)) if geometry.sphere_outer else (lambda _: Id)
+        Bc = (lambda ell: B(+1)**((Lmax-1-ell)//2) @ B(-1)**(ell//2)) if geometry.sphere_inner else (lambda _: Id)
+        Hc = lambda ell: H(+1)**((Lmax-1-ell)//div) @ H(-1)**(ell//div)
+        make_op = lambda ell: bc[ell] * (Ac(ell) @ Bc(ell) @ Hc(ell))(lengths[ell], *radial_params(ell))
+
         even_only = (coordinate_value, geometry.cylinder_type) == (0., 'full')
         ell_range = range(0, Lmax, 2 if even_only else 1)
 
         # Construct the operator.
-        if geometry.root_h:
+        if any([geometry.root_h, geometry.sphere_inner, geometry.sphere_outer]):
             # Boundary evaluation splits into even and odd ell components.
             # For this reason the 'z=-h' evaluation operator is linearly dependent
             # with the 'z=h' evaluation operator.
@@ -1112,7 +1125,7 @@ def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', in
                 n, index, mat = lengths[ell], offsets[ell], [Beven, Bodd][ell % 2] 
                 op = make_op(ell)
                 mat[:np.shape(op)[0],index:index+n] = op
-            B = Beven if even_only else sparse.vstack([Beven,Bodd], format='lil')
+            B = Beven if even_only else sparse.vstack([Beven,Bodd], format='csr')
         else:
             # If we are in full cylinder geometry evaluating at the middle
             # then only the even ell polynomials contribute since the odd
