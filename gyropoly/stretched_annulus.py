@@ -3,6 +3,8 @@ from functools import partial
 import numpy as np
 import scipy.sparse as sparse
 from scipy.special import comb
+
+from mpl_toolkits import mplot3d
 import matplotlib.pyplot as plt
 from dedalus_sphere import jacobi
 from . import augmented_jacobi as ajacobi
@@ -166,6 +168,41 @@ class Geometry():
         ax.grid(True)
         fig.set_tight_layout(True)
         return fig, ax
+
+    def plot_volume(self):
+        # Create the domain
+        ns, nphi = 64, 32
+        t, phi = np.linspace(-1,1,ns), np.linspace(-np.pi,np.pi,nphi)
+        s, h = self.s(t), self.height(t)
+
+        # Construct the wireframe
+        s, phi = s[np.newaxis,:], phi[:,np.newaxis]
+        X = s * np.sin(phi)
+        Y = s * np.cos(phi)
+        Z = h[np.newaxis,:]
+        s = -1 if self.cylinder_type == 'full' else 0
+
+        # Plot the wireframe
+        fig = plt.figure()
+        ax = plt.axes(projection='3d')
+        ax.plot_wireframe(X, Y,   Z, rstride=1, cstride=1, linewidth=0.2)
+        ax.plot_wireframe(X, Y, s*Z, rstride=1, cstride=1, linewidth=0.2)
+
+        # Create cubic bounding box to simulate equal aspect ratio
+        max_range = np.array([X.max()-X.min(), Y.max()-Y.min(), Z.max()-s*Z.max()]).max()
+        Xb = 0.5*max_range*np.mgrid[-1:2:2,-1:2:2,-1:2:2][0].flatten() + 0.5*(X.max()+X.min())
+        Yb = 0.5*max_range*np.mgrid[-1:2:2,-1:2:2,-1:2:2][1].flatten() + 0.5*(Y.max()+Y.min())
+        Zb = 0.5*max_range*np.mgrid[-1:2:2,-1:2:2,-1:2:2][2].flatten() + 0.5*(Z.max()+s*Z.max())
+        # Comment or uncomment following both lines to test the fake bounding box:
+        for xb, yb, zb in zip(Xb, Yb, Zb):
+            ax.plot([xb], [yb], [zb], 'w')
+
+        # Set the labels
+        ax.set_xlabel('$x$')
+        ax.set_ylabel('$y$')
+        ax.set_zlabel('$z$')
+        return fig, ax
+
 
     def __repr__(self):
         radius = f'-radii={float(self.radii[0])}_{float(self.radii[1])}'
@@ -424,8 +461,9 @@ def _radial_size(geometry, Nmax, ell):
 
 def _check_radial_degree(geometry, Lmax, Nmax):
     """Ensure we can triangular truncate with the given maximum degree"""
-    if _radial_size(geometry, Nmax, Lmax-1) <= 1:
-        raise ValueError('Radial degree too small for triangular truncation')
+    n = _radial_size(geometry, Nmax, Lmax-1)
+    if n <= 1:
+        raise ValueError(f'Radial degree {Nmax} too small for triangular truncation.  Use Nmax >= {Nmax+2-n}')
 
 
 def coeff_sizes(geometry, Lmax, Nmax):
