@@ -675,9 +675,9 @@ def test_general_differential_operators():
         f = lambda z: 4 + 2*z + z**2 - z**3 + 0.2*z**5
         fprime = lambda z: 2 + 2*z - 3*z**2 + z**4
         Df = fprime
-        Ef = lambda z: a*f(z) - (1-z)*fprime(z)
-        Ff = lambda z: b*f(z) + (1+z)*fprime(z)
-        Gf = lambda z: ((1+z)*a - (1-z)*b)*f(z) - (1-z**2)*fprime(z)
+        Ef = lambda z: -a*f(z) + (1-z)*fprime(z)
+        Ff = lambda z:  b*f(z) + (1+z)*fprime(z)
+        Gf = lambda z: (-(1+z)*a + (1-z)*b)*f(z) + (1-z**2)*fprime(z)
         return f, Df, Ef, Ff, Gf
 
     def check_grid(system, op, dn, da, db, dc, fin, fout, tol, verbose=False):
@@ -714,8 +714,8 @@ def test_general_differential_operators():
 
             if   (da,db) == (+1,+1): D, I = Df, (lambda _: 1)
             elif (da,db) == (+1,-1): D, I = Ff, (lambda z: 1+z)
-            elif (da,db) == (-1,+1): D, I = Ef, (lambda z: -(1-z))
-            elif (da,db) == (-1,-1): D, I = Gf, (lambda z: -(1-z**2))
+            elif (da,db) == (-1,+1): D, I = Ef, (lambda z: 1-z)
+            elif (da,db) == (-1,-1): D, I = Gf, (lambda z: 1-z**2)
             fexact = lambda z: rho_fun(z) * D(z) + rho_der(z) * I(z) * f(z)
 
             check_grid(system, Op, dn, da, db, dc, f, fexact, tol, verbose=verbose)

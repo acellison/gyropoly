@@ -977,12 +977,12 @@ def general_differential_operator(da, db, dc, system, n, dtype='float64', intern
     elif (da,db) == (-1,+1):
         def ops(z):
             P, Pprime = polys_and_derivs(z)
-            return -(1-z)*P, a*P - (1-z)*Pprime
+            return (1-z)*P, -a*P + (1-z)*Pprime
 
     elif (da,db) == (-1,-1):
         def ops(z):
             P, Pprime = polys_and_derivs(z)
-            return -(1-z**2)*P, (a-b + (a+b)*z)*P - (1-z**2)*Pprime
+            return (1-z**2)*P, (b-a - (b+a)*z)*P + (1-z**2)*Pprime
 
     else:
         raise ValueError('da and db must each be one of {+1,-1}')

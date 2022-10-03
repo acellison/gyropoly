@@ -640,18 +640,16 @@ def _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma, dtype='
     cpower = 0 if geometry.root_h else 1
     da = -1 if geometry.sphere_outer else +1
     db = -1 if geometry.sphere_inner else +1
-#    s = -1 if geometry.sphere_outer or geometry.sphere_inner else 1
-    s = -1 if geometry.sphere_outer else 1
     if delta == +1:
         # Raising operator
         L0 =   H(+1)**cpower @ Dz(+1)
         L1 = - R @ A(+1) @ B(+1) @ S(+1)
-        L2 = - s * H(-1)**cpower @ Di((da,db,(-1,+1)))
+        L2 = - H(-1)**cpower @ Di((da,db,(-1,+1)))
     elif delta == -1:
         # Lowering operator
         L0 =   H(+1)**cpower @ DS(+1)
         L1 = - R @ A(+1) @ B(+1) @ S(-1)
-        L2 = - s * H(-1)**cpower @ Di((da,db,(-1,-1)))
+        L2 = - H(-1)**cpower @ Di((da,db,(-1,-1)))
     else:
         # Neutral operator
         L0 = 0
