@@ -951,7 +951,33 @@ def _diffop_dn(da, db, dc, system):
     
 
 def general_differential_operator(da, db, dc, system, n, dtype='float64', internal='float128', **recurrence_kwargs):
-    """Define a general differential operator on the Augmented Jacobi system.
+    """
+    Compute a general differential operator on the Augmented Jacobi system.
+
+    Parameters
+    ----------
+    da : integer
+        One of {+1,-1} to increment or decrement the Jacobi a parameter
+    db : integer
+        One of {+1,-1} to increment or decrement the Jacobi b parameter
+    dc : tuple of integers
+        Tuple of {+1,-1} to increment or decrement the corresponding augmented Jacobi c_i parameter
+    system : AugmentedSystem
+        OP system to augment with additional weight factor
+    n : integer
+        Number of polynomials in expansion, one less than max degree
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+    recurrence_kwargs : dict, optional
+        Keyword arguments to pass to the Jacobi operator subroutine
+
+    Returns
+    -------
+    sparse matrix with n columns and number of rows determined by the
+    operator codomain n increment
+
     """
     if len(dc) != system.num_augmented_factors:
         raise ValueError('Must have one delta per Augmented Jacobi index')
@@ -1006,6 +1032,34 @@ def general_differential_operator(da, db, dc, system, n, dtype='float64', intern
 
 
 def general_differential_operator_adjoint(da, db, dc, system, n, dtype='float64', internal='float128', **recurrence_kwargs):
+    """
+    Compute the adjoint of a general differential operator on the Augmented Jacobi system.
+
+    Parameters
+    ----------
+    da : integer
+        One of {+1,-1} to increment or decrement the Jacobi a parameter
+    db : integer
+        One of {+1,-1} to increment or decrement the Jacobi b parameter
+    dc : tuple of integers
+        Tuple of {+1,-1} to increment or decrement the augmented Jacobi c_i parameter
+    system : AugmentedSystem
+        OP system to augment with additional weight factor
+    n : integer
+        Number of polynomials in expansion, one less than max degree
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+    recurrence_kwargs : dict, optional
+        Keyword arguments to pass to the Jacobi operator subroutine
+
+    Returns
+    -------
+    sparse matrix with n columns and number of rows determined by the
+    operator codomain n increment
+
+    """
     return general_differential_operator(-da, -db, tuple(-c for c in dc), system, n, dtype=dtype, internal=internal, **recurrence_kwargs)
 
 

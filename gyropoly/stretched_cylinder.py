@@ -570,17 +570,16 @@ def _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma, dtype='
     # Construct the radial part of the operators.  
     # L<n> is the operator that maps vertical index ell to ell-n
     cpower = 0 if geometry.root_h else 1
-    s = 1 if geometry.sphere else -1
     if delta == +1:
         # Raising operator
         L0 =   C(+1)**cpower @ Dz(+1)
         L1 = - R @ A(+1) @ B(+1)
-        L2 = s*C(-1)**cpower @ (Db if geometry.sphere else Dc)(-1)
+        L2 = - C(-1)**cpower @ (-Db(-1) if geometry.sphere else Dc(-1))
     elif delta == -1:
         # Lowering operator
         L0 =   C(+1)**cpower @ Db(+1)
         L1 = - R @ A(+1) @ B(-1)
-        L2 = s*C(-1)**cpower @ (Dz if geometry.sphere else Da)(-1)
+        L2 = - C(-1)**cpower @ (-Dz(-1) if geometry.sphere else Da(-1))
     else:
         # Neutral operator
         L0 = 0
