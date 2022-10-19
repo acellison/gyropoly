@@ -782,7 +782,7 @@ def curl(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', r
                              [Cz[0], Cz[1], Z]]).tocsr()
 
 
-def scalar_laplacian(geoemtry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', recurrence_kwargs=None):
+def scalar_laplacian(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Construct the Laplacian operator acting on a scalar field
 
