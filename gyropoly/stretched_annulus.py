@@ -934,14 +934,104 @@ def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype
         raise ValueError(f'Invalid surface ({surface})')
 
     Lpad, Npad = (dl,dn) if exact else (0,0)
-    make_op = lambda sigma, dell, zdiag, sop: _make_operator(geometry, dell, zdiag, sop, m, Lmax, Nmax, alpha, sigma, Lpad=Lpad, Npad=Npad).astype(dtype)
+    make_op = lambda sigma, dell, zdiag, sop: _make_operator(geometry, dell, zdiag, sop, m, Lmax, Nmax, alpha, sigma, Lpad=Lpad, Npad=Npad)
     ones = np.ones(Lmax)
     ops = [make_op(sigma, 0, ones, L) for sigma, L in [(+1,Lp),(-1,Lm)]]
     if surface == 'z=h' and geometry.root_h:
         ops.append(make_op(0, +1, zop.diagonal(1), Lzm1) + make_op(0, -1, zop.diagonal(-1), Lzp1))
     else:
         ops.append(make_op(0, 0, ones, Lz))
-    return sparse.hstack(ops).tocsr()
+    return sparse.hstack(ops).astype(dtype).tocsr()
+
+
+def s_vector(geometry, m, Lmax, Nmax, alpha, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
+    """
+    Multiply a scalar field by the non-unit-normalized cylindrical s vector
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
+    m : int
+        Azimuthal wavenumber
+    Lmax : int
+        Maximum vertical degree of input basis
+    Nmax : int
+        Maximum radial degree of input basis
+    alpha : float > -1
+        Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    exact : bool, optional
+        If True, pads the output of the operator appropriately for the bandwidth growth
+        caused by multiplication by s.
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+
+    Returns
+    -------
+    Sparse matrix with s vector multiplication operator coefficients
+
+    """
+    ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
+    S, Zero = ops(('C',1)), 0*ops('Id')
+    Lp, Lm, Lz = S(+1), S(-1), Zero
+    Lpad, Npad = (0,Lm.codomain.dn) if exact else (0,0)
+    ones = np.ones(Lmax)
+    make_op = lambda sop: (1/2 * _make_operator(geometry, 0, ones, sop, m, Lmax, Nmax, alpha, sigma=0, Lpad=Lpad, Npad=Npad)).astype(dtype)
+    return sparse.vstack([make_op(L) for L in [Lp,Lm,Lz]]).tocsr()
+
+
+def z_vector(geometry, m, Lmax, Nmax, alpha, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
+    """
+    Multiply a scalar field by the non-unit-normalized z vector
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
+    m : int
+        Azimuthal wavenumber
+    Lmax : int
+        Maximum vertical degree of input basis
+    Nmax : int
+        Maximum radial degree of input basis
+    alpha : float > -1
+        Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    exact : bool, optional
+        If True, pads the output of the operator appropriately for the bandwidth growth
+        caused by multiplication by z.
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+
+    Returns
+    -------
+    Sparse matrix with s vector multiplication operator coefficients
+
+    """
+    ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
+    A, B, H, Id = [ops(key) for key in ['A','B',('C',0),'Id']]
+    apower = 1 if geometry.sphere_outer else 0
+    bpower = 1 if geometry.sphere_inner else 0
+    hpower = 1 if geometry.root_h else 2
+
+    # Construct the radial operators for l->l+1 and l->l-1
+    Lzp, Lzm = A(+1)**apower @ B(+1)**bpower @ H(+1)**hpower, A(-1)**apower @ B(-1)**bpower @ H(-1)**hpower
+    Lpad, Npad = (1,Lzm.codomain.dn-(0 if geometry.root_h else 1)) if exact else (0,0)
+    zop = jacobi.operator('Z', dtype=internal)(Lmax, alpha, alpha)
+    make_op = lambda dell, sop: _make_operator(geometry, dell, zop.diagonal(dell), sop, m, Lmax, Nmax, alpha, sigma=0, Lpad=Lpad, Npad=Npad)
+    Opz = make_op(-1, Lzp) + make_op(+1, Lzm)
+
+    if geometry.cylinder_type == 'half':
+        # Construct the radial operator for l->l
+        make_op = lambda sop: _make_operator(geometry, 0, np.ones(Lmax), sop, m, Lmax, Nmax, alpha, sigma=0, Lpad=Lpad, Npad=Npad)
+        Lz0 = H(+1) @ H(-1)
+        Opz = 1/2 * (Opz + make_op(Lz0))
+
+    Z = sparse.lil_matrix((2*np.shape(Opz)[0], np.shape(Opz)[1]))
+    return sparse.vstack([Z, Opz]).astype(dtype).tocsr()
 
 
 def convert(geometry, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exact=True, dtype='float64', internal='float128', recurrence_kwargs=None):
@@ -1191,7 +1281,7 @@ def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', in
 def _operator(name, geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', recurrence_kwargs=None, **kwargs):
     """Operator dispatch function with caching of results"""
     valid_names = ['gradient', 'divergence', 'curl', 'scalar_laplacian', 'vector_laplacian',
-                   'normal_component', 'boundary', 'convert', 'project']
+                   'normal_component', 's_vector', 'z_vector', 'boundary', 'convert', 'project']
     if name not in valid_names:
         raise ValueError(f'Invalid operator name {name}')
     function = eval(name)

@@ -489,6 +489,73 @@ def test_normal_component(geometry, m, Lmax, Nmax, alpha, operators):
     test_ndot_side(geometry, m, Lmax, Nmax, alpha, operators)
 
 
+def test_s_vector(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_s_vector...')
+    op = operators('s_vector', exact=True)
+
+    dn = 1
+    ncoeff   = sa.total_num_coeffs(geometry, Lmax, Nmax)
+    ncoeff_u = sa.total_num_coeffs(geometry, Lmax, Nmax+dn)
+
+    c = 2*np.random.rand(ncoeff) - 1
+    d = op @ c
+
+    t = np.linspace(-1,1,100)
+    eta = np.linspace(-1,1,101)
+    scalar_basis = create_scalar_basis(geometry, m, Lmax, Nmax,    alpha, t, eta)
+    vector_basis = create_vector_basis(geometry, m, Lmax, Nmax+dn, alpha, t, eta)
+    s = scalar_basis.s()
+
+    # Compute s*f in grid space
+    f = scalar_basis.expand(c)
+    ugrid = s * f
+
+    # Compute s*f using the operator
+    Sp, Sm, Sz = [d[i*ncoeff_u:(i+1)*ncoeff_u] for i in range(3)]
+    up, um, w = [vector_basis[key].expand(coeffs) for key,coeffs in [('up', Sp), ('um', Sm), ('w', Sz)]]
+    u =   1/np.sqrt(2) * (up + um)
+    v = -1j/np.sqrt(2) * (up - um)
+
+    check_close(u, ugrid, 1.0e-13)
+    check_close(v, 0.0, 1.1e-13)
+    check_close(w, 0.0, 0)
+
+
+def test_z_vector(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_z_vector...')
+    op = operators('z_vector', exact=True)
+
+    d = geometry.degree
+    da = 1 if geometry.sphere_outer else 0
+    db = 1 if geometry.sphere_inner else 0
+    dl, dn = 1, (d if geometry.root_h else 2*d-1) + da + db
+    ncoeff   = sa.total_num_coeffs(geometry, Lmax,    Nmax)
+    ncoeff_u = sa.total_num_coeffs(geometry, Lmax+dl, Nmax+dn)
+
+    c = 2*np.random.rand(ncoeff) - 1
+    d = op @ c
+
+    t = np.linspace(-1,1,100)
+    eta = np.linspace(-1,1,101)
+    scalar_basis = create_scalar_basis(geometry, m, Lmax,    Nmax,    alpha, t, eta)
+    vector_basis = create_vector_basis(geometry, m, Lmax+dl, Nmax+dn, alpha, t, eta)
+    z = scalar_basis.z()
+
+    # Compute s*f in grid space
+    f = scalar_basis.expand(c)
+    wgrid = z * f
+
+    # Compute s*f using the operator
+    Sp, Sm, Sz = [d[i*ncoeff_u:(i+1)*ncoeff_u] for i in range(3)]
+    up, um, w = [vector_basis[key].expand(coeffs) for key,coeffs in [('up', Sp), ('um', Sm), ('w', Sz)]]
+    u =   1/np.sqrt(2) * (up + um)
+    v = -1j/np.sqrt(2) * (up - um)
+
+    check_close(u, 0.0, 0)
+    check_close(v, 0.0, 0)
+    check_close(w, wgrid, 2e-13)
+
+
 def test_convert(geometry, m, Lmax, Nmax, alpha, operators):
     print('  test_convert...')
     op1 = operators('convert', sigma=0)
@@ -636,6 +703,7 @@ def main():
             test_convert,
             test_convert_adjoint,
             test_normal_component,
+            test_s_vector, test_z_vector,
             test_boundary,
         ]
 
