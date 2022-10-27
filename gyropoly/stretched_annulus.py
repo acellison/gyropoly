@@ -1102,28 +1102,10 @@ def z_dot(geometry, m, Lmax, Nmax, alpha, exact=False, dtype='float64', internal
     Sparse matrix with s vector multiplication operator coefficients
 
     """
-    ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
-    ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
-    A, B, H, Id = [ops(key) for key in ['A','B',('C',0),'Id']]
-    apower = 1 if geometry.sphere_outer else 0
-    bpower = 1 if geometry.sphere_inner else 0
-    hpower = 1 if geometry.root_h else 2
-
-    # Construct the radial operators for l->l+1 and l->l-1
-    Lzp, Lzm = A(-1)**apower @ B(-1)**bpower @ H(-1)**hpower, A(+1)**apower @ B(+1)**bpower @ H(+1)**hpower
-    Lpad, Npad = (1,Lzp.codomain.dn-(0 if geometry.root_h else 1)) if exact else (0,0)
-    zop = jacobi.operator('Z', dtype=internal)(Lmax, alpha, alpha)
-    make_op = lambda dell, sop: _make_operator(geometry, dell, zop.diagonal(dell), sop, m, Lmax, Nmax, alpha, sigma=0, Lpad=Lpad, Npad=Npad)
-    Opz = make_op(+1, Lzp) + make_op(-1, Lzm)
-
-    if geometry.cylinder_type == 'half':
-        # Construct the radial operator for l->l
-        make_op = lambda sop: _make_operator(geometry, 0, np.ones(Lmax), sop, m, Lmax, Nmax, alpha, sigma=0, Lpad=Lpad, Npad=Npad)
-        Lz0 = H(-1) @ H(+1)
-        Opz = 1/2 * (Opz + make_op(Lz0))
-
-    Z = sparse.lil_matrix((np.shape(Opz)[0], 2*np.shape(Opz)[1]))
-    return sparse.hstack([Z, Opz]).astype(dtype).tocsr()
+    # This operator is identical to the z_vector operator up to a transpose
+    zvec = z_vector(geometry, m, Lmax, Nmax, alpha, exact=exact, dtype=dtype, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    n = np.shape(zvec)[0]//3
+    return sparse.hstack([zvec[i*n:(i+1)*n,:] for i in range(3)]).tocsr()
 
 
 def convert(geometry, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exact=True, dtype='float64', internal='float128', recurrence_kwargs=None):
