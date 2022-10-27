@@ -556,6 +556,63 @@ def test_z_vector(geometry, m, Lmax, Nmax, alpha, operators):
     check_close(w, wgrid, 2e-13)
 
 
+def test_s_dot(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_s_dot...')
+    op = operators('s_dot', exact=True)
+
+    dn = 1
+    ncoeff = sa.total_num_coeffs(geometry, Lmax, Nmax)
+
+    c = 2*np.random.rand(3*ncoeff) - 1
+    d = op @ c
+
+    t = np.linspace(-1,1,100)
+    eta = np.linspace(-1,1,101)
+    vector_basis = create_vector_basis(geometry, m, Lmax, Nmax,    alpha, t, eta)
+    scalar_basis = create_scalar_basis(geometry, m, Lmax, Nmax+dn, alpha, t, eta)
+    s = scalar_basis.s()
+
+    # Compute s*f in grid space
+    Up, Um, Uz = [c[i*ncoeff:(i+1)*ncoeff] for i in range(3)]
+    up, um, w = [vector_basis[key].expand(coeffs) for key,coeffs in [('up', Up), ('um', Um), ('w', Uz)]]
+    u =   1/np.sqrt(2) * (up + um)
+    sugrid = s * u
+
+    # Compute s*f using the operator
+    su = scalar_basis.expand(d)
+
+    check_close(su, sugrid, 4.0e-13)
+
+
+def test_z_dot(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_z_dot...')
+    op = operators('z_dot', exact=True)
+
+    d = geometry.degree
+    da = 1 if geometry.sphere_outer else 0
+    db = 1 if geometry.sphere_inner else 0
+    dl, dn = 1, (d if geometry.root_h else 2*d-1) + da + db
+    ncoeff = sa.total_num_coeffs(geometry, Lmax, Nmax)
+
+    c = 2*np.random.rand(3*ncoeff) - 1
+    d = op @ c
+
+    t = np.linspace(-1,1,100)
+    eta = np.linspace(-1,1,101)
+    vector_basis = create_vector_basis(geometry, m, Lmax,    Nmax,    alpha, t, eta)
+    scalar_basis = create_scalar_basis(geometry, m, Lmax+dl, Nmax+dn, alpha, t, eta)
+    z = scalar_basis.z()
+
+    # Compute s*f in grid space
+    w = vector_basis['w'].expand(c[2*ncoeff:])
+    zwgrid = z * w
+
+    # Compute s*f using the operator
+    zw = scalar_basis.expand(d)
+
+    check_close(zw, zwgrid, 4.0e-13)
+
+
 def test_convert(geometry, m, Lmax, Nmax, alpha, operators):
     print('  test_convert...')
     op1 = operators('convert', sigma=0)
@@ -704,6 +761,7 @@ def main():
             test_convert_adjoint,
             test_normal_component,
             test_s_vector, test_z_vector,
+            test_s_dot, test_z_dot,
             test_boundary,
         ]
 

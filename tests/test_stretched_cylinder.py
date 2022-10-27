@@ -65,6 +65,7 @@ def dPhi(f, m):
 
 
 def test_gradient(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_gradient...')
     # Build the operator
     op = operators('gradient')
 
@@ -104,11 +105,12 @@ def test_gradient(geometry, m, Lmax, Nmax, alpha, operators):
 
     root_h_scale = 2.1 if geometry.root_h else 1
     check(u, ugrid, 1.7e-2 * root_h_scale)
-    check(w, wgrid, 1.4e-3)
+    check(w, wgrid, 1.8e-3)
     check_close(v, vgrid, 2e-11)
 
 
 def test_divergence(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_divergence...')
     # Build the operator
     op = operators('divergence')
 
@@ -154,6 +156,7 @@ def test_divergence(geometry, m, Lmax, Nmax, alpha, operators):
 
 
 def test_curl(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_curl...')
     # Make sure the divergence of the curl is zero
     C = operators('curl')
     D = operators('divergence', alpha=alpha+1)
@@ -223,6 +226,7 @@ def test_laplacian(geometry, m, Lmax, Nmax, alpha, operators):
 
 
 def test_ndot_top(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_ndot_top...')
     # Build the operator
     exact = True
     root_sphere = geometry.sphere and geometry.root_h
@@ -261,6 +265,7 @@ def test_ndot_top(geometry, m, Lmax, Nmax, alpha, operators):
 
 
 def test_ndot_xy_plane(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_ndot_xy_plane...')
     op = operators('normal_component', surface='z=0')
 
     # Construct the coefficient vector and apply the operator
@@ -287,6 +292,7 @@ def test_ndot_xy_plane(geometry, m, Lmax, Nmax, alpha, operators):
 
 
 def test_ndot_bottom(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_ndot_bottom...')
     if geometry.cylinder_type != 'full':
         raise ValueError('z=-h not in half domain')
     # Build the operator
@@ -329,6 +335,7 @@ def test_ndot_bottom(geometry, m, Lmax, Nmax, alpha, operators):
 
 
 def test_ndot_side(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_ndot_side...')
     # Build the operator
     exact = True
     dn = 1 if exact else 0
@@ -368,6 +375,7 @@ def test_normal_component(geometry, m, Lmax, Nmax, alpha, operators):
 
 
 def test_s_vector(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_s_vector...')
     op = operators('s_vector', exact=True)
 
     dn = 1
@@ -399,6 +407,7 @@ def test_s_vector(geometry, m, Lmax, Nmax, alpha, operators):
 
 
 def test_z_vector(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_z_vector...')
     op = operators('z_vector', exact=True)
 
     d = geometry.degree
@@ -431,7 +440,64 @@ def test_z_vector(geometry, m, Lmax, Nmax, alpha, operators):
     check_close(w, wgrid, 2e-13)
 
 
+def test_s_dot(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_s_dot...')
+    op = operators('s_dot', exact=True)
+
+    dn = 1
+    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
+
+    c = 2*np.random.rand(3*ncoeff) - 1
+    d = op @ c
+
+    t = np.linspace(-1,1,100)
+    eta = np.linspace(-1,1,101)
+    vector_basis = create_vector_basis(geometry, m, Lmax, Nmax,    alpha, t, eta)
+    scalar_basis = create_scalar_basis(geometry, m, Lmax, Nmax+dn, alpha, t, eta)
+    s = scalar_basis.s()
+
+    # Compute s*f in grid space
+    Up, Um, Uz = [c[i*ncoeff:(i+1)*ncoeff] for i in range(3)]
+    up, um, w = [vector_basis[key].expand(coeffs) for key,coeffs in [('up', Up), ('um', Um), ('w', Uz)]]
+    u =   1/np.sqrt(2) * (up + um)
+    sugrid = s * u
+
+    # Compute s*f using the operator
+    su = scalar_basis.expand(d)
+
+    check_close(su, sugrid, 4.0e-13)
+
+
+def test_z_dot(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_z_dot...')
+    op = operators('z_dot', exact=True)
+
+    d = geometry.degree
+    da = 1 if geometry.sphere else 0
+    dl, dn = 1, (d if geometry.root_h else 2*d-1) + da
+    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
+
+    c = 2*np.random.rand(3*ncoeff) - 1
+    d = op @ c
+
+    t = np.linspace(-1,1,100)
+    eta = np.linspace(-1,1,101)
+    vector_basis = create_vector_basis(geometry, m, Lmax,    Nmax,    alpha, t, eta)
+    scalar_basis = create_scalar_basis(geometry, m, Lmax+dl, Nmax+dn, alpha, t, eta)
+    z = scalar_basis.z()
+
+    # Compute s*f in grid space
+    w = vector_basis['w'].expand(c[2*ncoeff:])
+    zwgrid = z * w
+
+    # Compute s*f using the operator
+    zw = scalar_basis.expand(d)
+
+    check_close(zw, zwgrid, 4.0e-13)
+
+
 def test_convert(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_convert...')
     op1 = operators('convert', sigma=0)
     op2 = operators('convert', sigma=0, ntimes=3)
 
@@ -450,11 +516,12 @@ def test_convert(geometry, m, Lmax, Nmax, alpha, operators):
     g1 = basis1.expand(d1)
     g2 = basis2.expand(d2)
 
-    check_close(f, g1, 1.8e-13)
+    check_close(f, g1, 2.2e-13)
     check_close(f, g2, 1.8e-12)
 
 
 def test_convert_adjoint(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_convert_adjoint...')
     op = operators('convert', sigma=0, adjoint=True)
 
     ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
@@ -577,12 +644,14 @@ def test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom)
 
 
 def test_boundary(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_boundary...')
     test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom='z=0')
     if geometry.cylinder_type == 'full':
         test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom='z=-h')
 
 
 def test_project(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_project...')
     if geometry.sphere:
         print('  Warning: skipping project test for sphere geometry')
         return
@@ -619,6 +688,7 @@ def main():
             test_convert, test_convert_adjoint,
             test_normal_component,
             test_s_vector, test_z_vector,
+            test_s_dot, test_z_dot,
             test_boundary, test_project
             ]
 
