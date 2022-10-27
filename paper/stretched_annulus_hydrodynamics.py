@@ -39,7 +39,7 @@ def combined_projection(geometry, m, Lmax, Nmax, alpha, sigma):
     return sparse.hstack(opt+ops)
 
 
-def build_projections(geometry, m, Lmax, Nmax, alpha, boundary_method):
+def build_projections(geometry, m, Lmax, Nmax, alpha):
     dN = 2+(2-int(geometry.root_h))*geometry.degree
     make_op = lambda sigma, dalpha, dL: combined_projection(geometry, m, Lmax+2-dL, Nmax+dN, alpha+dalpha, sigma)
     return sparse.block_diag([make_op(sigma, dalpha, dL) for sigma, dalpha, dL in [(+1,1,0), (-1,1,0), (0,1,Lshift(0)), (0,0,0)]])
@@ -91,7 +91,7 @@ def build_matrices_galerkin(geometry, m, Lmax, Nmax, Ekman, alpha):
     L, M = L @ S, M @ S
 
     # Tau projections for enforcing the boundaries
-    col = build_projections(geometry, m, Lmax, Nmax, alpha, boundary_method='galerkin')
+    col = build_projections(geometry, m, Lmax, Nmax, alpha)
     L = sparse.hstack([L,   col])
     M = sparse.hstack([M, 0*col])
 
@@ -245,23 +245,44 @@ def plot_solution(data):
     fig.set_tight_layout(True)
 
 
+def make_coreaboloid_domain():
+    HNR = 17.08  # cm
+    Ri = 10.2    # cm
+    Ro = 37.25   # cm
+    g = 9.8e2    # cm/s**2
+
+    def make_height_coeffs(rpm):
+        Omega = 2*np.pi*rpm/60
+        h0 = HNR - Omega**2*(Ro**2+Ri**2)/(4*g)
+        return np.array([Omega**2*Ro**2/(2*g), h0])/Ro
+    return (Ri/Ro, 1), make_height_coeffs
+
+
 def main():
-    config = {'cylinder_type': 'full', 'radii': (0.1,1.), 'm': 30, 'Lmax': 80, 'Nmax': 240, 'Ekman': 1e-6, 'alpha': 0, 'omega': 2}
+    # Coreaboloid Domain
+    config = {'cylinder_type': 'half', 'm': 14, 'Lmax': 200, 'Nmax': 300, 'Ekman': 1e-5, 'alpha': 0, 'omega': 60, 'sphere_outer': False, 'sphere_inner': False}
     boundary_method = 'galerkin'
-#    force_construct, force_solve = (True,True)
     force_construct, force_solve = (False,False)
-    nev, evalue_target = 200, 0.04j
+    nev, evalue_target = 200, 0.
 
-    cylinder_type, radii, omega = [config[key] for key in ['cylinder_type', 'radii', 'omega']]
+    cylinder_type, omega = [config[key] for key in ['cylinder_type', 'omega']]
+    if cylinder_type == 'half':
+        radii, height_coeffs_for_rpm = make_coreaboloid_domain()
+        hs = height_coeffs_for_rpm(omega)
+    else:
+        radii = config['radii']
+        hs = np.array([omega/(2+omega), 1/(2+omega)])
+    ht = domain.scoeff_to_tcoeff(radii, hs)
 
-    H = 0.5 if cylinder_type == 'full' else 1.
-    hs = 2*H*np.array([omega/(2+omega), 1/(2+omega)])
-    ht = domain.scoeff_to_tcoeff(config['radii'], hs)
+    geometry = domain.Geometry(cylinder_type=cylinder_type, hcoeff=ht, radii=radii, sphere_inner=config['sphere_inner'], sphere_outer=config['sphere_outer'])
 
-    geometry = domain.Geometry(cylinder_type=cylinder_type, hcoeff=ht, radii=radii)
+    plot_surface = False
+    if plot_surface:
+        fig, ax = geometry.plot_volume(aspect=None)
+        plt.show()
 
-    print(f"geometry: {geometry}, m = {config['m']}, Lmax = {config['Lmax']}, Nmax = {config['Nmax']}, alpha = {config['alpha']}, omega = {config['omega']}")
-    data = solve_eigenproblem(geometry, config['m'], config['Lmax'], config['Nmax'], boundary_method, config['omega'], \
+    print(f"geometry: {geometry}, m = {config['m']}, Lmax = {config['Lmax']}, Nmax = {config['Nmax']}, alpha = {config['alpha']}, omega = {omega}")
+    data = solve_eigenproblem(geometry, config['m'], config['Lmax'], config['Nmax'], boundary_method, omega, \
                               Ekman=config['Ekman'], alpha=config['alpha'], \
                               force_construct=force_construct, force_solve=force_solve, \
                               nev=nev, evalue_target=evalue_target)
