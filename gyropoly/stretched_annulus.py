@@ -169,7 +169,7 @@ class Geometry():
         fig.set_tight_layout(True)
         return fig, ax
 
-    def plot_volume(self):
+    def plot_volume(self, aspect='equal'):
         # Create the domain
         ns, nphi = 64, 32
         t, phi = np.linspace(-1,1,ns), np.linspace(-np.pi,np.pi,nphi)
@@ -189,13 +189,14 @@ class Geometry():
         ax.plot_wireframe(X, Y, s*Z, rstride=1, cstride=1, linewidth=0.2)
 
         # Create cubic bounding box to simulate equal aspect ratio
-        max_range = np.array([X.max()-X.min(), Y.max()-Y.min(), Z.max()-s*Z.max()]).max()
-        Xb = 0.5*max_range*np.mgrid[-1:2:2,-1:2:2,-1:2:2][0].flatten() + 0.5*(X.max()+X.min())
-        Yb = 0.5*max_range*np.mgrid[-1:2:2,-1:2:2,-1:2:2][1].flatten() + 0.5*(Y.max()+Y.min())
-        Zb = 0.5*max_range*np.mgrid[-1:2:2,-1:2:2,-1:2:2][2].flatten() + 0.5*(Z.max()+s*Z.max())
-        # Comment or uncomment following both lines to test the fake bounding box:
-        for xb, yb, zb in zip(Xb, Yb, Zb):
-            ax.plot([xb], [yb], [zb], 'w')
+        if aspect == 'equal':
+            max_range = np.array([X.max()-X.min(), Y.max()-Y.min(), Z.max()-s*Z.max()]).max()
+            Xb = 0.5*max_range*np.mgrid[-1:2:2,-1:2:2,-1:2:2][0].flatten() + 0.5*(X.max()+X.min())
+            Yb = 0.5*max_range*np.mgrid[-1:2:2,-1:2:2,-1:2:2][1].flatten() + 0.5*(Y.max()+Y.min())
+            Zb = 0.5*max_range*np.mgrid[-1:2:2,-1:2:2,-1:2:2][2].flatten() + 0.5*(Z.max()+s*Z.max())
+            # Comment or uncomment following both lines to test the fake bounding box:
+            for xb, yb, zb in zip(Xb, Yb, Zb):
+                ax.plot([xb], [yb], [zb], 'w')
 
         # Set the labels
         ax.set_xlabel('$x$')
