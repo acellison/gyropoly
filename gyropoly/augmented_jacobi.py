@@ -773,7 +773,10 @@ def rhoprime_multiplication(system, n, weighted=True, which='all', dtype='float6
     parity = system.has_even_parity
     use_jacobi_quadrature = recurrence_kwargs.pop('use_jacobi_quadrature', False)
 
-    m = max(system.unweighted_degree-1, 0)
+    if which == 'all':
+        m = max(system.unweighted_degree-1, 0)
+    else:
+        m = max(system.degrees[which]-1, 0)
     offsets = np.arange(-m,m+1)
     if parity:
         offsets = offsets[::2]
