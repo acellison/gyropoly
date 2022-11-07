@@ -222,6 +222,32 @@ def test_polynomial_derivatives():
     check_close(Pprime, Q, 8e-15)
 
 
+def test_quadrature():
+    print('test_quadrature')
+    # Test 1
+    n, a, b = 5, 1, 2
+    rho, c = [1,3], 3
+
+    system = ajacobi.AugmentedJacobiSystem(a, b, [(rho,c)])
+    z, w = system.quadrature(n, quick=True)
+    Iz9 = 736/429
+    Iz10 = 11008/7293
+    check_close(np.sum(w * z**9),  Iz9,  1e-14)
+    assert abs(np.sum(w * z**10) - Iz10) > 1e-2  # Only accurate up to degree 2*N-1
+
+    # Test 2
+    n, a, b = 5, 1, 2
+    rho1, c1 = [1,3], 3
+    rho2, c2 = [1,4], 4
+
+    system = ajacobi.AugmentedJacobiSystem(a, b, [(rho1,c1),(rho2,c2)])
+    z, w = system.quadrature(n)
+    Iz9 = 223108064/230945
+    Iz10 = 103850624/124355
+    check_close(np.sum(w * z**9),  Iz9,  1.1e-12)
+    assert abs(np.sum(w * z**10) - Iz10) > 1e-2  # Only accurate up to degree 2*N-1
+
+
 def test_embedding_operators():
     print('test_embedding_operators')
     dtype = 'float64'
@@ -786,6 +812,7 @@ def main():
     test_recurrence()
     test_polynomials()
     test_polynomial_derivatives()
+    test_quadrature()
     test_embedding_operators()
     test_rhoprime_multiplication()
     test_differential_operators()
