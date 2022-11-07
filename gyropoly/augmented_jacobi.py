@@ -643,8 +643,8 @@ def quadrature(system, n, quick=False, days=3, dtype='float64', internal='float1
         return jacobi.quadrature(n, system.a, system.b, dtype=dtype, internal=internal)
 
     if quick:
-        Z, mass = recurrence(system, n, dtype=internal, internal=internal, return_mass=True, **recurrence_kwargs)
-        z, w = tools.quadrature(Z, mass, dtype=internal)
+        Z, mass = recurrence(system, n+1, dtype=internal, internal=internal, return_mass=True, **recurrence_kwargs)
+        z, w = tools.quadrature(Z, mass, n=n, dtype=internal)
         return z.astype(dtype), w.astype(dtype)
 
     Z, mass = recurrence(system, n+1, dtype=internal, internal=internal, return_mass=True, **recurrence_kwargs)
@@ -654,7 +654,7 @@ def quadrature(system, n, quick=False, days=3, dtype='float64', internal='float1
         z -= P[n]/Pprime[n]
 
     P = tools.polynomials(Z, mass, z, n=n, dtype=internal)
-    w = P[0]**2/np.sum(P**2,axis=0) * mass
+    w = 1/np.sum(P**2,axis=0)
 
     return z.astype(dtype), w.astype(dtype)
 

@@ -355,7 +355,7 @@ def quadrature(Z, mass, n=None, dtype='float64'):
         raise ValueError('Recurrence is not large enough to generate n quadrature nodes')
     z = quadrature_nodes(Z, n=n, dtype=dtype)
     P = polynomials(Z, mass, z, n=n+1, dtype=dtype)
-    w = P[0]**2/np.sum(P**2,axis=0) * mass
+    w = 1/np.sum(P**2,axis=0)
     return z.astype(dtype), w.astype(dtype)
 
 
