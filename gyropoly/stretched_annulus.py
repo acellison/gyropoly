@@ -138,6 +138,10 @@ class Geometry():
         Si, So = self.radii
         return np.sqrt((Si**2*(1-t) + So**2*(1+t))/2)
 
+    def t(self, s):
+        Si, So = self.radii
+        return (2*s**2 - (So**2 + Si**2))/(So**2 - Si**2)
+
     def z(self, t, eta):
         t, eta = np.asarray(t), np.asarray(eta)
         tt, ee = t.ravel()[np.newaxis,:], eta.ravel()[:,np.newaxis]

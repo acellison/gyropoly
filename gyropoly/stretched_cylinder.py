@@ -113,6 +113,9 @@ class Geometry():
     def s(self, t):
         return self.radius*np.sqrt((1+t.ravel())/2)
 
+    def t(self, s):
+        return 2*(s.ravel()/self.radius)**2-1
+
     def z(self, t, eta):
         tt, ee = t.ravel()[np.newaxis,:], eta.ravel()[:,np.newaxis]
         ht = self.height(tt)
