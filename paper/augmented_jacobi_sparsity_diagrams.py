@@ -2,6 +2,7 @@ import os
 import numpy as np
 
 import matplotlib as mpl
+mpl.rcParams.update({'font.size': 18})
 mpl.rcParams['mathtext.fontset'] = 'cm'
 import matplotlib.pyplot as plt
 
@@ -12,6 +13,8 @@ from fileio import save_figure
 
 
 g_file_prefix = 'genjacobi_sparsity'
+
+margins = (.2,.2)
 
 
 def make_filename_prefix(directory='data'):
@@ -59,7 +62,7 @@ def cylinder():
     A = operators('A')(+1)(n, *params)
     B = operators('B')(+1)(n, *params)
     H = operators('C')(+1)(n, *params)
-    fig, ax = plt.subplots(1,3)
+    fig, ax = plt.subplots(1,3,figsize=plt.figaspect(1/3))
     ax[0].spy(A)
     ax[1].spy(B)
     ax[2].spy(H)
@@ -67,14 +70,17 @@ def cylinder():
     ax[1].set_title(r'$\mathcal{I}_{b}$')
     ax[2].set_title(r'$\mathcal{I}_{c_{1}}$')
 
-    filename = output_filename('figures', ext='.png', prefix='genjacobi_cylinder_embed')
+    for a in ax:
+       a.margins(*margins)
+
+    filename = output_filename('figures', ext='.png', prefix='cylinder_embed')
     save_figure(filename, fig)
 
 
     A = operators('A')(-1)(n, *params)
     B = operators('B')(-1)(n, *params)
     H = operators('C')(-1)(n, *params)
-    fig, ax = plt.subplots(1,3)
+    fig, ax = plt.subplots(1,3,figsize=plt.figaspect(1/3))
     ax[0].spy(A)
     ax[1].spy(B)
     ax[2].spy(H)
@@ -82,11 +88,14 @@ def cylinder():
     ax[1].set_title(r'$\mathcal{I}_{b}^{\dagger}$')
     ax[2].set_title(r'$\mathcal{I}_{c_{1}}^{\dagger}$')
 
-    filename = output_filename('figures', ext='.png', prefix='genjacobi_cylinder_embed_adjoint')
+    for a in ax:
+       a.margins(*margins)
+
+    filename = output_filename('figures', ext='.png', prefix='cylinder_embed_adjoint')
     save_figure(filename, fig)
 
 
-    fig, ax = plt.subplots(1,4)
+    fig, ax = plt.subplots(1,4,figsize=plt.figaspect(1/4))
     D = operators('Di')((+1,+1,(+1,)))(n, *params)
     ax[0].spy(D)
     ax[0].set_title(r'$\mathcal{D}(+1,+1,+1)$')
@@ -102,11 +111,14 @@ def cylinder():
     D = operators('Di')((-1,-1,(+1,)))(n, *params)
     ax[3].spy(D)
     ax[3].set_title(r'$\mathcal{D}(-1,-1,+1)$')
-    
-    filename = output_filename('figures', ext='.png', prefix='genjacobi_cylinder_diffops')
+
+    for a in ax:
+       a.margins(*margins)
+
+    filename = output_filename('figures', ext='.png', prefix='cylinder_diffops')
     save_figure(filename, fig)
 
-    fig, ax = plt.subplots(1,4)
+    fig, ax = plt.subplots(1,4,figsize=plt.figaspect(1/4))
     D = operators('Di')((-1,-1,(-1,)))(n, *params)
     ax[0].spy(D)
     ax[0].set_title(r'$\mathcal{D}(-1,-1,-1)$')
@@ -123,7 +135,10 @@ def cylinder():
     ax[3].spy(D)
     ax[3].set_title(r'$\mathcal{D}(+1,+1,-1)$')
 
-    filename = output_filename('figures', ext='.png', prefix='genjacobi_cylinder_diffops_adjoint')
+    for a in ax:
+       a.margins(*margins)
+
+    filename = output_filename('figures', ext='.png', prefix='cylinder_diffops_adjoint')
     save_figure(filename, fig)
 
 
@@ -153,7 +168,7 @@ def annulus():
     ax[2].set_title(r'$\mathcal{I}_{c_{1}}$')
     ax[3].set_title(r'$\mathcal{I}_{c_{2}}$')
 
-    filename = output_filename('figures', ext='.png', prefix='genjacobi_annulus_embed')
+    filename = output_filename('figures', ext='.png', prefix='annulus_embed')
     save_figure(filename, fig)
 
 
@@ -171,7 +186,7 @@ def annulus():
     ax[2].set_title(r'$\mathcal{I}_{c_{1}}^{\dagger}$')
     ax[3].set_title(r'$\mathcal{I}_{c_{2}}^{\dagger}$')
 
-    filename = output_filename('figures', ext='.png', prefix='genjacobi_annulus_embed_adjoint')
+    filename = output_filename('figures', ext='.png', prefix='annulus_embed_adjoint')
     save_figure(filename, fig)
 
 
@@ -192,7 +207,7 @@ def annulus():
     ax[3].spy(D)
     ax[3].set_title(r'$\mathcal{D}(-1,-1,+1,+1)$')
 
-    filename = output_filename('figures', ext='.png', prefix='genjacobi_annulus_diffops')
+    filename = output_filename('figures', ext='.png', prefix='annulus_diffops')
     save_figure(filename, fig)
     
     fig, ax = plt.subplots(1,4)
@@ -212,7 +227,7 @@ def annulus():
     ax[3].spy(D)
     ax[3].set_title(r'$\mathcal{D}(+1,+1,-1,-1)$')
 
-    filename = output_filename('figures', ext='.png', prefix='genjacobi_annulus_diffops_adjoint')
+    filename = output_filename('figures', ext='.png', prefix='annulus_diffops_adjoint')
     save_figure(filename, fig)
 
 
