@@ -106,6 +106,8 @@ def _get_directory(prefix='data'):
 
   
 def solve_eigenproblem(geometry, m, Lmax, Nmax, boundary_method, omega, Ekman, alpha=0, force_construct=True, force_solve=True, nev='all', evalue_target=None):
+    if boundary_method == 'tau':
+        raise ValueError('tau boundary method not implemented')
     # Construct the data filename
     alphastr = '' if alpha == 0 else f'-alpha={alpha}'
     tarstr = f'-evalue_target={evalue_target}' if nev != 'all' else ''
@@ -122,8 +124,7 @@ def solve_eigenproblem(geometry, m, Lmax, Nmax, boundary_method, omega, Ekman, a
         # Build or load the matrices
         if force_construct or not os.path.exists(matrix_filename):
             print('  Building matrices...')
-            build_matrices = build_matrices_galerkin if boundary_method == 'galerkin' else build_matrices_tau
-            L, M = build_matrices(geometry, m, Lmax, Nmax, Ekman, alpha=alpha)
+            L, M = build_matrices_galerkin(geometry, m, Lmax, Nmax, Ekman, alpha=alpha)
             if boundary_method == 'galerkin':
                 S = galerkin_matrix(geometry, m, Lmax, Nmax, alpha)
             else:
@@ -260,7 +261,7 @@ def make_coreaboloid_domain():
 
 def main():
     # Coreaboloid Domain
-    config = {'cylinder_type': 'half', 'm': 14, 'Lmax': 200, 'Nmax': 300, 'Ekman': 1e-5, 'alpha': 0, 'omega': 60, 'sphere_outer': False, 'sphere_inner': False}
+    config = {'cylinder_type': 'half', 'm': 14, 'Lmax': 40, 'Nmax': 160, 'Ekman': 1e-5, 'alpha': 0, 'omega': 50, 'sphere_outer': False, 'sphere_inner': False}
     boundary_method = 'galerkin'
     force_construct, force_solve = (False,False)
     nev, evalue_target = 200, 0.

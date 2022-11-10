@@ -25,20 +25,6 @@ def Lshift(sigma):
     return 1 if sigma == 0 else 0
 
 
-def combined_boundary(geometry, m, Lmax, Nmax, alpha, sigma):
-    def make_op(sigma, surface):
-        return sc.boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface)
-
-    op1 = make_op(sigma=sigma, surface=geometry.top)
-    op2 = make_op(sigma=sigma, surface=geometry.bottom)
-    op3 = make_op(sigma=sigma, surface=geometry.side)
-    if geometry.cylinder_type == 'full' or Lmax%2 == 0:
-        op = sparse.vstack([op1[:-1,:],op2[:-1,:],op3[:-1,:]])
-    else:
-        op = sparse.vstack([op1[:-1,:],op2[:-1,:],op3[:-2,:],op3[-1,:]])
-    return op
-
-
 def combined_projection(geometry, m, Lmax, Nmax, alpha, sigma):
     def make_op(direction, shift, Lstop=0): 
         return sc.project(geometry, m, Lmax, Nmax, alpha, sigma=sigma, direction=direction, shift=shift, Lstop=Lstop)
@@ -53,59 +39,10 @@ def combined_projection(geometry, m, Lmax, Nmax, alpha, sigma):
     return sparse.hstack(opt+ops)
 
 
-def build_boundary(geometry, m, Lmax, Nmax, alpha):
-    make_op = lambda sigma: combined_boundary(geometry, m, Lmax, Nmax, alpha, sigma)
-    B = sparse.block_diag([make_op(sigma) for sigma in [+1,-1,0]])
-    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
-    Z = sparse.lil_matrix((np.shape(B)[0], ncoeff))
-    return sparse.hstack([B,Z])
-
-
-def build_projections(geometry, m, Lmax, Nmax, alpha, boundary_method):
-    if boundary_method == 'tau':
-        make_op = lambda sigma: combined_projection(geometry, m, Lmax, Nmax, alpha+1, sigma)
-        col = sparse.block_diag([make_op(sigma) for sigma in [+1, -1, 0]])
-        Z = sparse.lil_matrix((sc.total_num_coeffs(geometry, Lmax, Nmax), np.shape(col)[1]))
-        return sparse.vstack([col, Z])
-    else:
-        dN = 1+(2-int(geometry.root_h))*geometry.degree
-        make_op = lambda sigma, dalpha, dL: combined_projection(geometry, m, Lmax+2-dL, Nmax+dN, alpha+dalpha, sigma)
-        return sparse.block_diag([make_op(sigma, dalpha, dL) for sigma, dalpha, dL in [(+1,1,0), (-1,1,0), (0,1,Lshift(0)), (0,0,0)]])
-
-
-def build_matrices_tau(geometry, m, Lmax, Nmax, Ekman, alpha):
-    operators = sc.operators(geometry, m, Lmax, Nmax)
-
-    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
-    I = sparse.eye(ncoeff)
-    Z = sparse.lil_matrix((ncoeff,ncoeff))
-
-    # Bulk Equations
-    G   = operators('gradient',   alpha=alpha+1)      # alpha+1 -> alpha+2
-    D   = operators('divergence', alpha=alpha)        # alpha   -> alpha+1
-    Lap = operators('vector_laplacian', alpha=alpha)  # alpha   -> alpha+2
-
-    Ap, Am, Az = [operators('convert', alpha=alpha, sigma=sigma, ntimes=2) for sigma in [+1,-1,0]]
-    Cor = sparse.block_diag([2j*Ap, -2j*Am, Z])
-    C = Cor - Ekman * Lap
-
-    # Construct the bulk system
-    L = sparse.bmat([[C, G], [D, Z]])
-
-    M = -sparse.block_diag([Ap, Am, Az, Z])
-
-    # Build the combined boundary condition
-    row = build_boundary(geometry, m, Lmax, Nmax, alpha)
-
-    # Tau projections for enforcing the boundaries
-    col = build_projections(geometry, m, Lmax, Nmax, alpha, boundary_method='tau')
-
-    # Concatenate the boundary conditions and projections onto the system
-    corner = sparse.lil_matrix((np.shape(row)[0], np.shape(col)[1]))
-    L = sparse.bmat([[L,  col],[  row,  corner]])
-    M = sparse.bmat([[M,0*col],[0*row,0*corner]])
-
-    return L, M
+def build_projections(geometry, m, Lmax, Nmax, alpha):
+    dN = 1+(2-int(geometry.root_h))*geometry.degree
+    make_op = lambda sigma, dalpha, dL: combined_projection(geometry, m, Lmax+2-dL, Nmax+dN, alpha+dalpha, sigma)
+    return sparse.block_diag([make_op(sigma, dalpha, dL) for sigma, dalpha, dL in [(+1,1,0), (-1,1,0), (0,1,Lshift(0)), (0,0,0)]])
 
 
 @cached
@@ -154,7 +91,7 @@ def build_matrices_galerkin(geometry, m, Lmax, Nmax, Ekman, alpha):
     L, M = L @ S, M @ S
 
     # Tau projections for enforcing the boundaries
-    col = build_projections(geometry, m, Lmax, Nmax, alpha, boundary_method='galerkin')
+    col = build_projections(geometry, m, Lmax, Nmax, alpha)
     L = sparse.hstack([L,   col])
     M = sparse.hstack([M, 0*col])
 
@@ -169,6 +106,8 @@ def _get_directory(prefix='data'):
 
   
 def solve_eigenproblem(geometry, m, Lmax, Nmax, boundary_method, omega, Ekman, alpha=0, force_construct=True, force_solve=True, nev='all', evalue_target=None):
+    if boundary_method == 'tau':
+        raise ValueError('tau boundary method not implemented')
     # Construct the data filename
     alphastr = '' if alpha == 0 else f'-alpha={alpha}'
     tarstr = f'-evalue_target={evalue_target}' if nev != 'all' else ''
@@ -185,8 +124,7 @@ def solve_eigenproblem(geometry, m, Lmax, Nmax, boundary_method, omega, Ekman, a
         # Build or load the matrices
         if force_construct or not os.path.exists(matrix_filename):
             print('  Building matrices...')
-            build_matrices = build_matrices_galerkin if boundary_method == 'galerkin' else build_matrices_tau
-            L, M = build_matrices(geometry, m, Lmax, Nmax, Ekman, alpha=alpha)
+            L, M = build_matrices_galerkin(geometry, m, Lmax, Nmax, Ekman, alpha=alpha)
             if boundary_method == 'galerkin':
                 S = galerkin_matrix(geometry, m, Lmax, Nmax, alpha)
             else:
@@ -309,23 +247,35 @@ def plot_solution(data):
     fig.set_tight_layout(True)
 
 
+def make_coreaboloid_domain():
+    HNR = 17.08  # cm
+    Ri = 0.      # cm
+    Ro = 37.25   # cm
+    g = 9.8e2    # cm/s**2
+
+    def make_height_coeffs(rpm):
+        Omega = 2*np.pi*rpm/60
+        h0 = HNR - Omega**2*(Ro**2+Ri**2)/(4*g)
+        return np.array([Omega**2*Ro**2/(2*g), h0])/Ro
+    return 1., make_height_coeffs
+
+
 def main():
-    cylinder_type, m, Lmax, Nmax, Ekman, alpha, omega, radius, root_h, sphere, nev = 'full', 14, 40, 160, 1e-5, 0, 2, 1., False, False, 100
+    cylinder_type, m, Lmax, Nmax, Ekman, alpha, omega, radius, root_h, sphere = 'half', 14, 40, 160, 1e-5, 0, 50, 1., False, False
+    nev, evalue_target = 200, 0.
 
     boundary_method = 'galerkin'
-    force_construct, force_solve = (True,True)
+    force_construct, force_solve = (False,False)
     plot_height = False
 
-    evalue_target = 0.
-
-    if root_h:
-        # omega is the bounding sphere radius to tangent cylinder radius ratio
-        h = [-1/2, -1/2+omega**2]
+    if cylinder_type == 'half':
+        radius, height_coeffs_for_rpm = make_coreaboloid_domain()
+        hs = height_coeffs_for_rpm(omega)
     else:
-        H = 0.5 if cylinder_type == 'full' else 1.
-        h = H*np.array([omega/(2+omega), 1.])
-#        h = np.array([omega/(2+omega), 1.])/(1-omega/(2+omega))/np.sqrt(2)
-    geometry = sc.Geometry(cylinder_type=cylinder_type, hcoeff=h, radius=radius, root_h=root_h, sphere=sphere)
+        hs = np.array([omega/(2+omega), 1/(2+omega)])
+    ht = sc.scoeff_to_tcoeff(radius, hs)
+
+    geometry = sc.Geometry(cylinder_type=cylinder_type, hcoeff=ht, radius=radius, root_h=root_h, sphere=sphere)
 
     if plot_height:
         geometry.plot_height()
