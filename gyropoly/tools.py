@@ -316,10 +316,13 @@ def quadrature_nodes(Z, n=None, dtype='float64'):
 
     """
     if n is not None:
-        Z = _truncate(Z, shape=(n+1,n))
+        Z = _truncate(Z, shape=(n,n))
 
     if Z.dtype in [np.dtype(f'complex{bits}') for bits in [64,128,256]]:
-        zj = eigvals(Z[:-1,:])
+        if n == 1:
+            zj = Z.diagonal(0)
+        else:
+            zj = eigvals(Z)
         indices = np.argsort(zj.real)
     else:
         zj = eigvalsh_tridiagonal(Z.diagonal(0), Z.diagonal(1))
