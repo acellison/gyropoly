@@ -214,7 +214,7 @@ class Geometry():
         root_h = f'-root_h={self.root_h}'
         sphere_inner = f'-sphere_inner={self.sphere_inner}'
         sphere_outer = f'-sphere_outer={self.sphere_outer}'
-        return f'-cylinder_type={self.cylinder_type}{radius}{root_h}{sphere_inner}{sphere_outer}'
+        return f'annulus-cylinder_type={self.cylinder_type}{radius}{root_h}{sphere_inner}{sphere_outer}'
 
 
 class Basis():
@@ -848,8 +848,11 @@ def vector_laplacian(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='
     G =   gradient(geometry, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
     C1 =      curl(geometry, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
     C2 =      curl(geometry, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
-    return (G @ D - (C2 @ C1).real).astype(dtype).tocsr()
-    
+    L = (G @ D - (C2 @ C1).real).astype(dtype).tocsr()
+
+    ncoeff = total_num_coeffs(geometry, Lmax, Nmax)
+    return sparse.block_diag([L[i*ncoeff:(i+1)*ncoeff,i*ncoeff:(i+1)*ncoeff] for i in range(3)]).tocsr()
+
 
 def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
