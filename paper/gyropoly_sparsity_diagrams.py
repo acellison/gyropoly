@@ -205,6 +205,35 @@ def differential_operators():
     save_figure(filename, fig)
 
 
+def plot_coeff_magnitude(fig, ax, mat, tol):
+    mat = mat.astype(np.float64).todense()
+    mat[abs(mat)<tol] = 0
+
+    sh = np.shape(mat)
+    with np.errstate(divide='ignore'):
+        data = np.log10(np.abs(mat))
+    im = ax.imshow(data)
+    ax.set_aspect('auto')
+    fig.colorbar(im, ax=ax)
+
+
+def vector_laplacian_operator():
+    # Differential operators
+    rpm = 50
+    codomain = [(Lmax,Nmax,alpha+1)]*3
+
+    # Cylinder
+    radius, height_coeffs_s2 = make_coreaboloid_domain(annulus=False)
+    hcoeff = sc.scoeff_to_tcoeff(radius, height_coeffs_s2(rpm))
+
+    # Full Cylinder
+    geometry = sc.Geometry('full', hcoeff, radius=radius)
+    Op = sc.operators(geometry, m, Lmax, Nmax, alpha)('vector_laplacian')
+
+    fig, ax = plt.subplots()
+    plot_coeff_magnitude(fig, ax, Op, tol=0.)
+
+
 def vector_operators():
     # Vector operators
     rpm = 50
@@ -281,6 +310,28 @@ def conversion_operators():
     save_figure(filename, fig)
 
 
+    # Cylinder
+    fig, ax = plt.subplots(1,2,figsize=figsize)
+    radius, height_coeffs_s2 = make_coreaboloid_domain(annulus=False)
+    hcoeff = sc.scoeff_to_tcoeff(radius, height_coeffs_s2(rpm))
+
+    # Full Cylinder, convert down
+    geometry = sc.Geometry('half', hcoeff, radius=radius)
+    Op = sc.operators(geometry, m, Lmax, Nmax, alpha)('convert', sigma=0)
+    codomain = (Lmax, Nmax, alpha+1)
+    plot_splatter(sc, geometry, r'$\mathcal{I}_{\alpha}$   (Half Cylinder)', Op, codomain, ax=ax[0])
+
+    # Full Cylinder, convert down
+    geometry = sc.Geometry('half', hcoeff, radius=radius)
+    Op = sc.operators(geometry, m, Lmax, Nmax, alpha)('convert', sigma=0, adjoint=True, exact=True)
+    dl, dn = 2, 3
+    codomain = (Lmax+dl, Nmax+dn, alpha-1)
+    plot_splatter(sc, geometry, r'$\mathcal{I}_{\alpha}^{\dagger}$   (Half Cylinder)', Op, codomain, ax=ax[1])
+
+    filename = output_filename('figures', ext='.png', prefix='conversion_ops_half_cylinder')
+    save_figure(filename, fig)
+
+
 
 def boundary_operator():
     rpm = 50
@@ -297,7 +348,7 @@ def boundary_operator():
     fig, ax = plt.subplots(figsize=plt.figaspect(0.2))
     fig.set_tight_layout(True)
     ax.spy(Op)
-    ax.set_title('Cylinder Boundary Operator, $s = S_{o}$')
+    ax.set_title('Cylinder Boundary Operator, $t = t_{0}$')
     ax.set_ylabel('$l$')
     filename = output_filename('figures', ext='.png', prefix='boundary_s=S')
     save_figure(filename, fig)
@@ -309,17 +360,18 @@ def boundary_operator():
     fig, ax = plt.subplots(figsize=plt.figaspect(0.3))
     fig.set_tight_layout(True)
     ax.spy(Op)
-    ax.set_title(r'Cylinder Boundary Operator, $\eta = 1$')
+    ax.set_title(r'Cylinder Boundary Operator, $\eta = \eta_{0}$')
     ax.set_ylabel('$k$')
     filename = output_filename('figures', ext='.png', prefix='boundary_z=h')
     save_figure(filename, fig)
 
 
 def main():
-#    differential_operators()
-#    vector_operators()
-#    conversion_operators()
+    differential_operators()
+    vector_operators()
+    conversion_operators()
     boundary_operator()
+    vector_laplacian_operator()
     plt.show()
 
 if __name__=='__main__':
