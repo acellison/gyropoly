@@ -52,8 +52,13 @@ def combined_projection(domain, geometry, m, Lmax, Nmax, alpha, sigma):
         return domain.project(geometry, m, Lmax, Nmax, alpha, sigma=sigma, direction=direction, shift=shift, Lstop=Lstop)
 
     top_shifts = [1,0]
-    if geometry.degree == 0:
-        side_shifts = [0]
+    if geometry.sphere_outer or geometry.degree == 0:
+        if domain == sa:
+            side_shifts = [1,0]
+        elif domain == sc:
+            side_shifts = [0]
+        else:
+            raise ValueError('Unknown domain')
     else:
         if domain == sa:
             side_shifts = [3,2,1,0]
@@ -195,6 +200,7 @@ def solve_eigenproblem(domain, geometry, m, Lmax, Nmax, boundary_method, omega, 
     else:
         with open(esolve_filename, 'rb') as file:
             esolve_data = pickle.load(file)
+            esolve_data['geometry'] = geometry  # TODO: Update saved files to new GeometryBase interface
     return esolve_data
 
 
@@ -203,6 +209,8 @@ def expand_evector(evector, bases, names='all', verbose=True):
     offsets = np.append(0, np.cumsum(lengths))
 
     Up, Um, W, P = [evector[offsets[i]:offsets[i+1]] for i in range(4)]
+    tau = evector[offsets[4]:]
+    print(f'  Tau norm: {np.linalg.norm(tau)}')
 
     larger = lambda f: f.real if np.max(abs(f.real)) >= np.max(abs(f.imag)) else f.imag
 
@@ -231,21 +239,23 @@ def expand_evector(evector, bases, names='all', verbose=True):
     return fields
 
 
-def plot_spectrum_callback(domain, index, evalues, evectors, bases, fig=None, ax=None):
-    fields = expand_evector(evectors[:,index], bases, names=['p'])
+def plot_spectrum_callback(domain, index, evalues, evectors, bases):
+    fieldnames = ['p','u','v','w']
+    fields = expand_evector(evectors[:,index], bases, names=fieldnames)
 
-    fieldname = 'p'
-    basis = bases[fieldname]
+    basis = bases['p']
     s, z = basis.s(), basis.z()
 
-    if fig is None or ax is None:
-        scale = 1 if basis.geometry.cylinder_type == 'half' else 2
-        zmax, smax = np.max(z), np.max(s)
-        fig, ax = plt.subplots(figsize=plt.figaspect(scale*zmax/smax))
-    domain.plotfield(s, z, fields[fieldname], fig, ax, colorbar=False)
+    nplots = len(fieldnames)
+    scale = 1 if basis.geometry.cylinder_type == 'half' else 2
+    zmax, smax = np.max(z), np.max(s)
+    fig, plot_axes = plt.subplots(1,nplots,figsize=plt.figaspect(scale*zmax/smax/nplots))
+
+    for i, fieldname in enumerate(fieldnames):
+        domain.plotfield(s, z, fields[fieldname], fig, plot_axes[i], colorbar=False)
     fig.set_tight_layout(True)
     fig.show()
-    return fig, ax
+    return fig, plot_axes
 
 
 def create_bases(domain, geometry, m, Lmax, Nmax, alpha, t, eta, boundary_method):
@@ -296,6 +306,11 @@ def make_coreaboloid_domain(domain, standard_domain=False):
     g = 9.8e2    # cm/s**2
 
     def make_height_coeffs(rpm):
+        omega_max = np.sqrt((4*g)*HNR/(Ro**2+Ri**2))
+        rpm_max = 60*omega_max/(2*np.pi)
+        if rpm > rpm_max:
+            raise ValueError(f'rpm exceeds maximum (={rpm_max}) for HNR, Ri, Ro')
+
         Omega = 2*np.pi*rpm/60
         h0 = HNR - Omega**2*(Ro**2+Ri**2)/(4*g)
         return np.array([Omega**2*Ro**2/(2*g), h0])/Ro
@@ -306,25 +321,28 @@ def make_coreaboloid_domain(domain, standard_domain=False):
     return radii, make_height_coeffs
 
 
-def run_config(domain, rpm):
+def run_config(domain, rpm, cylinder_type='half', sphere=False, force=False):
+
     # Coreaboloid Domain
-    config = {'domain': domain, 'cylinder_type': 'half', 'm': 14, 'Lmax': 40, 'Nmax': 160, 'Ekman': 1e-5, 'alpha': 0, 'omega': rpm, 'sphere_outer': False, 'sphere_inner': False}
-#    config = {'domain': domain, 'cylinder_type': 'half', 'm': 14, 'Lmax': 160, 'Nmax': 240, 'Ekman': 1e-5, 'alpha': 0, 'omega': rpm, 'sphere_outer': False, 'sphere_inner': False}
+    if sphere:
+        cylinder_type = 'full'
+    config = {'domain': domain, 'cylinder_type': cylinder_type, 'm': 14, 'Lmax': 40, 'Nmax': 160, 'Ekman': 1e-5, 'alpha': 0, 'omega': rpm, 'sphere_outer': sphere, 'sphere_inner': False}
     boundary_method = 'galerkin'
-    force_construct, force_solve = (False,False)
-#    force_construct, force_solve = (True,)*2
-    nev, evalue_target = 200, 0.
+    force_construct, force_solve = (force,)*2
+    nev, evalue_target = 500, 0.
 
     domain_name = config['domain']
     domain = domain_for_name(domain_name)
 
     cylinder_type, omega = [config[key] for key in ['cylinder_type', 'omega']]
-    if cylinder_type == 'half':
+    if config['sphere_outer']:
+        radii = (0,1) if domain == sc else (0.35,1)
+        Si, So = radii
+        hs = np.array([np.sqrt(1/2 * (So**2-Si**2))])
+        hs *= 1 - (rpm - 60)/100
+    else:
         radii, height_coeffs_for_rpm = make_coreaboloid_domain(domain)
         hs = height_coeffs_for_rpm(omega)
-    else:
-        radii = config['radii']
-        hs = np.array([omega/(2+omega), 1/(2+omega)])
     ht = domain.scoeff_to_tcoeff(radii, hs)
 
     if domain == sa:
@@ -337,6 +355,7 @@ def run_config(domain, rpm):
     plot_surface = False
     if plot_surface:
         fig, ax = geometry.plot_volume(aspect=None)
+        fig, ax = geometry.plot_height()
         plt.show()
 
     print(f"geometry: {geometry}, m = {config['m']}, Lmax = {config['Lmax']}, Nmax = {config['Nmax']}, alpha = {config['alpha']}, omega = {omega}")
@@ -349,9 +368,14 @@ def run_config(domain, rpm):
 
 def main():
     domain = 'annulus'
-    rpms = range(40,61)
+    cylinder_type = 'half'
+#    rpms = [60]
+    rpms = np.arange(60,67)
+    force = False
+    sphere = False
+
     for rpm in rpms:
-        run_config(domain, rpm)
+        run_config(domain, rpm, cylinder_type=cylinder_type, sphere=sphere, force=force)
 
 if __name__=='__main__':
     main()
