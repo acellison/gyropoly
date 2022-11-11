@@ -3,11 +3,11 @@ from functools import partial
 import numpy as np
 import scipy.sparse as sparse
 from scipy.special import comb
-import matplotlib.pyplot as plt
 
 from dedalus_sphere import jacobi
 from . import augmented_jacobi as ajacobi
 from . import decorators, config
+from .geometry_base import GeometryBase
 
 if config.parallel:
     from pathos.multiprocessing import ProcessingPool as Pool
@@ -34,7 +34,7 @@ def scoeff_to_tcoeff(radius, scoeff, dtype='float64'):
     return T @ scoeff
 
 
-class Geometry():
+class Geometry(GeometryBase):
     """
     Geometry descriptor for a particular stretched cylinder configuration
 
@@ -54,93 +54,20 @@ class Geometry():
 
     """
     def __init__(self, cylinder_type, hcoeff, radius=1., root_h=False, sphere=False):
-        if cylinder_type not in ['half', 'full']:
-            raise ValueError(f'Invalid cylinder type ({cylinder_type})')
-        if root_h and cylinder_type == 'half':
-            raise ValueError('Half cylinder with root_h height is not supported')
-        if sphere and cylinder_type == 'half':
-            raise ValueError('Half cylinder with sphere height is not supported')
-        self.__cylinder_type = cylinder_type
-        self.__hcoeff = hcoeff
-        self.__radius = radius
-        self.__root_h = root_h
-        self.__sphere = sphere
-
-    @property
-    def cylinder_type(self):
-        return self.__cylinder_type
-
-    @property
-    def hcoeff(self):
-        return self.__hcoeff
+        super().__init__(cylinder_type=cylinder_type, hcoeff=hcoeff, radii=(0,radius),
+                         root_h=root_h, sphere_outer=sphere, sphere_inner=False)
 
     @property
     def radius(self):
-        return self.__radius
-
-    @property
-    def root_h(self):
-        return self.__root_h
+        return self.radii[1]
 
     @property
     def sphere(self):
-        return self.__sphere
-
-    @property
-    def degree(self):
-        return len(self.__hcoeff) - 1
-
-    @property
-    def top(self):
-        return 'z=h'
-
-    @property
-    def bottom(self):
-        return 'z=-h' if self.cylinder_type == 'full' else 'z=0'
+        return self.sphere_outer
 
     @property
     def side(self):
         return 's=S'
-
-    def height(self, t):
-        ht = np.polyval(self.hcoeff, t)
-        if self.root_h:
-            ht = np.sqrt(ht)
-        if self.sphere:
-            ht = np.sqrt(1-t) * ht
-        return ht
-
-    def s(self, t):
-        return self.radius*np.sqrt((1+t.ravel())/2)
-
-    def t(self, s):
-        return 2*(s.ravel()/self.radius)**2-1
-
-    def z(self, t, eta):
-        tt, ee = t.ravel()[np.newaxis,:], eta.ravel()[:,np.newaxis]
-        ht = self.height(tt)
-        if self.cylinder_type == 'half':
-            ee = (ee+1)/2
-        return ee * ht
-
-    def plot_height(self, n=1000, fig=None, ax=None):
-        if fig is None or ax is None:
-            fig, ax = plt.subplots()
-        t = np.linspace(-1,1,n)
-        s, h = self.s(t), self.height(t)
-        ax.plot( s,  h, color='tab:blue')
-        ax.plot( s, -h, color='tab:blue')
-        ax.plot(-s,  h, color='tab:blue')
-        ax.plot(-s, -h, color='tab:blue')
-        if not self.sphere:
-            ax.plot([ 1, 1], [-h[-1],h[-1]], color='tab:blue')
-            ax.plot([-1,-1], [-h[-1],h[-1]], color='tab:blue')
-        ax.set_xlabel('s')
-        ax.set_ylabel('h(s)')
-        ax.set_title('Stretched Cylinder Boundary')
-        ax.grid(True)
-        fig.set_tight_layout(True)
-        return fig, ax
 
     def __repr__(self):
         radius = f'-radius={float(self.radius)}'
