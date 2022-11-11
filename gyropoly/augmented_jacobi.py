@@ -96,8 +96,8 @@ class AugmentedJacobiSystem():
         c = [c+d for c,d in zip(self.augmented_params, dc)]
         return AugmentedJacobiSystem(a, b, zip(self.__augmented_factors, c))
 
-    def rho(self, z, which='all'):
-        return self.__polynomial_product.evaluate(z, weighted=False, which=which)
+    def rho(self, z, weighted=False, which='all'):
+        return self.__polynomial_product.evaluate(z, weighted=weighted, which=which)
 
     def rhoprime(self, z, weighted=True, which='all'):
         return self.__polynomial_product.derivative(z, weighted=weighted, which=which)
@@ -265,7 +265,7 @@ def mass(system, dtype='float64', internal='float128', **quadrature_kwargs):
 
     """
     if system.is_unweighted:
-        return jacobi_mass(system.a, system.b, dtype=dtype)
+        return jacobi_mass(system.a, system.b, dtype=internal).astype(dtype)
 
     if system.is_polynomial:
         for key in ['max_iters', 'nquad']:
@@ -449,11 +449,8 @@ def recurrence(system, n, return_mass=False, dtype='float64', internal='float128
     sparse matrix representation of Jacobi operator and optionally floating point mass
 
     """
-    if system.is_scaled_jacobi:
-        # FIXME: this can be done directly from jacobi polynomials
-        pass
     if system.is_unweighted:
-        Z = jacobi.operator('Z', dtype=internal)(n, system.a, system.b).astype(dtype)
+        Z = jacobi.operator('Z', dtype=internal)(n, system.a, system.b).astype(dtype).todia()
         return (Z, system.mass(dtype=dtype, internal=internal)) if return_mass else Z
 
     algorithm = quadrature_kwargs.pop('algorithm', algorithm)
@@ -500,9 +497,6 @@ def polynomials(system, n, z, init=None, return_derivatives=False, dtype='float6
     the degree k polynomial is accessed via P[k-1]
 
     """
-    if system.is_scaled_jacobi:
-        # FIXME: this can be done directly from jacobi polynomials
-        pass
     if system.is_unweighted:
         return jacobi.polynomials(n, system.a, system.b, z, dtype=dtype, internal=internal)
 
@@ -527,9 +521,6 @@ def jacobi_mass(a, b, log=False, dtype='float64'):
 
 
 def jacobi_quadrature(system, f, fdegree=None, dtype='float64', internal='float128', **quadrature_kwargs):
-    if system.is_scaled_jacobi:
-        # FIXME: this can be done directly from jacobi polynomials
-        pass
     if system.is_polynomial and fdegree is not None:
         max_iters = 1
         nquad = int(np.ceil((fdegree+system.total_degree+1)/2))
