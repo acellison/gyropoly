@@ -493,23 +493,24 @@ def _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma, dtype='
 
     # Construct the fundamental Augmented Jacobi operators
     ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
-    Id, A, B, C = [ops(kind) for kind in ['Id', 'A', 'B', 'C']]
+    Id, A, B, H = [ops(kind) for kind in ['Id', 'A', 'B', 'C']]
     R = ops('rhoprime', weighted=False)
-    Dz, Da, Db, Dc = [ops(kind) for kind in ['D', 'E', 'F', 'G']]
+    Dz, DS, Di = [ops(kind) for kind in ['D', 'F', 'Di']]
 
     # Construct the radial part of the operators.  
     # L<n> is the operator that maps vertical index ell to ell-n
     cpower = 0 if geometry.root_h else 1
+    da = -1 if geometry.sphere else +1
     if delta == +1:
         # Raising operator
-        L0 =   C(+1)**cpower @ Dz(+1)
+        L0 =   H(+1)**cpower @ Dz(+1)
         L1 = - R @ A(+1) @ B(+1)
-        L2 = - C(-1)**cpower @ (-Db(-1) if geometry.sphere else Dc(-1))
+        L2 = - H(-1)**cpower @ Di((da,+1,(-1,)))
     elif delta == -1:
         # Lowering operator
-        L0 =   C(+1)**cpower @ Db(+1)
+        L0 =   H(+1)**cpower @ DS(+1)
         L1 = - R @ A(+1) @ B(-1)
-        L2 = - C(-1)**cpower @ (-Dz(-1) if geometry.sphere else Da(-1))
+        L2 = - H(-1)**cpower @ Di((da,-1,(-1,)))
     else:
         # Neutral operator
         L0 = 0
