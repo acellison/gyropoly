@@ -332,11 +332,29 @@ def test_curl(geometry, m, Lmax, Nmax, alpha, operators):
 
 
 def test_scalar_laplacian(geometry, m, Lmax, Nmax, alpha, operators):
-    pass
+    print('  test_scalar_laplacian')
+    Op = operators('scalar_laplacian')
+
+    G = operators('gradient')
+    D = operators('divergence', alpha=alpha+1)
+    L = D @ G
+    check_close(Op, L, 1e-12)
+
 
 
 def test_vector_laplacian(geometry, m, Lmax, Nmax, alpha, operators):
-    pass
+    print('  test_vector_laplacian')
+    Op = operators('vector_laplacian')
+
+    D = operators('divergence')
+    G = operators('gradient', alpha=alpha+1)
+    C1 = operators('curl')
+    C2 = operators('curl', alpha=alpha+1)
+    L = (G @ D - (C2 @ C1).real).tocsr()
+
+    ncoeff = sa.total_num_coeffs(geometry, Lmax, Nmax)
+    L = sparse.block_diag([L[i*ncoeff:(i+1)*ncoeff,i*ncoeff:(i+1)*ncoeff] for i in range(3)]).tocsr()
+    check_close(Op, L, 1e-12)
 
 
 def test_laplacian(geometry, m, Lmax, Nmax, alpha, operators):

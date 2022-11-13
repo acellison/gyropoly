@@ -543,7 +543,7 @@ def _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma, dtype='
     return scale*sum(ops).astype(dtype)
 
 
-def gradient(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', recurrence_kwargs=None):
+def gradient(geometry, m, Lmax, Nmax, alpha, sigma=0, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Construct the gradient operator acting on a scalar field
 
@@ -559,6 +559,8 @@ def gradient(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128
         Maximum radial degree of input basis
     alpha : float > -1
         Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    sigma : int, one of {-1, 0, +1}, optional
+        Spin weight.  Defaults to 0
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -569,11 +571,11 @@ def gradient(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128
     Sparse matrix with gradient operator coefficients
 
     """
-    make_dop = lambda delta: _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma=0, dtype=dtype, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    make_dop = lambda delta: _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma=sigma, dtype=dtype, internal=internal, recurrence_kwargs=recurrence_kwargs)
     return sparse.vstack([make_dop(delta) for delta in [+1,-1,0]]).tocsr()
 
 
-def divergence(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', recurrence_kwargs=None):
+def divergence(geometry, m, Lmax, Nmax, alpha, sigma=0, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Construct the divergence operator acting on a vector field
 
@@ -589,6 +591,8 @@ def divergence(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float1
         Maximum radial degree of input basis
     alpha : float > -1
         Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    sigma : int, one of {-1, 0, +1}, optional
+        Spin weight.  Defaults to 0
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -599,8 +603,9 @@ def divergence(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float1
     Sparse matrix with divergence operator coefficients
 
     """
-    make_dop = lambda sigma: _differential_operator(geometry, -sigma, m, Lmax, Nmax, alpha, sigma=sigma, dtype=dtype, internal=internal, recurrence_kwargs=recurrence_kwargs)
-    return sparse.hstack([make_dop(sigma) for sigma in [+1,-1,0]]).tocsr()
+    make_dop = lambda delta: _differential_operator(geometry, -delta, m, Lmax, Nmax, alpha, sigma=sigma+delta, dtype=dtype, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    return sparse.hstack([make_dop(delta) for delta in [+1,-1,0]]).tocsr()
+
 
 
 def curl(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', recurrence_kwargs=None):
@@ -641,7 +646,7 @@ def curl(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', r
                              [Cz[0], Cz[1], Z]]).tocsr()
 
 
-def scalar_laplacian(geoemtry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', recurrence_kwargs=None):
+def scalar_laplacian(geometry, m, Lmax, Nmax, alpha, sigma=0, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Construct the Laplacian operator acting on a scalar field
 
@@ -657,6 +662,8 @@ def scalar_laplacian(geoemtry, m, Lmax, Nmax, alpha, dtype='float64', internal='
         Maximum radial degree of input basis
     alpha : float > -1
         Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    sigma : int, one of {-1, 0, +1}, optional
+        Spin weight.  Defaults to 0
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
@@ -667,9 +674,16 @@ def scalar_laplacian(geoemtry, m, Lmax, Nmax, alpha, dtype='float64', internal='
     Sparse matrix with Laplacian operator coefficients
 
     """
-    G =   gradient(geometry, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
-    D = divergence(geometry, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
-    return (D @ G).astype(dtype).tocsr()
+    make_dop = lambda delta, a, s: _differential_operator(geometry, delta, m, Lmax, Nmax, alpha=alpha+a, sigma=sigma+s,  dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    if sigma > 0:
+        Dp = Dm = make_dop(+1, 1, -1) @ make_dop(-1, 0, 0)
+    elif sigma < 0 or m == 0:
+        Dm = Dp = make_dop(-1, 1, +1) @ make_dop(+1, 0, 0)
+    else:
+        Dp = make_dop(-1, 1, +1) @ make_dop(+1, 0, 0)
+        Dm = make_dop(+1, 1, -1) @ make_dop(-1, 0, 0)
+    D0 = make_dop(0, 1, 0) @ make_dop(0, 0, 0)
+    return (Dp + Dm + D0).astype(dtype).tocsr()
 
 
 def vector_laplacian(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', recurrence_kwargs=None):
@@ -698,14 +712,8 @@ def vector_laplacian(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='
     Sparse matrix with Laplacian operator coefficients
 
     """
-    D = divergence(geometry, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
-    G =   gradient(geometry, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
-    C1 =      curl(geometry, m, Lmax, Nmax, alpha,   dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
-    C2 =      curl(geometry, m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
-    L = (G @ D - (C2 @ C1).real).astype(dtype).tocsr()
-
-    ncoeff = total_num_coeffs(geometry, Lmax, Nmax)
-    return sparse.block_diag([L[i*ncoeff:(i+1)*ncoeff,i*ncoeff:(i+1)*ncoeff] for i in range(3)]).tocsr()
+    make_dop = lambda sigma: scalar_laplacian(geometry, m, Lmax, Nmax, alpha, sigma=sigma, dtype=dtype, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    return sparse.block_diag([make_dop(sigma) for sigma in [+1,-1,0]]).tocsr()
 
 
 def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
