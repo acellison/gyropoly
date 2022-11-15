@@ -369,8 +369,8 @@ def run_config(domain, rpm, cylinder_type='half', sphere=False, force=False):
 def main():
     domain = 'annulus'
     cylinder_type = 'half'
-#    rpms = [60]
-    rpms = np.arange(60,67)
+    rpms = [40]
+#    rpms = np.arange(50,55)
     force = False
     sphere = False
 

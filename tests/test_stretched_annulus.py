@@ -87,60 +87,6 @@ def test_scalar_basis():
             assert error < 1e-14
 
 
-def plot_scalar_basis():
-    radii = (0.1, 1.0)
-    omega = 2
-    hs = np.array([omega/(2+omega), 1/(2+omega)])
-    eta, t = np.array([0.]), np.linspace(-1,1,1000)
-
-    m, Lmax, Nmax = 10, 3, 10
-    alpha, sigma = 0., 0.
-    sphere_outer = True
-
-    nplots = 4
-    fig, ax = plt.subplots(1,nplots,figsize=plt.figaspect(1/2))
-
-    for i in range(nplots):
-        ht = sc.scoeff_to_tcoeff(radii[1], hs)
-        geometry = sc.Geometry('full', ht, radii[1], sphere=sphere_outer)
-        basis = sc.Basis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=sigma, eta=eta, t=t)
-        mode = basis.mode(Lmax-1, 3+i)
-        ax[i].plot(basis.s(), mode.ravel(), label='cylinder')
-
-        ht = sa.scoeff_to_tcoeff(radii, hs)
-        geometry = sa.Geometry('full', ht, radii, sphere_outer=sphere_outer)
-        basis = sa.Basis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=sigma, eta=eta, t=t)
-        mode = basis.mode(Lmax-1, 3+i)
-        ax[i].plot(basis.s(), mode.ravel(), label='annulus')
-
-        ax[i].legend()
-        ax[i].grid(True)
-        ax[i].set_xlabel('s')
-
-    # Plot the 2D field
-    radii = (0.1, 1.0)
-    m, Lmax, Nmax = 10, 7, 20
-    omega = 2
-    hs = np.array([omega/(2+omega), 1/(2+omega)])
-    ht = sa.scoeff_to_tcoeff(radii, hs)
-    geometry = sa.Geometry('full', ht, radii, sphere_outer=sphere_outer)
-
-    fig, ax = plt.subplots(1,2, figsize=plt.figaspect(.6))
-    eta, t = np.linspace(-1,1,101), np.linspace(-1,1,200)
-
-    basis = sa.Basis(geometry, m, Lmax, Nmax, alpha=0, sigma=0, eta=eta, t=t)
-    mode = basis.mode(Lmax-1, 3+nplots)
-    sc.plotfield(basis.s(), basis.z(), mode, fig, ax[0])
-    ax[0].set_title(r'$\alpha = 0$')
-
-    basis = sa.Basis(geometry, m, Lmax, Nmax, alpha=-1/2, sigma=0, eta=eta, t=t)
-    mode = basis.mode(Lmax-1, 3+nplots)
-    sc.plotfield(basis.s(), basis.z(), mode, fig, ax[1])
-    ax[1].set_title(r'$\alpha = -\frac{1}{2}$')
-
-    plt.show()
-
-
 def create_scalar_basis(geometry, m, Lmax, Nmax, alpha, t, eta):
     return sa.Basis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=0, eta=eta, t=t)
 
@@ -812,5 +758,4 @@ def run_tests():
 
 if __name__=='__main__':
     run_tests()
-#    plot_scalar_basis()
 

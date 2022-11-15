@@ -94,11 +94,11 @@ class GeometryBase():
             ee = (ee+1)/2
         return ee * ht
 
-    def plot_height(self, n=1000, fig=None, ax=None):
+    def plot_height(self, n=1000, fig=None, ax=None, eta=1.):
         if fig is None or ax is None:
             fig, ax = plt.subplots()
         t = np.linspace(-1,1,n)
-        s, z = self.s(t), self.z(t, [-1.,1.])
+        s, z = self.s(t), self.z(t, [-eta,eta])
         Si, So = self.radii
 
         # Plot the top

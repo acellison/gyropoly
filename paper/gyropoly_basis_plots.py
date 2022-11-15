@@ -145,6 +145,164 @@ def make_coreaboloid_domain(annulus=True):
     return radii, make_height_coeffs
 
 
+def plot_radial_function(hs, m, Lmax, Nmax, alpha, sphere_outer, mode_shift):
+    fontsize = 20
+    linewidth, markersize = 3, 7
+    inner_radii = [0.25,0.5,0.75]
+    outer_radius = 1.
+    sigma = 0
+    eta, t = np.array([0.]), np.linspace(-1,1,1000)
+
+    ht = sc.scoeff_to_tcoeff(outer_radius, hs)
+    geometry = sc.Geometry('full', ht, outer_radius, sphere=sphere_outer)
+    cylinder_basis = sc.Basis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=sigma, eta=eta, t=t)
+
+    annulus_bases = []
+    for inner_radius in inner_radii:
+        radii = (inner_radius, outer_radius)
+        ht = sa.scoeff_to_tcoeff(radii, hs)
+        geometry = sa.Geometry('full', ht, radii, sphere_outer=sphere_outer)
+        annulus_basis = sa.Basis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=sigma, eta=eta, t=t)
+        annulus_bases.append(annulus_basis)
+
+    colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red']
+    markers = ['o', 'v', 's', 'D']
+    nplots = 3
+    fig, plot_axes = plt.subplots(1,nplots,figsize=plt.figaspect(1/nplots))
+    for plot_index,ax in enumerate(plot_axes):
+
+        mode_k = plot_index+mode_shift
+        mode = cylinder_basis.mode(Lmax-1, mode_k)
+        s, f = cylinder_basis.s(), mode.ravel()
+        ax.plot(s, f, color=colors[0], linewidth=linewidth, label=None)
+        ax.plot([s[0]], [f[0]], color=colors[0], marker=markers[0], markersize=markersize, label=f'$S_i = {0:0.2f}$')
+
+        for index,annulus_basis in enumerate(annulus_bases):
+            mode = annulus_basis.mode(Lmax-1, mode_k)
+            s, f = annulus_basis.s(), mode.ravel()
+            ax.plot(s, f, color=colors[index+1], linewidth=linewidth, label=None)
+            ax.plot([s[0]],  [f[0]],  color=colors[index+1], marker=markers[index+1], markersize=markersize, label=f'$S_i = {inner_radii[index]:0.2f}$')
+
+        ax.legend(prop={'size': fontsize-4})
+        ax.grid(True)
+        ax.set_xlabel('$s$', fontsize=fontsize)
+        if plot_index == 0:
+            ax.set_ylabel('$Q_{k}$', fontsize=fontsize)
+        else:
+            ax.set_yticklabels([])
+        alphastr = '-\\frac{1}{2}' if alpha == -1/2 else '0'
+        ax.set_title(f'$(m,l,k) = {m, Lmax-1, mode_k}$', fontsize=fontsize)
+        ax.set_title(f'$(m,l,k) = {m, Lmax-1, mode_k}$', fontsize=fontsize)
+        if alpha == 0:
+            ax.set_ylim([-3,1.5])
+        else:
+            ax.set_ylim([-1,1])
+    fig.set_tight_layout(True)
+
+    filename = output_filename(directory='figures', ext='.png', prefix=f'radial_modes-alpha={alpha}')
+    save_figure(filename, fig, dpi=200)
+
+
+def plot_scalar_basis():
+    omega = 2
+    hs = np.array([omega/(2+omega), 1/(2+omega)])
+
+    m, Lmax, Nmax, sphere_outer = 10, 3, 10, False
+    mode_shift = 1
+
+    plot_radial_function(hs, m, Lmax, Nmax, alpha=0,    sphere_outer=sphere_outer, mode_shift=mode_shift)
+    plot_radial_function(hs, m, Lmax, Nmax, alpha=-1/2, sphere_outer=sphere_outer, mode_shift=mode_shift)
+
+    if False:
+        # Plot the 2D field
+        radii = (0.25, 1.0)
+        hs = np.array([omega/(2+omega), 1/(2+omega)])
+        ht = sa.scoeff_to_tcoeff(radii, hs)
+        geometry = sa.Geometry('full', ht, radii, sphere_outer=sphere_outer)
+
+        mode_k = 2+mode_shift
+
+        fig, ax = plt.subplots(1,2, figsize=plt.figaspect(.6))
+        eta, t = np.linspace(-1,1,101), np.linspace(-1,1,200)
+
+        basis = sa.Basis(geometry, m, Lmax, Nmax, alpha=0, sigma=0, eta=eta, t=t)
+        mode = basis.mode(Lmax-1, mode_k)
+        sc.plotfield(basis.s(), basis.z(), mode, fig, ax[0])
+        ax[0].set_title(r'$\alpha = 0$')
+
+        basis = sa.Basis(geometry, m, Lmax, Nmax, alpha=-1/2, sigma=0, eta=eta, t=t)
+        mode = basis.mode(Lmax-1, mode_k)
+        sc.plotfield(basis.s(), basis.z(), mode, fig, ax[1])
+        ax[1].set_title(r'$\alpha = -\frac{1}{2}$')
+
+        fig.set_tight_layout(True)
+
+        filename = output_filename(directory='figures', ext='.png', prefix=f'radial_modes_full')
+        save_figure(filename, fig, dpi=200)
+
+    plt.show()
+
+
+def plot_coordinate_vectors():
+    omega = 2
+    So = 1
+    hs = np.array([omega/(2+omega), 1/(2+omega)])
+    ht = sc.scoeff_to_tcoeff(So, hs)
+    geometry = sc.Geometry('full', ht, So)
+
+    ns, neta = 5, 6
+    s = np.linspace(0,1,ns)[np.newaxis,:]
+    eta = np.linspace(-1,1,neta)[:,np.newaxis]
+    t = geometry.t(s)
+    z = geometry.z(t, eta)
+
+    hs = [hs[0], 0, hs[1]]
+    # curve = [s, eta * np.polyval(hs, s)]
+    tangent = [1+0*eta*s, eta * np.polyval(np.polyder(hs), s)]
+    normal = [-tangent[1], tangent[0]]
+
+    hprime = 4*s/So**2 * np.polyval(np.polyder(ht), t)
+    assert np.max(abs(np.polyval(np.polyder(hs), s) - hprime)) < 1e-15
+
+    fig, ax = plt.subplots()
+    for i in range(neta//2):
+        geometry.plot_height(fig=fig, ax=ax, eta=eta[-1-i])
+
+    s = np.repeat(s, neta, axis=0)
+    ax.quiver(s, z, *tangent)
+    ax.quiver(s, z, *normal)
+    plt.show()
+
+
+def compare_to_mahajan():
+    epsilon = 0.25
+    radii = (epsilon, 1.)
+
+    n = 4
+    m, Lmax, Nmax, alpha, sigma = 0, 1, 2*n+1, 0., 0.
+
+    eta = np.array([0.])
+    t = np.linspace(-1,1,100)
+
+    ht = [1.]
+    annulus = sa.Geometry('full', ht, radii)
+    cylinder = sc.Geometry('full', ht, 1.)
+
+    annulus_basis = sa.Basis(annulus, m, Lmax, Nmax, alpha=alpha, sigma=sigma, eta=eta, t=t)
+    mode1 = annulus_basis.radial_polynomial(0, 2*n)
+
+    # This is the main point: the m = 0 cylinder polynomials are exactly the annulus polynomials.
+    # There is a similar relation for m != 0 but it is much more involved.
+    s = annulus_basis.s()
+    tcyl = cylinder.t(np.sqrt((s**2-epsilon**2)/(1-epsilon**2)))
+    assert np.max(abs(t-tcyl)) < 1e-13
+
+    cylinder_basis = sc.Basis(cylinder, m, Lmax, Nmax, alpha=alpha, sigma=sigma, eta=eta, t=tcyl)
+    mode2 = cylinder_basis.radial_polynomial(0, 2*n)
+    assert np.max(abs(mode1-mode2)) < 1e-13
+
+
+
 def main(kind):
 #    ns, neta = 128, 129
     ns, neta = 256, 257
@@ -187,7 +345,10 @@ def main(kind):
 
 
 if __name__=='__main__':
-    main(sc)
-    main(sa)
+#    main(sc)
+#    main(sa)
+#    plot_scalar_basis()
+#    plot_coordinate_vectors()
+    compare_to_mahajan()
     plt.show()
 
