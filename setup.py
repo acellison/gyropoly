@@ -2,6 +2,6 @@
 from setuptools import setup
 
 setup(
-    name='gyropoly',
+    packages=['gyropoly'],
     version='0.1'
 )
