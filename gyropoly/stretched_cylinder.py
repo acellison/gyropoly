@@ -123,11 +123,13 @@ class Basis():
             'nquad_ratio': float, default 1.25
 
     """
-    def __init__(self, geometry, m, Lmax, Nmax, alpha, sigma=0, eta=None, t=None, has_m_scaling=True, has_h_scaling=True, dtype='float64', recurrence_kwargs=None):
+    def __init__(self, geometry, m, Lmax, Nmax, alpha, sigma=0, beta=0, eta=None, t=None, has_m_scaling=True, has_h_scaling=True, dtype='float64', recurrence_kwargs=None):
+        if beta != 0 and any([geometry.root_h, geometry.sphere]):
+            raise ValueError('Unsupported geometry for non-zero beta')
         _check_radial_degree(geometry, Lmax, Nmax)
         self.__geometry = geometry
         self.__m, self.__Lmax, self.__Nmax = m, Lmax, Nmax
-        self.__alpha, self.__sigma = alpha, sigma
+        self.__alpha, self.__sigma, self.__beta = alpha, sigma, beta
         self.__dtype = dtype
         self.__recurrence_kwargs = _form_kwargs(recurrence_kwargs)
 
@@ -135,7 +137,7 @@ class Basis():
         self.__num_coeffs = total_num_coeffs(geometry, Lmax, Nmax)
 
         # Construct the radial polynomial systems
-        make_radial_params = _radial_jacobi_parameters(geometry, m, alpha=alpha, sigma=sigma)
+        make_radial_params = _radial_jacobi_parameters(geometry, m, alpha=alpha, sigma=sigma, beta=beta)
         radial_params = [make_radial_params(ell) for ell in range(Lmax)]
         self.__systems = [ajacobi.AugmentedJacobiSystem(a, b, [(geometry.hcoeff,c[0])]) for a,b,c in radial_params]
 
@@ -168,6 +170,10 @@ class Basis():
     @property
     def sigma(self):
         return self.__sigma
+
+    @property
+    def beta(self):
+        return self.__beta
 
     @property
     def dtype(self):
@@ -277,7 +283,7 @@ class Basis():
     def _make_vertical_polynomials(self, eta):
         if eta is not None:
             self.__eta = eta
-            self.__P = jacobi.polynomials(self.Lmax, self.alpha, self.alpha, eta, dtype=self.dtype)
+            self.__P = jacobi.polynomials(self.Lmax, *_vertical_jacobi_parameters(self.alpha, self.beta), eta, dtype=self.dtype)
 
     def _make_radial_polynomials(self, t):
         if t is not None:
@@ -314,7 +320,7 @@ def _get_ell_modifiers(Lmax, alpha, adjoint=False, dtype='float64', internal='fl
     """
     A, B, D = [jacobi.operator(kind, dtype=internal) for kind in ['A', 'B', 'D']]
     p = -1 if adjoint else +1
-    op = (D(p) + A(p) @ B(p))(Lmax, alpha, alpha).astype(dtype)
+    op = (D(p) + A(p) @ B(p))(Lmax, *_vertical_jacobi_parameters(alpha)).astype(dtype)
     diags = [op.diagonal(index*p) for index in [0,1,2]]
     return diags[0], diags[1], -diags[2]
 
@@ -384,10 +390,15 @@ def total_num_coeffs(geometry, Lmax, Nmax):
     return coeff_sizes(geometry, Lmax, Nmax)[1][-1]
 
 
-def _radial_jacobi_parameters(geometry, m, alpha, sigma, ell=None):
+def _vertical_jacobi_parameters(alpha, beta=0):
+    """Get the standard Jacobi parameters for the given (alpha, beta)"""
+    return (alpha,alpha+beta)
+
+
+def _radial_jacobi_parameters(geometry, m, alpha, sigma, ell=None, beta=0):
     """Get the Augmented Jacobi parameters for the given (m, alpha, sigma, ell)"""
     scale = 1/2 if geometry.root_h else 1
-    fn = lambda l: ((l+1/2)*geometry.sphere + alpha, m+sigma, (scale*(2*l+2*alpha+1),))
+    fn = lambda l: ((l+1/2)*geometry.sphere + alpha + beta, m+sigma, (scale*(2*l+2*alpha+1) + beta,))
     return fn(ell) if ell is not None else fn
 
 
@@ -399,7 +410,7 @@ def _make_operator_impl(args):
     return sparse.csr_matrix(zop[ellin-max(dell,0)] * smat)
 
 
-def _make_operator(geometry, dell, zop, sop, m, Lmax, Nmax, alpha, sigma, Lpad=0, Npad=0):
+def _make_operator(geometry, dell, zop, sop, m, Lmax, Nmax, alpha, sigma, beta=0, Lpad=0, Npad=0):
     """Kronecker the operator in the eta and s directions"""
     Nin_sizes,  Nin_offsets  = coeff_sizes(geometry, Lmax,      Nmax)
     Nout_sizes, Nout_offsets = coeff_sizes(geometry, Lmax+Lpad, Nmax+Npad)
@@ -413,7 +424,7 @@ def _make_operator(geometry, dell, zop, sop, m, Lmax, Nmax, alpha, sigma, Lpad=0
         ellmax = Lmax - dell
     ell_range = range(ellmin, ellmax)
 
-    radial_params = _radial_jacobi_parameters(geometry, m, alpha=alpha, sigma=sigma)
+    radial_params = _radial_jacobi_parameters(geometry, m, alpha=alpha, sigma=sigma, beta=beta)
     args = [(ell, dell, Nin_sizes, Nout_sizes, radial_params(ell+dell), zop, sop) for ell in ell_range]
 
     if config.parallel:
@@ -674,7 +685,7 @@ def scalar_laplacian(geometry, m, Lmax, Nmax, alpha, sigma=0, dtype='float64', i
     Sparse matrix with Laplacian operator coefficients
 
     """
-    make_dop = lambda delta, a, s: _differential_operator(geometry, delta, m, Lmax, Nmax, alpha=alpha+a, sigma=sigma+s,  dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    make_dop = lambda delta, a, s: _differential_operator(geometry, delta, m, Lmax, Nmax, alpha=alpha+a, sigma=sigma+s, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
     if sigma > 0:
         Dp = Dm = make_dop(+1, 1, -1) @ make_dop(-1, 0, 0)
     elif sigma < 0 or m == 0:
@@ -784,7 +795,7 @@ def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype
                 Lzp1 = C(+1)
                 Lzm1 = C(-1)
                 dl, dn = 1, 1 + R.codomain.dn
-            zop = jacobi.operator('Z', dtype=internal)(Lmax, alpha, alpha)
+            zop = jacobi.operator('Z', dtype=internal)(Lmax, *_vertical_jacobi_parameters(alpha))
         else:
             Lz = Id
             dl, dn = 0, 1 + R.codomain.dn
@@ -896,7 +907,7 @@ def z_vector(geometry, m, Lmax, Nmax, alpha, exact=False, dtype='float64', inter
     # Construct the radial operators for l->l+1 and l->l-1
     Lzp, Lzm = A(+1)**apower @ H(+1)**hpower, A(-1)**apower @ H(-1)**hpower
     Lpad, Npad = (1,Lzm.codomain.dn-(0 if geometry.root_h else 1)) if exact else (0,0)
-    zop = jacobi.operator('Z', dtype=internal)(Lmax, alpha, alpha)
+    zop = jacobi.operator('Z', dtype=internal)(Lmax, *_vertical_jacobi_parameters(alpha))
     make_op = lambda dell, sop: _make_operator(geometry, dell, zop.diagonal(dell), sop, m, Lmax, Nmax, alpha, sigma=0, Lpad=Lpad, Npad=Npad)
     Opz = make_op(-1, Lzp) + make_op(+1, Lzm)
 
@@ -1057,6 +1068,27 @@ def convert(geometry, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exac
         op = resize(geometry, op, Lmax+2, Nmax+3, Lmax, Nmax)
 
     return op
+
+
+def convert_beta(geometry, m, Lmax, Nmax, alpha, sigma, beta=0, adjoint=False, dtype='float64', internal='float128', recurrence_kwargs=None):
+    if any([geometry.root_h, geometry.sphere]):
+        raise ValueError('Beta not supported with root-height or sphere-type basis functions')
+    ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
+    A, H = ops('A'), ops('C')
+    if adjoint:
+        p = -1
+        Lpad, Npad = 1, 1 + H(-1).codomain.dn
+    else:
+        p = +1
+        Lpad, Npad = 0, 0
+    L0 = A(p) @ H( p)
+    L1 = A(p) @ H(-p)
+
+    B = jacobi.operator('B', dtype=internal)(p)(Lmax, *_vertical_jacobi_parameters(alpha, beta))
+    mods = B.diagonal(0), B.diagonal(p)
+
+    make_op = lambda dell, sop: _make_operator(geometry, dell, mods[abs(dell)], sop, m, Lmax, Nmax, alpha, sigma, beta=beta, Lpad=Lpad, Npad=Npad)
+    return (make_op(0, L0) + make_op(p, L1)).astype(dtype)
 
 
 def project(geometry, m, Lmax, Nmax, alpha, sigma, direction, shift=0, Lstop=0, dtype='float64', internal='float128', recurrence_kwargs=None):

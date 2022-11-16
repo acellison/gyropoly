@@ -34,8 +34,8 @@ def test_spoly_to_tpoly():
     check_close(np.polyval(tcoeff, t), np.polyval(scoeff, s**2), 1e-13)
 
 
-def create_scalar_basis(geometry, m, Lmax, Nmax, alpha, t, eta):
-    return sc.Basis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=0, eta=eta, t=t)
+def create_scalar_basis(geometry, m, Lmax, Nmax, alpha, t, eta, beta=0):
+    return sc.Basis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=0, beta=beta, eta=eta, t=t)
 
 
 def create_vector_basis(geometry, m, Lmax, Nmax, alpha, t, eta):
@@ -104,7 +104,7 @@ def test_gradient(geometry, m, Lmax, Nmax, alpha, operators):
         check_close(f, g, tol)
 
     root_h_scale = 2.1 if geometry.root_h else 1
-    check(u, ugrid, 1.7e-2 * root_h_scale)
+    check(u, ugrid, 2e-2 * root_h_scale)
     check(w, wgrid, 1.8e-3)
     check_close(v, vgrid, 2e-11)
 
@@ -381,7 +381,7 @@ def test_ndot_side(geometry, m, Lmax, Nmax, alpha, operators):
 
     # Compute the error
     error = ndotu - ndotu_grid
-    check_close(ndotu, ndotu_grid, 3e-13)
+    check_close(ndotu, ndotu_grid, 4e-13)
 
 
 def test_normal_component(geometry, m, Lmax, Nmax, alpha, operators):
@@ -693,6 +693,60 @@ def test_project(geometry, m, Lmax, Nmax, alpha, operators):
     check_close(n, target, 0)
 
 
+def test_convert_beta(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_convert_beta...')
+    if geometry.root_h:
+        print('  Warning: skipping convert beta test for root height geometry')
+        return
+    if geometry.sphere:
+        print('  Warning: skipping convert beta test for sphere-type geometry')
+        return
+    op = sc.convert_beta(geometry, m, Lmax, Nmax, alpha, sigma=0, beta=1, adjoint=True)
+
+    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
+    c = 2*np.random.rand(ncoeff) - 1
+    d = op @ c
+
+    t = np.linspace(-1,1,100)
+    eta = np.linspace(-1,1,101)
+    dl, dn = 1, 1 + geometry.degree
+    basis0 = create_scalar_basis(geometry, m, Lmax,    Nmax,    alpha, t, eta, beta=1)
+    basis1 = create_scalar_basis(geometry, m, Lmax+dl, Nmax+dn, alpha, t, eta, beta=0)
+
+    t, eta = t[np.newaxis,:], eta[:,np.newaxis]
+    ht = np.polyval(geometry.hcoeff, t)
+    f = (1+eta) * (1-t) * ht * basis0.expand(c)
+    g = basis1.expand(d)
+
+    check_close(f, g, 1e-13)
+
+    # Boundary evaluation of the conversion adjoint is identically zero
+    Bops = sc.operators(geometry, m=m, Lmax=Lmax+dl, Nmax=Nmax+dn, alpha=alpha)
+
+    B = Bops('boundary', sigma=0, surface=geometry.side)
+    check_close(B @ op, 0, 1e-14)
+
+    B = Bops('boundary', sigma=0, surface=geometry.bottom)
+    check_close(B @ op, 0, 1e-14)
+
+
+    # Test beta=0 -> beta=1 conversion
+    op = sc.convert_beta(geometry, m, Lmax, Nmax, alpha, sigma=0, beta=0, adjoint=False)
+    c = 2*np.random.rand(ncoeff) - 1
+    d = op @ c
+
+    t = np.linspace(-1,1,100)
+    eta = np.linspace(-1,1,101)
+    basis0 = create_scalar_basis(geometry, m, Lmax, Nmax, alpha, t, eta, beta=0)
+    basis1 = create_scalar_basis(geometry, m, Lmax, Nmax, alpha, t, eta, beta=1)
+
+    f = basis0.expand(c)
+    g = basis1.expand(d)
+
+    check_close(f, g, 4e-13)
+
+
+
 def main():
     Omega = 1.
     h = [Omega/(2+Omega), 1.]
@@ -703,7 +757,7 @@ def main():
 
     funs = [
             test_gradient, test_divergence, test_curl, test_laplacian,
-            test_convert, test_convert_adjoint,
+            test_convert, test_convert_adjoint, test_convert_beta,
             test_normal_component,
             test_s_vector, test_z_vector,
             test_s_dot, test_z_dot,
