@@ -261,8 +261,12 @@ def plot_spectrum_callback(domain, index, evalues, evectors, bases):
 def create_bases(domain, geometry, m, Lmax, Nmax, alpha, t, eta, boundary_method):
     if boundary_method == 'galerkin':
         dL, dN = convert_adjoint_codomain(domain, geometry)
-    vbases = [domain.Basis(geometry, m, Lmax+dL-Lshift(sig), Nmax+dN, alpha=alpha,   sigma=sig, t=t, eta=eta, recurrence_kwargs=g_recurrence_kwargs) for sig in [+1,-1,0]]
-    pbasis =  domain.Basis(geometry, m, Lmax,                Nmax,    alpha=alpha+1, sigma=0,   t=t, eta=eta, recurrence_kwargs=g_recurrence_kwargs)
+    if domain == sc:
+        Basis = domain.CylinderBasis
+    else:
+        Basis = domain.AnnulusBasis
+    vbases = [Basis(geometry, m, Lmax+dL-Lshift(sig), Nmax+dN, alpha=alpha,   sigma=sig, t=t, eta=eta, recurrence_kwargs=g_recurrence_kwargs) for sig in [+1,-1,0]]
+    pbasis =  Basis(geometry, m, Lmax,                Nmax,    alpha=alpha+1, sigma=0,   t=t, eta=eta, recurrence_kwargs=g_recurrence_kwargs)
     return {'p': pbasis, 'up': vbases[0], 'um': vbases[1], 'w': vbases[2]}
 
 
@@ -346,9 +350,9 @@ def run_config(domain, rpm, cylinder_type='half', sphere=False, force=False):
     ht = domain.scoeff_to_tcoeff(radii, hs)
 
     if domain == sa:
-        geometry = domain.Geometry(cylinder_type=cylinder_type, hcoeff=ht, radii=radii, sphere_inner=config['sphere_inner'], sphere_outer=config['sphere_outer'])
+        geometry = sa.AnnulusGeometry(cylinder_type=cylinder_type, hcoeff=ht, radii=radii, sphere_inner=config['sphere_inner'], sphere_outer=config['sphere_outer'])
     elif domain == sc:
-        geometry = domain.Geometry(cylinder_type=cylinder_type, hcoeff=ht, radius=radii, sphere=config['sphere_outer'])
+        geometry = sc.CylinderGeometry(cylinder_type=cylinder_type, hcoeff=ht, radius=radii, sphere=config['sphere_outer'])
     else:
         raise ValueError('Unknown domain')
 
@@ -367,7 +371,7 @@ def run_config(domain, rpm, cylinder_type='half', sphere=False, force=False):
 
 
 def main():
-    domain = 'annulus'
+    domain = 'cylinder'
     cylinder_type = 'half'
     rpms = [40]
 #    rpms = np.arange(50,55)

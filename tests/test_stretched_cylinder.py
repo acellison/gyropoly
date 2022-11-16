@@ -28,18 +28,18 @@ def test_spoly_to_tpoly():
     scoeff = [1,2,3,4]
     tcoeff = sc.scoeff_to_tcoeff(radius, scoeff)
 
-    geometry = sc.Geometry('full', tcoeff, radius)
+    geometry = sc.CylinderGeometry('full', tcoeff, radius)
     t = np.linspace(-1,1,100)
     s = geometry.s(t)
     check_close(np.polyval(tcoeff, t), np.polyval(scoeff, s**2), 1e-13)
 
 
 def create_scalar_basis(geometry, m, Lmax, Nmax, alpha, t, eta, beta=0):
-    return sc.Basis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=0, beta=beta, eta=eta, t=t)
+    return sc.CylinderBasis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=0, beta=beta, eta=eta, t=t)
 
 
 def create_vector_basis(geometry, m, Lmax, Nmax, alpha, t, eta):
-    return {key: sc.Basis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=s, eta=eta, t=t) for key, s in [('up', +1), ('um', -1), ('w', 0)]}
+    return {key: sc.CylinderBasis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=s, eta=eta, t=t) for key, s in [('up', +1), ('um', -1), ('w', 0)]}
 
 
 def dZ(geometry, f, t, eta, h):
@@ -639,7 +639,7 @@ def test_boundary_combination(geometry, m, Lmax, Nmax, alpha, operators, bottom)
     # Create the evaluation basis
     eta = np.linspace(-1,1,257)
     t = np.linspace(-1,1,256)
-    basis = sc.Basis(geometry, m, Lmax, Nmax, alpha, sigma=0, eta=eta, t=t)
+    basis = sc.CylinderBasis(geometry, m, Lmax, Nmax, alpha, sigma=0, eta=eta, t=t)
 
     boundary_rows, num_coeffs = np.shape(op)
     dim = np.shape(nullspace)[1]
@@ -771,14 +771,14 @@ def main():
         for fun in funs:
             fun(*args)
 
-    geometries = [sc.Geometry(cylinder_type='full', hcoeff=h),
-                  sc.Geometry(cylinder_type='half', hcoeff=h),
-                  sc.Geometry(cylinder_type='full', hcoeff=h, radius=2.),
-                  sc.Geometry(cylinder_type='half', hcoeff=h, radius=2.),
-                  sc.Geometry(cylinder_type='full', hcoeff=h, root_h=True),
-                  sc.Geometry(cylinder_type='full', hcoeff=h, root_h=True, radius=2.),
-                  sc.Geometry(cylinder_type='full', hcoeff=h, sphere=True),
-                  sc.Geometry(cylinder_type='full', hcoeff=h, root_h=True, sphere=True)]
+    geometries = [sc.CylinderGeometry(cylinder_type='full', hcoeff=h),
+                  sc.CylinderGeometry(cylinder_type='half', hcoeff=h),
+                  sc.CylinderGeometry(cylinder_type='full', hcoeff=h, radius=2.),
+                  sc.CylinderGeometry(cylinder_type='half', hcoeff=h, radius=2.),
+                  sc.CylinderGeometry(cylinder_type='full', hcoeff=h, root_h=True),
+                  sc.CylinderGeometry(cylinder_type='full', hcoeff=h, root_h=True, radius=2.),
+                  sc.CylinderGeometry(cylinder_type='full', hcoeff=h, sphere=True),
+                  sc.CylinderGeometry(cylinder_type='full', hcoeff=h, root_h=True, sphere=True)]
 
     for geometry in geometries:
         test(geometry)

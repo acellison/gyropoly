@@ -154,15 +154,15 @@ def plot_radial_function(hs, m, Lmax, Nmax, alpha, sphere_outer, mode_shift):
     eta, t = np.array([0.]), np.linspace(-1,1,1000)
 
     ht = sc.scoeff_to_tcoeff(outer_radius, hs)
-    geometry = sc.Geometry('full', ht, outer_radius, sphere=sphere_outer)
-    cylinder_basis = sc.Basis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=sigma, eta=eta, t=t)
+    geometry = sc.CylinderGeometry('full', ht, outer_radius, sphere=sphere_outer)
+    cylinder_basis = sc.CylinderBasis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=sigma, eta=eta, t=t)
 
     annulus_bases = []
     for inner_radius in inner_radii:
         radii = (inner_radius, outer_radius)
         ht = sa.scoeff_to_tcoeff(radii, hs)
-        geometry = sa.Geometry('full', ht, radii, sphere_outer=sphere_outer)
-        annulus_basis = sa.Basis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=sigma, eta=eta, t=t)
+        geometry = sa.AnnulusGeometry('full', ht, radii, sphere_outer=sphere_outer)
+        annulus_basis = sa.AnnulusBasis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=sigma, eta=eta, t=t)
         annulus_bases.append(annulus_basis)
 
     colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red']
@@ -218,19 +218,19 @@ def plot_scalar_basis():
         radii = (0.25, 1.0)
         hs = np.array([omega/(2+omega), 1/(2+omega)])
         ht = sa.scoeff_to_tcoeff(radii, hs)
-        geometry = sa.Geometry('full', ht, radii, sphere_outer=sphere_outer)
+        geometry = sa.AnnulusGeometry('full', ht, radii, sphere_outer=sphere_outer)
 
         mode_k = 2+mode_shift
 
         fig, ax = plt.subplots(1,2, figsize=plt.figaspect(.6))
         eta, t = np.linspace(-1,1,101), np.linspace(-1,1,200)
 
-        basis = sa.Basis(geometry, m, Lmax, Nmax, alpha=0, sigma=0, eta=eta, t=t)
+        basis = sa.AnnulusBasis(geometry, m, Lmax, Nmax, alpha=0, sigma=0, eta=eta, t=t)
         mode = basis.mode(Lmax-1, mode_k)
         sc.plotfield(basis.s(), basis.z(), mode, fig, ax[0])
         ax[0].set_title(r'$\alpha = 0$')
 
-        basis = sa.Basis(geometry, m, Lmax, Nmax, alpha=-1/2, sigma=0, eta=eta, t=t)
+        basis = sa.AnnulusBasis(geometry, m, Lmax, Nmax, alpha=-1/2, sigma=0, eta=eta, t=t)
         mode = basis.mode(Lmax-1, mode_k)
         sc.plotfield(basis.s(), basis.z(), mode, fig, ax[1])
         ax[1].set_title(r'$\alpha = -\frac{1}{2}$')
@@ -248,7 +248,7 @@ def plot_coordinate_vectors():
     So = 1
     hs = np.array([omega/(2+omega), 1/(2+omega)])
     ht = sc.scoeff_to_tcoeff(So, hs)
-    geometry = sc.Geometry('full', ht, So)
+    geometry = sc.CylinderGeometry('full', ht, So)
 
     ns, neta = 5, 6
     s = np.linspace(0,1,ns)[np.newaxis,:]
@@ -285,10 +285,10 @@ def compare_to_mahajan():
     t = np.linspace(-1,1,100)
 
     ht = [1.]
-    annulus = sa.Geometry('full', ht, radii)
-    cylinder = sc.Geometry('full', ht, 1.)
+    annulus = sa.AnnulusGeometry('full', ht, radii)
+    cylinder = sc.CylinderGeometry('full', ht, 1.)
 
-    annulus_basis = sa.Basis(annulus, m, Lmax, Nmax, alpha=alpha, sigma=sigma, eta=eta, t=t)
+    annulus_basis = sa.AnnulusBasis(annulus, m, Lmax, Nmax, alpha=alpha, sigma=sigma, eta=eta, t=t)
     mode1 = annulus_basis.radial_polynomial(0, 2*n)
 
     # This is the main point: the m = 0 cylinder polynomials are exactly the annulus polynomials.
@@ -297,7 +297,7 @@ def compare_to_mahajan():
     tcyl = cylinder.t(np.sqrt((s**2-epsilon**2)/(1-epsilon**2)))
     assert np.max(abs(t-tcyl)) < 1e-13
 
-    cylinder_basis = sc.Basis(cylinder, m, Lmax, Nmax, alpha=alpha, sigma=sigma, eta=eta, t=tcyl)
+    cylinder_basis = sc.CylinderBasis(cylinder, m, Lmax, Nmax, alpha=alpha, sigma=sigma, eta=eta, t=tcyl)
     mode2 = cylinder_basis.radial_polynomial(0, 2*n)
     assert np.max(abs(mode1-mode2)) < 1e-13
 
@@ -320,14 +320,17 @@ def main(kind):
     if kind == sc:
         radius, height_coeffs_s2 = make_coreaboloid_domain(annulus=False)
         hcoeff = sc.scoeff_to_tcoeff(radius, height_coeffs_s2(rpm=50))
-        geometry = sc.Geometry('full', hcoeff, radius=radius)
+        geometry = sc.CylinderGeometry('full', hcoeff, radius=radius)
     else:
         radii, height_coeffs_s2 = make_coreaboloid_domain(annulus=True)
         hcoeff = sa.scoeff_to_tcoeff(radii, height_coeffs_s2(rpm=50))
-        geometry = sa.Geometry('half', hcoeff, radii=radii)
+        geometry = sa.AnnulusGeometry('half', hcoeff, radii=radii)
 
     for i, (m,ell) in enumerate(configs):
-        basis = kind.Basis(geometry, m, ell+1, Nmax+ell+1, alpha=-1/2, sigma=0, eta=eta, t=t)
+        if kind == sc:
+            basis = kind.CylinderBasis(geometry, m, ell+1, Nmax+ell+1, alpha=-1/2, sigma=0, eta=eta, t=t)
+        else:
+            basis = kind.AnnulusBasis(geometry, m, ell+1, Nmax+ell+1, alpha=-1/2, sigma=0, eta=eta, t=t)
         plot_basis(fig, plot_axes[i], kind, basis, m, ell, Nmax, t, eta)
         if i < nrows-1:
             for ax in plot_axes[i]:

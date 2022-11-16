@@ -33,7 +33,7 @@ def test_spoly_to_tpoly():
     scoeff = [1,1,1,1]
     tcoeff = sa.scoeff_to_tcoeff(radii, scoeff)
 
-    geometry = sa.Geometry('full', tcoeff, radii)
+    geometry = sa.AnnulusGeometry('full', tcoeff, radii)
     t = np.linspace(-1,1,100)
     s = geometry.s(t)
     check_close(np.polyval(tcoeff, t), np.polyval(scoeff, s**2), 1e-13)
@@ -45,19 +45,19 @@ def test_jacobi_params():
     h = [Omega/(2+Omega), 1.]
     m, ell, alpha, sigma = sympy.symbols(['m','l','α','σ'])
 
-    geometry = sa.Geometry('full', h, radii)
+    geometry = sa.AnnulusGeometry('full', h, radii)
     params = sa._radial_jacobi_parameters(geometry, m, alpha, sigma, ell)
     assert params == (alpha, alpha, (2*ell+2*alpha+1, m+sigma))
 
-    geometry = sa.Geometry('full', h, radii, root_h=True)
+    geometry = sa.AnnulusGeometry('full', h, radii, root_h=True)
     params = sa._radial_jacobi_parameters(geometry, m, alpha, sigma, ell)
     assert params == (alpha, alpha, (ell+alpha+1/2, m+sigma))
 
-    geometry = sa.Geometry('full', h, radii, sphere_inner=True)
+    geometry = sa.AnnulusGeometry('full', h, radii, sphere_inner=True)
     params = sa._radial_jacobi_parameters(geometry, m, alpha, sigma, ell)
     assert params == (alpha, ell+alpha+1/2, (2*ell+2*alpha+1, m+sigma))
 
-    geometry = sa.Geometry('full', h, radii, sphere_outer=True)
+    geometry = sa.AnnulusGeometry('full', h, radii, sphere_outer=True)
     params = sa._radial_jacobi_parameters(geometry, m, alpha, sigma, ell)
     assert params == (ell+alpha+1/2, alpha, (2*ell+2*alpha+1, m+sigma))
 
@@ -66,13 +66,13 @@ def test_scalar_basis():
     radii = (0.5, 2.0)
     Omega = 0.9
     h = [Omega/(2+Omega), 1.]
-    geometry = sa.Geometry('full', h, radii)
+    geometry = sa.AnnulusGeometry('full', h, radii)
 
     eta, t = np.linspace(-1,1,100), np.linspace(-1,1,200)
 
     m, Lmax, Nmax = 10, 5, 12
     alpha, sigma = 1., 0.
-    basis = sa.Basis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=0, eta=eta, t=t)
+    basis = sa.AnnulusBasis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=0, eta=eta, t=t)
 
     Spoly, Hpoly = np.polyval(geometry.scoeff, t), np.polyval(geometry.hcoeff, t)
     P = jacobi.polynomials(Lmax, alpha, alpha, eta)
@@ -83,16 +83,15 @@ def test_scalar_basis():
         for k in range(N):
             poly = Spoly**((m+sigma)/2) * Hpoly**ell * Q[k] * P[ell][:,np.newaxis]
             mode = basis.mode(ell, k)
-            error = np.max(np.abs(poly-mode))
-            assert error < 1e-14
+            check_close(poly, mode, 1e-14)
 
 
 def create_scalar_basis(geometry, m, Lmax, Nmax, alpha, t, eta, beta=0):
-    return sa.Basis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=0, beta=beta, eta=eta, t=t)
+    return sa.AnnulusBasis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=0, beta=beta, eta=eta, t=t)
 
 
 def create_vector_basis(geometry, m, Lmax, Nmax, alpha, t, eta):
-    return {key: sa.Basis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=s, eta=eta, t=t) for key, s in [('up', +1), ('um', -1), ('w', 0)]}
+    return {key: sa.AnnulusBasis(geometry, m, Lmax, Nmax, alpha=alpha, sigma=s, eta=eta, t=t) for key, s in [('up', +1), ('um', -1), ('w', 0)]}
 
 
 def dZ(geometry, f, t, eta, h):
@@ -791,13 +790,13 @@ def main():
         for fun in funs:
             fun(*args)
 
-    geometries = [sa.Geometry(cylinder_type='full', hcoeff=h, radii=(0.5,2.0)),
-                  sa.Geometry(cylinder_type='half', hcoeff=h, radii=(0.5,2.0)),
-                  sa.Geometry(cylinder_type='full', hcoeff=h, radii=(0.5,2.0), root_h=True),
-                  sa.Geometry(cylinder_type='full', hcoeff=h, radii=(0.5,2.0), sphere_inner=True),
-                  sa.Geometry(cylinder_type='full', hcoeff=h, radii=(0.5,2.0), sphere_outer=True),
-                  sa.Geometry(cylinder_type='full', hcoeff=h, radii=(0.5,2.0), sphere_inner=True, sphere_outer=True),
-                  sa.Geometry(cylinder_type='full', hcoeff=h, radii=(0.5,2.0), root_h=True, sphere_inner=True, sphere_outer=True),
+    geometries = [sa.AnnulusGeometry(cylinder_type='full', hcoeff=h, radii=(0.5,2.0)),
+                  sa.AnnulusGeometry(cylinder_type='half', hcoeff=h, radii=(0.5,2.0)),
+                  sa.AnnulusGeometry(cylinder_type='full', hcoeff=h, radii=(0.5,2.0), root_h=True),
+                  sa.AnnulusGeometry(cylinder_type='full', hcoeff=h, radii=(0.5,2.0), sphere_inner=True),
+                  sa.AnnulusGeometry(cylinder_type='full', hcoeff=h, radii=(0.5,2.0), sphere_outer=True),
+                  sa.AnnulusGeometry(cylinder_type='full', hcoeff=h, radii=(0.5,2.0), sphere_inner=True, sphere_outer=True),
+                  sa.AnnulusGeometry(cylinder_type='full', hcoeff=h, radii=(0.5,2.0), root_h=True, sphere_inner=True, sphere_outer=True),
                   ]
     for geometry in geometries:
         test(geometry)

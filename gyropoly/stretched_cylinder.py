@@ -8,6 +8,7 @@ from dedalus_sphere import jacobi
 from . import augmented_jacobi as ajacobi
 from . import decorators, config
 from .geometry_base import GeometryBase
+from .basis import Basis, _form_kwargs
 
 if config.parallel:
     from pathos.multiprocessing import ProcessingPool as Pool
@@ -34,7 +35,7 @@ def scoeff_to_tcoeff(radius, scoeff, dtype='float64'):
     return T @ scoeff
 
 
-class Geometry(GeometryBase):
+class CylinderGeometry(GeometryBase):
     """
     Geometry descriptor for a particular stretched cylinder configuration
 
@@ -76,7 +77,7 @@ class Geometry(GeometryBase):
         return f'cylinder-cylinder_type={self.cylinder_type}{radius}{root_h}{sphere}'
 
 
-class Basis():
+class CylinderBasis(Basis):
     """
     Stretched Cylinder basis functions for evaluating functions in the stretched cylinder domain.
     For a given height function z=η*h(t) the basis functions take the form
@@ -124,14 +125,13 @@ class Basis():
 
     """
     def __init__(self, geometry, m, Lmax, Nmax, alpha, sigma=0, beta=0, eta=None, t=None, has_m_scaling=True, has_h_scaling=True, dtype='float64', recurrence_kwargs=None):
-        if beta != 0 and any([geometry.root_h, geometry.sphere]):
-            raise ValueError('Unsupported geometry for non-zero beta')
+        # Check the radial degree is large enough for the triangular truncation
         _check_radial_degree(geometry, Lmax, Nmax)
-        self.__geometry = geometry
-        self.__m, self.__Lmax, self.__Nmax = m, Lmax, Nmax
-        self.__alpha, self.__sigma, self.__beta = alpha, sigma, beta
-        self.__dtype = dtype
-        self.__recurrence_kwargs = _form_kwargs(recurrence_kwargs)
+
+        # Initialize the base class
+        super().__init__(geometry, m, Lmax, Nmax, alpha, sigma=sigma, beta=beta, eta=eta, t=t,
+                         has_m_scaling=has_m_scaling, has_h_scaling=has_h_scaling, dtype=dtype,
+                         recurrence_kwargs=recurrence_kwargs)
 
         # Get the number of coefficients including truncation
         self.__num_coeffs = total_num_coeffs(geometry, Lmax, Nmax)
@@ -139,172 +139,28 @@ class Basis():
         # Construct the radial polynomial systems
         make_radial_params = _radial_jacobi_parameters(geometry, m, alpha=alpha, sigma=sigma, beta=beta)
         radial_params = [make_radial_params(ell) for ell in range(Lmax)]
-        self.__systems = [ajacobi.AugmentedJacobiSystem(a, b, [(geometry.hcoeff,c[0])]) for a,b,c in radial_params]
+        self._systems = [ajacobi.AugmentedJacobiSystem(a, b, [(geometry.hcoeff,c[0])]) for a,b,c in radial_params]
 
-        # Construct the polynomials if eta and t are not None
-        self.__has_m_scaling, self.__has_h_scaling = has_m_scaling, has_h_scaling
-        self.__P, self.__Q, self.__t, self.__eta = (None,)*4
-        self._make_vertical_polynomials(eta)
-        self._make_radial_polynomials(t)
-
-    @property
-    def geometry(self):
-        return self.__geometry
-
-    @property
-    def m(self):
-        return self.__m
-
-    @property
-    def Lmax(self):
-        return self.__Lmax
-
-    @property
-    def Nmax(self):
-        return self.__Nmax
-
-    @property
-    def alpha(self):
-        return self.__alpha
-
-    @property
-    def sigma(self):
-        return self.__sigma
-
-    @property
-    def beta(self):
-        return self.__beta
-
-    @property
-    def dtype(self):
-        return self.__dtype
-
-    @property
-    def recurrence_kwargs(self):
-        return self.__recurrence_kwargs
+        # Create the polynomials now that we computed num_coeffs and constructed the radials systems
+        self._make_polynomials()
 
     @property
     def num_coeffs(self):
         return self.__num_coeffs
 
-    @property
-    def has_m_scaling(self):
-        return self.__has_m_scaling
+    def _radial_size(self, ell):
+        return _radial_size(self.geometry, self.Nmax, ell)
 
-    @property
-    def has_h_scaling(self):
-        return self.__has_h_scaling
+    def _vertical_jacobi_parameters(self):
+        return _vertical_jacobi_parameters(self.alpha, self.beta)
 
-    @property
-    def vertical_polynomials(self):
-        return self.__P
+    def _s_squared_factor(self, t):
+        return 1+self.t
 
-    @property
-    def radial_polynomials(self):
-        return self.__Q
 
-    @property
-    def t(self):
-        return self.__t
-
-    @property
-    def eta(self):
-        return self.__eta
-
-    @decorators.cached
-    def s(self):
-        """Compute the cylindrical radial coordinate s from t"""
-        if self.t is None:
-            raise ValueError('No valid t coordinate')
-        return self.geometry.s(self.t)
-
-    @decorators.cached
-    def z(self):
-        """Compute the cylindrical vertical coordinate z from t and eta"""
-        if self.t is None or self.eta is None:
-            raise ValueError('No valid t or eta coordinates')
-        return self.geometry.z(self.t, self.eta)
-
-    def vertical_polynomial(self, ell):
-        """Get the vertical polynomial of degree ell"""
-        self._check_degree(ell)
-        self._check_constructed(check_P=True)
-        return self.vertical_polynomials[ell]
-
-    def radial_polynomial(self, ell, k):
-        """Get the radial polynomial of degree k corresponding to vertical degree ell"""
-        self._check_degree(ell, k)
-        self._check_constructed(check_Q=True)
-        return self.radial_polynomials[ell][k]
-
-    def mode(self, ell, k):
-        """Get the mode with index (ell, k)"""
-        self._check_degree(ell, k)
-        self._check_constructed(check_P=True, check_Q=True)
-        return self._mode_unchecked(ell, k)
-
-    def expand(self, coeffs):
-        """Evaluate a field in grid space from its spectral coefficients"""
-        # Ensure we already constructed our basis functions
-        self._check_constructed(check_P=True, check_Q=True)
-
-        # Check the coefficient size matches the basis
-        if len(coeffs) != self.num_coeffs:
-            raise ValueError('Incorrect number of coefficients')
-
-        # Zero out the result field
-        neta, nt = len(self.eta), len(self.t)
-        f = np.zeros((neta, nt), dtype=coeffs.dtype)
-
-        # Iterate through each basis function, adding in its weighted contribution
-        index = 0
-        for ell in range(self.Lmax):
-            for k in range(_radial_size(self.geometry, self.Nmax, ell)):
-                f += coeffs[index] * self._mode_unchecked(ell, k)
-                index += 1
-        return f
-
-    def _mode_unchecked(self, ell, k):
-        P, Q = self.vertical_polynomials, self.radial_polynomials
-        return P[ell][:,np.newaxis] * Q[ell][k][np.newaxis,:]
-
-    def _check_constructed(self, check_P=False, check_Q=False):
-        if check_P and self.vertical_polynomials is None:
-            raise ValueError('Basis constructed without eta argument')
-        if check_Q and self.radial_polynomials is None:
-            raise ValueError('Basis constructed without t argument')
-
-    def _check_degree(self, ell, k=None):
-        if ell >= self.Lmax:
-            raise ValueError(f'ell (={ell}) index exceeds maximum Lmax-1 (={self.Lmax-1})')
-        if k is not None and k >= _radial_size(self.geometry, self.Nmax, ell):
-            raise ValueError(f'k (={k}) index exceeds maximum (={_radial_size(self.geometry, self.Nmax, ell)-1})')
-
-    def _make_vertical_polynomials(self, eta):
-        if eta is not None:
-            self.__eta = eta
-            self.__P = jacobi.polynomials(self.Lmax, *_vertical_jacobi_parameters(self.alpha, self.beta), eta, dtype=self.dtype)
-
-    def _make_radial_polynomials(self, t):
-        if t is not None:
-            self.__t = t
-            if self.has_m_scaling:
-                prefactor = (1+t)**((self.m + self.sigma)/2)
-            else:
-                prefactor = (1+t)**(self.sigma/2)
-            ht = self._make_height(t)
-            systems = self.__systems
-            polys = lambda ell: systems[ell].polynomials(_radial_size(self.geometry, self.Nmax, ell), t, dtype=self.dtype, **self.recurrence_kwargs)
-            self.__Q = [prefactor * ht**ell * polys(ell) for ell in range(self.Lmax)]
-
-    def _make_height(self, t):
-        if self.has_h_scaling:
-            ht = np.polyval(self.geometry.hcoeff, t)
-            if self.geometry.root_h: ht = np.sqrt(ht)
-            if self.geometry.sphere: ht = ht * np.sqrt(1-t)
-        else:
-            ht = 1.
-        return ht
+# Legacy names.  Remove this in the future
+Geometry = CylinderGeometry
+Basis = CylinderBasis
 
 
 def _get_ell_modifiers(Lmax, alpha, adjoint=False, dtype='float64', internal='float128'):
@@ -446,16 +302,6 @@ def _make_operator(geometry, dell, zop, sop, m, Lmax, Nmax, alpha, sigma, beta=0
     if len(oprows) == 0:
         return sparse.lil_matrix(shape).tocsr()
     return sparse.csr_matrix((opdata, (oprows, opcols)), shape=shape)
-
-
-def _form_kwargs(kwargs):
-    if kwargs is None:
-        kwargs = {}
-    elif isinstance(kwargs, (list,tuple)):
-        kwargs = dict(kwargs)
-    elif not isinstance(kwargs, dict):
-        raise ValueError('kwargs must be either None, a list of (key,value) pairs, or a dict')
-    return kwargs
 
 
 def _ajacobi_operators(geometry, dtype, recurrence_kwargs):
@@ -1181,7 +1027,7 @@ def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', in
 
     # Helper function to create the basis polynomials
     def make_basis(eta=None, t=None, has_h_scaling=False):
-        return Basis(geometry, m, Lmax, Nmax, alpha, sigma, eta=eta, t=t, has_m_scaling=False, has_h_scaling=has_h_scaling, dtype=internal, recurrence_kwargs=recurrence_kwargs)
+        return CylinderBasis(geometry, m, Lmax, Nmax, alpha, sigma, eta=eta, t=t, has_m_scaling=False, has_h_scaling=has_h_scaling, dtype=internal, recurrence_kwargs=recurrence_kwargs)
 
     # Get the evaluation surface from the surface argument
     if not isinstance(surface, str):

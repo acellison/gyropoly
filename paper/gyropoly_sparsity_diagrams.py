@@ -165,14 +165,14 @@ def differential_operators():
     hcoeff = sc.scoeff_to_tcoeff(radius, height_coeffs_s2(rpm))
 
     # Full Cylinder
-    geometry = sc.Geometry('full', hcoeff, radius=radius)
+    geometry = sc.CylinderGeometry('full', hcoeff, radius=radius)
     Op = sc.operators(geometry, m, Lmax, Nmax, alpha)('gradient')
     n = sc.total_num_coeffs(geometry, Lmax, Nmax)
     Op = [Op[i*n:(i+1)*n] for i in range(3)]
     plot_splatter(sc, geometry, r'$\mathcal{D}^{\delta}$   (Full Cylinder)', Op, codomain, ax=ax[0])
 
     # Half Cylinder
-    geometry = sc.Geometry('half', hcoeff, radius=radius)
+    geometry = sc.CylinderGeometry('half', hcoeff, radius=radius)
     Op = sc.operators(geometry, m, Lmax, Nmax, alpha)('gradient')
     n = sc.total_num_coeffs(geometry, Lmax, Nmax)
     Op = [Op[i*n:(i+1)*n] for i in range(3)]
@@ -188,14 +188,14 @@ def differential_operators():
     hcoeff = sa.scoeff_to_tcoeff(radii, height_coeffs_s2(rpm))
 
     # Full Annulus
-    geometry = sa.Geometry('full', hcoeff, radii=radii)
+    geometry = sa.AnnulusGeometry('full', hcoeff, radii=radii)
     Op = sa.operators(geometry, m, Lmax, Nmax, alpha)('gradient')
     n = sa.total_num_coeffs(geometry, Lmax, Nmax)
     Op = [Op[i*n:(i+1)*n] for i in range(3)]
     plot_splatter(sa, geometry, r'$\mathcal{D}^{\delta}$   (Full Annulus)', Op, codomain, ax=ax[0])
 
     # Half Annulus
-    geometry = sa.Geometry('half', hcoeff, radii=radii)
+    geometry = sa.AnnulusGeometry('half', hcoeff, radii=radii)
     Op = sa.operators(geometry, m, Lmax, Nmax, alpha)('gradient')
     n = sa.total_num_coeffs(geometry, Lmax, Nmax)
     Op = [Op[i*n:(i+1)*n] for i in range(3)]
@@ -227,7 +227,7 @@ def vector_laplacian_operator():
     hcoeff = sc.scoeff_to_tcoeff(radius, height_coeffs_s2(rpm))
 
     # Full Cylinder
-    geometry = sc.Geometry('full', hcoeff, radius=radius)
+    geometry = sc.CylinderGeometry('full', hcoeff, radius=radius)
     Op = sc.operators(geometry, m, Lmax, Nmax, alpha)('vector_laplacian')
 
     fig, ax = plt.subplots()
@@ -244,7 +244,7 @@ def vector_operators():
     hcoeff = sc.scoeff_to_tcoeff(radius, height_coeffs_s2(rpm))
 
     # Full Cylinder, s_vector
-    geometry = sc.Geometry('full', hcoeff, radius=radius)
+    geometry = sc.CylinderGeometry('full', hcoeff, radius=radius)
     dl, dn = 0, 1
     codomain = [(Lmax+dl,Nmax+dn,alpha)]*3
 
@@ -254,7 +254,7 @@ def vector_operators():
     plot_splatter(sc, geometry, r'$s \, \hat{e}_{S}$   (Full Cylinder)', Op, codomain, ax=ax[0])
 
     # Full Cylinder, z_vector
-    geometry = sc.Geometry('full', hcoeff, radius=radius)
+    geometry = sc.CylinderGeometry('full', hcoeff, radius=radius)
     d = geometry.degree
     da = 1 if geometry.sphere else 0
     dl, dn = 1, (d if geometry.root_h else 2*d-1) + da    
@@ -266,7 +266,7 @@ def vector_operators():
     plot_splatter(sc, geometry, r'$z \, \hat{e}_{Z}$   (Full Cylinder)', Op, codomain, ax=ax[1])
 
     # Half Cylinder, z_vector
-    geometry = sc.Geometry('half', hcoeff, radius=radius)
+    geometry = sc.CylinderGeometry('half', hcoeff, radius=radius)
     d = geometry.degree
     da = 1 if geometry.sphere else 0
     dl, dn = 1, (d if geometry.root_h else 2*d-1) + da    
@@ -294,13 +294,13 @@ def conversion_operators():
     hcoeff = sc.scoeff_to_tcoeff(radius, height_coeffs_s2(rpm))
 
     # Full Cylinder, convert down
-    geometry = sc.Geometry('full', hcoeff, radius=radius)
+    geometry = sc.CylinderGeometry('full', hcoeff, radius=radius)
     Op = sc.operators(geometry, m, Lmax, Nmax, alpha)('convert', sigma=0)
     codomain = (Lmax, Nmax, alpha+1)
     plot_splatter(sc, geometry, r'$\mathcal{I}_{\alpha}$   (Full Cylinder)', Op, codomain, ax=ax[0])
 
     # Full Cylinder, convert down
-    geometry = sc.Geometry('full', hcoeff, radius=radius)
+    geometry = sc.CylinderGeometry('full', hcoeff, radius=radius)
     Op = sc.operators(geometry, m, Lmax, Nmax, alpha)('convert', sigma=0, adjoint=True, exact=True)
     dl, dn = 2, 3
     codomain = (Lmax+dl, Nmax+dn, alpha-1)
@@ -316,13 +316,13 @@ def conversion_operators():
     hcoeff = sc.scoeff_to_tcoeff(radius, height_coeffs_s2(rpm))
 
     # Full Cylinder, convert down
-    geometry = sc.Geometry('half', hcoeff, radius=radius)
+    geometry = sc.CylinderGeometry('half', hcoeff, radius=radius)
     Op = sc.operators(geometry, m, Lmax, Nmax, alpha)('convert', sigma=0)
     codomain = (Lmax, Nmax, alpha+1)
     plot_splatter(sc, geometry, r'$\mathcal{I}_{\alpha}$   (Half Cylinder)', Op, codomain, ax=ax[0])
 
     # Full Cylinder, convert down
-    geometry = sc.Geometry('half', hcoeff, radius=radius)
+    geometry = sc.CylinderGeometry('half', hcoeff, radius=radius)
     Op = sc.operators(geometry, m, Lmax, Nmax, alpha)('convert', sigma=0, adjoint=True, exact=True)
     dl, dn = 2, 3
     codomain = (Lmax+dl, Nmax+dn, alpha-1)
@@ -342,7 +342,7 @@ def boundary_operator():
     hcoeff = sc.scoeff_to_tcoeff(radius, height_coeffs_s2(rpm))
 
     # Full cylinder, outer boundary
-    geometry = sc.Geometry('full', hcoeff, radius=radius)
+    geometry = sc.CylinderGeometry('full', hcoeff, radius=radius)
     Op = sc.boundary(geometry, m, Lmax, Nmax, alpha, sigma=0, surface='s=S')
 
     fig, ax = plt.subplots(figsize=plt.figaspect(0.2))
@@ -354,7 +354,7 @@ def boundary_operator():
     save_figure(filename, fig)
 
     # Full cylinder, outer boundary
-    geometry = sc.Geometry('full', hcoeff, radius=radius)
+    geometry = sc.CylinderGeometry('full', hcoeff, radius=radius)
     Op = sc.boundary(geometry, m, Lmax, Nmax, alpha, sigma=0, surface='z=h')
 
     fig, ax = plt.subplots(figsize=plt.figaspect(0.3))
