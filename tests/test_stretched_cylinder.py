@@ -425,7 +425,7 @@ def test_s_vector(geometry, m, Lmax, Nmax, alpha, operators):
     v = -1j/np.sqrt(2) * (up - um)
 
     check_close(u, ugrid, 4.0e-13)
-    check_close(v, 0.0, 1.1e-13)
+    check_close(v, 0.0, 2e-13)
     check_close(w, 0.0, 0)
 
 
@@ -489,6 +489,35 @@ def test_s_dot(geometry, m, Lmax, Nmax, alpha, operators):
     su = scalar_basis.expand(d)
 
     check_close(su, sugrid, 4.0e-13)
+
+
+def test_phi_dot(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_phi_dot...')
+    op = operators('phi_dot', exact=True)
+
+    dn = 1
+    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
+
+    c = 2*np.random.rand(3*ncoeff) - 1
+    d = op @ c
+
+    t = np.linspace(-1,1,100)
+    eta = np.linspace(-1,1,101)
+    vector_basis = create_vector_basis(geometry, m, Lmax, Nmax,    alpha, t, eta)
+    scalar_basis = create_scalar_basis(geometry, m, Lmax, Nmax+dn, alpha, t, eta)
+    s = scalar_basis.s()
+
+    # Compute s*f in grid space
+    Up, Um, Uz = [c[i*ncoeff:(i+1)*ncoeff] for i in range(3)]
+    up, um, w = [vector_basis[key].expand(coeffs) for key,coeffs in [('up', Up), ('um', Um), ('w', Uz)]]
+    v = -1j/np.sqrt(2) * (up - um)
+
+    svgrid = s * v
+
+    # Compute s*f using the operator
+    sv = -1j * scalar_basis.expand(d)
+
+    check_close(sv, svgrid, 4.0e-13)
 
 
 def test_z_dot(geometry, m, Lmax, Nmax, alpha, operators):
@@ -840,8 +869,8 @@ def main():
             test_convert, test_convert_adjoint, test_convert_beta,
             test_normal_component,
             test_tangent_dot, test_normal_dot,
+            test_s_dot, test_phi_dot, test_z_dot,
             test_s_vector, test_z_vector,
-            test_s_dot, test_z_dot,
             test_boundary, test_project
             ]
 

@@ -547,6 +547,35 @@ def test_s_dot(geometry, m, Lmax, Nmax, alpha, operators):
     check_close(su, sugrid, 4.0e-13)
 
 
+def test_phi_dot(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_phi_dot...')
+    op = operators('phi_dot', exact=True)
+
+    dn = 1
+    ncoeff = sa.total_num_coeffs(geometry, Lmax, Nmax)
+
+    c = 2*np.random.rand(3*ncoeff) - 1
+    d = op @ c
+
+    t = np.linspace(-1,1,100)
+    eta = np.linspace(-1,1,101)
+    vector_basis = create_vector_basis(geometry, m, Lmax, Nmax,    alpha, t, eta)
+    scalar_basis = create_scalar_basis(geometry, m, Lmax, Nmax+dn, alpha, t, eta)
+    s = scalar_basis.s()
+
+    # Compute s*f in grid space
+    Up, Um, Uz = [c[i*ncoeff:(i+1)*ncoeff] for i in range(3)]
+    up, um, w = [vector_basis[key].expand(coeffs) for key,coeffs in [('up', Up), ('um', Um), ('w', Uz)]]
+    v = -1j/np.sqrt(2) * (up - um)
+
+    svgrid = s * v
+
+    # Compute s*f using the operator
+    sv = -1j * scalar_basis.expand(d)
+
+    check_close(sv, svgrid, 4.0e-13)
+
+
 def test_z_dot(geometry, m, Lmax, Nmax, alpha, operators):
     print('  test_z_dot...')
     op = operators('z_dot', exact=True)
@@ -674,8 +703,8 @@ def test_convert(geometry, m, Lmax, Nmax, alpha, operators):
     g1 = basis1.expand(d1)
     g2 = basis2.expand(d2)
 
-    check_close(f, g1, 2.5e-13)
-    check_close(f, g2, 1.8e-12)
+    check_close(f, g1, 3e-13)
+    check_close(f, g2, 2e-12)
 
 
 def test_convert_adjoint(geometry, m, Lmax, Nmax, alpha, operators):
@@ -857,8 +886,8 @@ def main():
             test_convert, test_convert_adjoint, test_convert_beta,
             test_normal_component,
             test_tangent_dot, test_normal_dot,
+            test_s_dot, test_phi_dot, test_z_dot,
             test_s_vector, test_z_vector,
-            test_s_dot, test_z_dot,
             test_boundary,
         ]
 

@@ -575,6 +575,66 @@ def vector_laplacian(geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='
     return sparse.block_diag([make_dop(sigma) for sigma in [+1,-1,0]]).tocsr()
 
 
+def tangential_stress(geometry, m, Lmax, Nmax, alpha, direction='s', dtype='float64', internal='float128', recurrence_kwargs=None):
+    """
+    Construct the tangential stress operator acting on a vector field.
+    The symmetric stress tensor is defined as 1/2*(Grad(u) + Grad(u).T).
+    To compute it we compute the D(+/-/0) operator on each spin component of the vector field,
+    then project onto the normal-tangential and tangential-normal directions, summing to symmetrize the operator.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
+    m : int
+        Azimuthal wavenumber
+    Lmax : int
+        Maximum vertical degree of input basis
+    Nmax : int
+        Maximum radial degree of input basis
+    alpha : float > -1
+        Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    direction : string, 's' or 'phi'
+        Tangential direction of the stress tensor
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+
+    Returns
+    -------
+    Sparse matrix with Laplacian operator coefficients
+
+    """
+    # Compute the gradient operator of each velocity component
+    grad = lambda sigma: gradient(geometry, m, Lmax, Nmax, alpha, sigma=sigma, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    Dp = grad(+1)
+    Dm = grad(-1)
+    D0 = grad( 0)
+
+    tangent = {'s': tangent_dot, 'phi': phi_dot}[direction]
+
+    # Normal derivative of the tangential part of the velocity
+    ndotp = normal_dot(geometry, m, Lmax, Nmax, alpha+1, sigma=+1, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    ndotm = normal_dot(geometry, m, Lmax, Nmax, alpha+1, sigma=-1, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    ndot0 = normal_dot(geometry, m, Lmax, Nmax, alpha+1, sigma=0,  dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    tdot =     tangent(geometry, m, Lmax, Nmax, alpha+1, sigma=0,  direction=direction, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    nD = sparse.block_diag([ndotp @ Dp, ndotm @ Dm, ndot0 @ D0])
+    tnD = tdot @ nD
+
+    # Tangential derivative of the normal part of the velocity
+    tdotp =     tangent(geometry, m, Lmax, Nmax, alpha+1, sigma=+1, direction=direction, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    tdotm =     tangent(geometry, m, Lmax, Nmax, alpha+1, sigma=-1, direction=direction, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    tdot0 =     tangent(geometry, m, Lmax, Nmax, alpha+1, sigma=0,  direction=direction, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    ndot  =  normal_dot(geometry, m, Lmax, Nmax, alpha+1, sigma=0,  dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    tD = sparse.block_diag([tdotp @ Dp, tdotm @ Dm, tdot0 @ D0])
+    ntD = ndot @ tD
+
+    # normal-tangential part of the symmetric stress tensor
+    S = 1/2 * (tnD + ntD)
+    return S.astype(dtype).tocsr()
+
+
 def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Construct the normal dot operator acting on a vector field.  For the basis functions to behave
@@ -675,7 +735,7 @@ def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype
 
 def tangent_dot(geometry, m, Lmax, Nmax, alpha, sigma=0, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
-    Dot a vector field by the non-unit-normalized surface tangent vector, s h[t] ( e_{S} + 2/So*(2*(1+t))**(1/2) * h'(t) * eta * e_{Z} )
+    Dot a vector field by the non-unit-normalized surface tangent vector, S h[t] ( e_{S} + 2/So*(2*(1+t))**(1/2) * h'(t) * eta * e_{Z} )
 
     Parameters
     ----------
@@ -778,7 +838,118 @@ def normal_dot(geometry, m, Lmax, Nmax, alpha, sigma=0, dtype='float64', interna
     return sparse.hstack([Opp, Opm, Opz]).tocsr()
 
 
-def s_vector(geometry, m, Lmax, Nmax, alpha, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
+def s_dot(geometry, m, Lmax, Nmax, alpha, sigma=0, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
+    """
+    Dot a vector field with the non-unit-normalized cylindrical s vector
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
+    m : int
+        Azimuthal wavenumber
+    Lmax : int
+        Maximum vertical degree of input basis
+    Nmax : int
+        Maximum radial degree of input basis
+    alpha : float > -1
+        Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    exact : bool, optional
+        If True, pads the output of the operator appropriately for the bandwidth growth
+        caused by multiplication by s.
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+
+    Returns
+    -------
+    Sparse matrix with s vector multiplication operator coefficients
+
+    """
+    ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
+    S, Zero = ops(('C',1)), 0*ops('Id')
+    Lp, Lm, Lz = S(-1), S(+1), Zero
+    Lpad, Npad = (0,Lp.codomain.dn) if exact else (0,0)
+    ones = np.ones(Lmax)
+    make_op = lambda sop, dsigma: (1/2 * _make_operator(geometry, 0, ones, sop, m, Lmax, Nmax, alpha, sigma=sigma+dsigma, Lpad=Lpad, Npad=Npad)).astype(dtype)
+    return sparse.hstack([make_op(L, dsigma) for L, dsigma in [(Lp,+1),(Lm,-1),(Lz,0)]]).tocsr()
+
+
+def phi_dot(geometry, m, Lmax, Nmax, alpha, sigma=0, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
+    """
+    Dot a vector field with the non-unit-normalized cylindrical -i*s*e_{\Phi} vector
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
+    m : int
+        Azimuthal wavenumber
+    Lmax : int
+        Maximum vertical degree of input basis
+    Nmax : int
+        Maximum radial degree of input basis
+    alpha : float > -1
+        Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    exact : bool, optional
+        If True, pads the output of the operator appropriately for the bandwidth growth
+        caused by multiplication by s.
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+
+    Returns
+    -------
+    Sparse matrix with s vector multiplication operator coefficients
+
+    """
+    ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
+    S, Zero = ops(('C',1)), 0*ops('Id')
+    Lp, Lm, Lz = S(-1), -S(+1), Zero
+    Lpad, Npad = (0,Lp.codomain.dn) if exact else (0,0)
+    ones = np.ones(Lmax)
+    make_op = lambda sop, dsigma: (1/2 * _make_operator(geometry, 0, ones, sop, m, Lmax, Nmax, alpha, sigma=sigma+dsigma, Lpad=Lpad, Npad=Npad)).astype(dtype)
+    return sparse.hstack([make_op(L, dsigma) for L, dsigma in [(Lp,+1),(Lm,-1),(Lz,0)]]).tocsr()
+
+
+def z_dot(geometry, m, Lmax, Nmax, alpha, sigma=0, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
+    """
+    Dot a vector field with the non-unit-normalized cylindrical axial z vector
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
+    m : int
+        Azimuthal wavenumber
+    Lmax : int
+        Maximum vertical degree of input basis
+    Nmax : int
+        Maximum radial degree of input basis
+    alpha : float > -1
+        Input basis hierarchy parameter.  Output basis has alpha->alpha+1
+    exact : bool, optional
+        If True, pads the output of the operator appropriately for the bandwidth growth
+        caused by multiplication by z.
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+
+    Returns
+    -------
+    Sparse matrix with s vector multiplication operator coefficients
+
+    """
+    # This operator is identical to the z_vector operator up to a transpose
+    zvec = z_vector(geometry, m, Lmax, Nmax, alpha, sigma=sigma, exact=exact, dtype=dtype, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    n = np.shape(zvec)[0]//3
+    return sparse.hstack([zvec[i*n:(i+1)*n,:] for i in range(3)]).tocsr()
+
+
+def s_vector(geometry, m, Lmax, Nmax, alpha, sigma=0, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Multiply a scalar field by the non-unit-normalized cylindrical s vector
 
@@ -812,11 +983,11 @@ def s_vector(geometry, m, Lmax, Nmax, alpha, exact=False, dtype='float64', inter
     Lp, Lm, Lz = S(+1), S(-1), Zero
     Lpad, Npad = (0,Lm.codomain.dn) if exact else (0,0)
     ones = np.ones(Lmax)
-    make_op = lambda sop: (1/2 * _make_operator(geometry, 0, ones, sop, m, Lmax, Nmax, alpha, sigma=0, Lpad=Lpad, Npad=Npad)).astype(dtype)
+    make_op = lambda sop: (1/2 * _make_operator(geometry, 0, ones, sop, m, Lmax, Nmax, alpha, sigma=sigma, Lpad=Lpad, Npad=Npad)).astype(dtype)
     return sparse.vstack([make_op(L) for L in [Lp,Lm,Lz]]).tocsr()
 
 
-def z_vector(geometry, m, Lmax, Nmax, alpha, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
+def z_vector(geometry, m, Lmax, Nmax, alpha, sigma=0, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Multiply a scalar field by the non-unit-normalized axial z vector
 
@@ -855,90 +1026,17 @@ def z_vector(geometry, m, Lmax, Nmax, alpha, exact=False, dtype='float64', inter
     Lzp, Lzm = A(+1)**apower @ B(+1)**bpower @ H(+1)**hpower, A(-1)**apower @ B(-1)**bpower @ H(-1)**hpower
     Lpad, Npad = (1,Lzm.codomain.dn-(0 if geometry.root_h else 1)) if exact else (0,0)
     zop = jacobi.operator('Z', dtype=internal)(Lmax, *_vertical_jacobi_parameters(alpha))
-    make_op = lambda dell, sop: _make_operator(geometry, dell, zop.diagonal(dell), sop, m, Lmax, Nmax, alpha, sigma=0, Lpad=Lpad, Npad=Npad)
+    make_op = lambda dell, sop: _make_operator(geometry, dell, zop.diagonal(dell), sop, m, Lmax, Nmax, alpha, sigma=sigma, Lpad=Lpad, Npad=Npad)
     Opz = make_op(-1, Lzp) + make_op(+1, Lzm)
 
     if geometry.cylinder_type == 'half':
         # Construct the radial operator for l->l
-        make_op = lambda sop: _make_operator(geometry, 0, np.ones(Lmax), sop, m, Lmax, Nmax, alpha, sigma=0, Lpad=Lpad, Npad=Npad)
+        make_op = lambda sop: _make_operator(geometry, 0, np.ones(Lmax), sop, m, Lmax, Nmax, alpha, sigma=sigma, Lpad=Lpad, Npad=Npad)
         Lz0 = H(-1) @ H(+1)
         Opz = 1/2 * (Opz + make_op(Lz0))
 
     Z = sparse.lil_matrix((2*np.shape(Opz)[0], np.shape(Opz)[1]))
     return sparse.vstack([Z, Opz]).astype(dtype).tocsr()
-
-
-def s_dot(geometry, m, Lmax, Nmax, alpha, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
-    """
-    Dot a vector field with the non-unit-normalized cylindrical s vector
-
-    Parameters
-    ----------
-    geometry : Geometry
-        Geometry object instance to describe the stretched cylindrical domain
-    m : int
-        Azimuthal wavenumber
-    Lmax : int
-        Maximum vertical degree of input basis
-    Nmax : int
-        Maximum radial degree of input basis
-    alpha : float > -1
-        Input basis hierarchy parameter.  Output basis has alpha->alpha+1
-    exact : bool, optional
-        If True, pads the output of the operator appropriately for the bandwidth growth
-        caused by multiplication by s.
-    dtype : data-type, optional
-        Desired data-type for the output
-    internal : data-type, optional
-        Internal data-type for compuatations
-
-    Returns
-    -------
-    Sparse matrix with s vector multiplication operator coefficients
-
-    """
-    ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
-    S, Zero = ops(('C',1)), 0*ops('Id')
-    Lp, Lm, Lz = S(-1), S(+1), Zero
-    Lpad, Npad = (0,Lp.codomain.dn) if exact else (0,0)
-    ones = np.ones(Lmax)
-    make_op = lambda sop, sigma: (1/2 * _make_operator(geometry, 0, ones, sop, m, Lmax, Nmax, alpha, sigma=sigma, Lpad=Lpad, Npad=Npad)).astype(dtype)
-    return sparse.hstack([make_op(L, sigma) for L, sigma in [(Lp,+1),(Lm,-1),(Lz,0)]]).tocsr()
-
-
-def z_dot(geometry, m, Lmax, Nmax, alpha, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
-    """
-    Dot a vector field with the non-unit-normalized cylindrical axial z vector
-
-    Parameters
-    ----------
-    geometry : Geometry
-        Geometry object instance to describe the stretched cylindrical domain
-    m : int
-        Azimuthal wavenumber
-    Lmax : int
-        Maximum vertical degree of input basis
-    Nmax : int
-        Maximum radial degree of input basis
-    alpha : float > -1
-        Input basis hierarchy parameter.  Output basis has alpha->alpha+1
-    exact : bool, optional
-        If True, pads the output of the operator appropriately for the bandwidth growth
-        caused by multiplication by z.
-    dtype : data-type, optional
-        Desired data-type for the output
-    internal : data-type, optional
-        Internal data-type for compuatations
-
-    Returns
-    -------
-    Sparse matrix with s vector multiplication operator coefficients
-
-    """
-    # This operator is identical to the z_vector operator up to a transpose
-    zvec = z_vector(geometry, m, Lmax, Nmax, alpha, exact=exact, dtype=dtype, internal=internal, recurrence_kwargs=recurrence_kwargs)
-    n = np.shape(zvec)[0]//3
-    return sparse.hstack([zvec[i*n:(i+1)*n,:] for i in range(3)]).tocsr()
 
 
 def convert(geometry, m, Lmax, Nmax, alpha, sigma, ntimes=1, adjoint=False, exact=True, dtype='float64', internal='float128', recurrence_kwargs=None):
@@ -1209,8 +1307,8 @@ def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', in
 def _operator(name, geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', recurrence_kwargs=None, **kwargs):
     """Operator dispatch function with caching of results"""
     valid_names = ['gradient', 'divergence', 'curl', 'scalar_laplacian', 'vector_laplacian',
-                   'tangent_dot', 'normal_dot',
-                   'normal_component', 's_vector', 'z_vector', 's_dot', 'z_dot',
+                   'tangent_dot', 'normal_dot', 's_dot', 'phi_dot', 'z_dot',
+                   'normal_component', 's_vector', 'z_vector',
                    'boundary', 'convert', 'project']
     if name not in valid_names:
         raise ValueError(f'Invalid operator name {name}')
