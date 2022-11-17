@@ -15,7 +15,8 @@ if config.parallel:
 
 __all__ = ['Basis', 'total_num_coeffs', 'coeff_sizes', 'operators'
            'gradient', 'divergence', 'curl', 'scalar_laplacian', 'vector_laplacian',
-           'normal_component', 'convert', 'project', 'boundary',
+           'normal_component', 'tangent_dot', 'normal_dot', 's_dot', 'z_dot', 's_vector', 'z_vector',
+           'convert', 'project', 'boundary',
            'resize', 'plotfield']
 
 
@@ -154,6 +155,7 @@ class AnnulusBasis(Basis):
         return np.polyval(self.geometry.scoeff, self.t)
 
 
+# Legacy names.  Remove this in the future
 Geometry = AnnulusGeometry
 Basis = AnnulusBasis
 
@@ -671,6 +673,111 @@ def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype
     return sparse.hstack(ops).astype(dtype).tocsr()
 
 
+def tangent_dot(geometry, m, Lmax, Nmax, alpha, sigma=0, dtype='float64', internal='float128', recurrence_kwargs=None):
+    """
+    Dot a vector field by the non-unit-normalized surface tangent vector, s h[t] ( e_{S} + 2/So*(2*(1+t))**(1/2) * h'(t) * eta * e_{Z} )
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
+    m : int
+        Azimuthal wavenumber
+    Lmax : int
+        Maximum vertical degree of input basis
+    Nmax : int
+        Maximum radial degree of input basis
+    alpha : float > -1
+        Input basis hierarchy parameter
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+
+    Returns
+    -------
+    Sparse matrix with tangent vector dot operator coefficients
+
+    """
+    if geometry.sphere_inner or geometry.sphere_outer:
+        raise ValueError('Not implemented')
+    ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
+    A, S, H = [ops(key) for key in ['A',('C',1),('C',0)]]
+    R = ops('rhoprime', weighted=False, which=0)
+    Si, So = geometry.radii
+
+    hpower = 1 if geometry.root_h else 2
+    Lp = S(-1) @ H(-1) @ H(+1)
+    Lm = S(+1) @ H(-1) @ H(+1)
+    Lzp = R @ S(-1) @ S(+1) @ H(+1)**hpower
+    Lzm = R @ S(-1) @ S(+1) @ H(-1)**hpower
+
+    d = geometry.degree
+    Lpad, Npad = (1,2*d)
+
+    ones = np.ones(Lmax)
+    make_op = lambda dsigma, sop: (1/2 * _make_operator(geometry, 0, ones, sop, m, Lmax, Nmax, alpha, sigma=sigma+dsigma, Lpad=Lpad, Npad=Npad)).astype(dtype)
+    Opp, Opm = make_op(+1, Lp), make_op(-1, Lm)
+
+    zop = jacobi.operator('Z', dtype=internal)(Lmax, *_vertical_jacobi_parameters(alpha))
+    make_op = lambda dell, sop: hpower/(So**2-Si**2) * _make_operator(geometry, dell, zop.diagonal(dell), sop, m, Lmax, Nmax, alpha, sigma=sigma, Lpad=Lpad, Npad=Npad).astype(dtype)
+    Opz = make_op(-1, Lzp) + make_op(+1, Lzm)
+
+    return sparse.hstack([Opp, Opm, Opz]).tocsr()
+
+
+def normal_dot(geometry, m, Lmax, Nmax, alpha, sigma=0, dtype='float64', internal='float128', recurrence_kwargs=None):
+    """
+    Dot a vector field by the non-unit-normalized surface normal vector, h[t] ( -2/So*(2*(1+t))**(1/2) * h'(t) * eta * e_{S} + e_{Z} )
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Geometry object instance to describe the stretched cylindrical domain
+    m : int
+        Azimuthal wavenumber
+    Lmax : int
+        Maximum vertical degree of input basis
+    Nmax : int
+        Maximum radial degree of input basis
+    alpha : float > -1
+        Input basis hierarchy parameter
+    dtype : data-type, optional
+        Desired data-type for the output
+    internal : data-type, optional
+        Internal data-type for compuatations
+
+    Returns
+    -------
+    Sparse matrix with s vector multiplication operator coefficients
+
+    """
+    if geometry.sphere_inner or geometry.sphere_outer:
+        raise ValueError('Not implemented')
+    ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
+    A, S, H = [ops(key) for key in ['A',('C',1),('C',0)]]
+    R = ops('rhoprime', weighted=False, which=0)
+    Si, So = geometry.radii
+
+    hpower = 1 if geometry.root_h else 2
+    L = lambda dsigma, dell: R @ S(-dsigma) @ H(-dell)**hpower
+    Lz = H(-1) @ H(+1)
+
+    d = geometry.degree
+    Lpad, Npad = (1,2*d)
+
+    zop = jacobi.operator('Z', dtype=internal)(Lmax, *_vertical_jacobi_parameters(alpha))
+    make_op = lambda dsigma, dell: (-hpower/(So**2-Si**2) * _make_operator(geometry, dell, zop.diagonal(dell), L(dsigma, dell), m, Lmax, Nmax, alpha, sigma=sigma+dsigma, Lpad=Lpad, Npad=Npad)).astype(dtype)
+    Opp = make_op(+1, -1) + make_op(+1, +1)
+    Opm = make_op(-1, -1) + make_op(-1, +1)
+
+    ones = np.ones(Lmax)
+    make_op = lambda sop: _make_operator(geometry, 0, ones, sop, m, Lmax, Nmax, alpha, sigma=sigma, Lpad=Lpad, Npad=Npad).astype(dtype)
+    Opz = make_op(Lz)
+
+    return sparse.hstack([Opp, Opm, Opz]).tocsr()
+
+
 def s_vector(geometry, m, Lmax, Nmax, alpha, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Multiply a scalar field by the non-unit-normalized cylindrical s vector
@@ -1102,6 +1209,7 @@ def boundary(geometry, m, Lmax, Nmax, alpha, sigma, surface, dtype='float64', in
 def _operator(name, geometry, m, Lmax, Nmax, alpha, dtype='float64', internal='float128', recurrence_kwargs=None, **kwargs):
     """Operator dispatch function with caching of results"""
     valid_names = ['gradient', 'divergence', 'curl', 'scalar_laplacian', 'vector_laplacian',
+                   'tangent_dot', 'normal_dot',
                    'normal_component', 's_vector', 'z_vector', 's_dot', 'z_dot',
                    'boundary', 'convert', 'project']
     if name not in valid_names:

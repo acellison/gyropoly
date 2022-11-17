@@ -479,8 +479,8 @@ def test_s_vector(geometry, m, Lmax, Nmax, alpha, operators):
     u =   1/np.sqrt(2) * (up + um)
     v = -1j/np.sqrt(2) * (up - um)
 
-    check_close(u, ugrid, 1.2e-13)
-    check_close(v, 0.0, 1.1e-13)
+    check_close(u, ugrid, 2e-13)
+    check_close(v, 0.0, 2e-13)
     check_close(w, 0.0, 0)
 
 
@@ -574,6 +574,84 @@ def test_z_dot(geometry, m, Lmax, Nmax, alpha, operators):
     zw = scalar_basis.expand(d)
 
     check_close(zw, zwgrid, 4.0e-13)
+
+
+def test_tangent_dot(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_tangent_dot...')
+    if geometry.sphere_inner or geometry.sphere_outer:
+        print('    Warning: skipping test_tangent_dot for sphere geometry')
+        return
+    op = operators('tangent_dot')
+
+    d = geometry.degree
+    dl, dn = 1, 2*d
+    ncoeff = sa.total_num_coeffs(geometry, Lmax, Nmax)
+
+    c = 2*np.random.rand(3*ncoeff) - 1
+    d = op @ c
+
+    t = np.linspace(-1,1,100)
+    eta = np.linspace(-1,1,101)
+    vector_basis = create_vector_basis(geometry, m, Lmax,    Nmax,    alpha, t, eta)
+    scalar_basis = create_scalar_basis(geometry, m, Lmax+dl, Nmax+dn, alpha, t, eta)
+    s, z = scalar_basis.s(), scalar_basis.z()
+
+    # Compute s*f in grid space
+    up, um, w = [vector_basis[key].expand(c[i*ncoeff:(i+1)*ncoeff]) for i,key in enumerate(['up','um','w'])]
+    u =   1/np.sqrt(2) * (up + um)
+
+    t, eta = t[np.newaxis,:], eta[:,np.newaxis]
+    h = geometry.height(t)
+    hprime = np.polyval(np.polyder(geometry.hcoeff), t)
+    if geometry.root_h:
+        hprime /= (2*h)
+        h = h**2
+    Si, So = geometry.radii
+    tugrid = s * h * ( u + 4/(So**2-Si**2) * s * hprime * eta * w )
+
+    # Compute s*f using the operator
+    tu = scalar_basis.expand(d)
+
+    check_close(tu, tugrid, 6e-13)
+
+
+def test_normal_dot(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_normal_dot...')
+    if geometry.sphere_inner or geometry.sphere_outer:
+        print('    Warning: skipping test_normal_dot for sphere geometry')
+        return
+    op = operators('normal_dot')
+
+    d = geometry.degree
+    dl, dn = 1, 2*d
+    ncoeff = sa.total_num_coeffs(geometry, Lmax, Nmax)
+
+    c = 2*np.random.rand(3*ncoeff) - 1
+    d = op @ c
+
+    t = np.linspace(-1,1,100)
+    eta = np.linspace(-1,1,101)
+    vector_basis = create_vector_basis(geometry, m, Lmax,    Nmax,    alpha, t, eta)
+    scalar_basis = create_scalar_basis(geometry, m, Lmax+dl, Nmax+dn, alpha, t, eta)
+    s, z = scalar_basis.s(), scalar_basis.z()
+
+    # Compute s*f in grid space
+    up, um, w = [vector_basis[key].expand(c[i*ncoeff:(i+1)*ncoeff]) for i,key in enumerate(['up','um','w'])]
+    u =   1/np.sqrt(2) * (up + um)
+
+    t, eta = t[np.newaxis,:], eta[:,np.newaxis]
+    h = geometry.height(t)
+    hprime = np.polyval(np.polyder(geometry.hcoeff), t)
+    if geometry.root_h:
+        hprime /= (2*h)
+        h = h**2
+    Si, So = geometry.radii
+    nugrid = h * ( -4/(So**2-Si**2) * s * hprime * eta * u + w )
+
+    # Compute s*f using the operator
+    nu = scalar_basis.expand(d)
+
+    check_close(nu, nugrid, 6e-13)
 
 
 def test_convert(geometry, m, Lmax, Nmax, alpha, operators):
@@ -726,7 +804,7 @@ def test_convert_beta(geometry, m, Lmax, Nmax, alpha, operators):
     f = (1+eta) * (1-t**2) * ht * basis0.expand(c)
     g = basis1.expand(d)
 
-    check_close(f, g, 1e-13)
+    check_close(f, g, 2e-13)
 
     # Boundary evaluation of the conversion adjoint is identically zero
     Bops = sa.operators(geometry, m=m, Lmax=Lmax+dl, Nmax=Nmax+dn, alpha=alpha)
@@ -778,6 +856,7 @@ def main():
             test_gradient, test_divergence, test_curl, test_laplacian,
             test_convert, test_convert_adjoint, test_convert_beta,
             test_normal_component,
+            test_tangent_dot, test_normal_dot,
             test_s_vector, test_z_vector,
             test_s_dot, test_z_dot,
             test_boundary,
