@@ -342,12 +342,8 @@ def _differential_operator(geometry, delta, m, Lmax, Nmax, alpha, sigma, dtype='
         raise ValueError(f'alpha (= {alpha}) must be larger than -1')
     if delta not in [-1,0,+1]:
         raise ValueError(f'Spin weight increment delta (= {delta}) must be one of {-1,0,+1}')
-    if sigma not in [-1,0,+1]:
-        raise ValueError(f'Spin weight sigma (= {sigma}) must be one of {-1,0,+1}')
-    if delta == +1 and sigma == +1:
-        raise ValueError('Cannot raise sigma = +1')
-    if delta == -1 and sigma == -1:
-        raise ValueError('Cannot lower sigma = -1')
+    if int(sigma) != sigma:
+        raise ValueError('Spin weight must be an integer')
 
     # Construct the fundamental Augmented Jacobi operators
     ops = _ajacobi_operators(geometry, dtype=internal, recurrence_kwargs=recurrence_kwargs)
@@ -611,21 +607,22 @@ def tangential_stress(geometry, m, Lmax, Nmax, alpha, direction, dtype='float64'
     Dm = grad(-1)
     D0 = grad( 0)
 
-    tangent = {'s': tangent_dot, 'phi': phi_dot}[direction]
+    d = geometry.degree
+    tangent, dL, dN = {'s': (tangent_dot, 1, 2*d), 'phi': (phi_dot, 0, 1)}[direction]
 
     # Normal derivative of the tangential part of the velocity
-    ndotp = normal_dot(geometry, m, Lmax, Nmax, alpha+1, sigma=+1, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
-    ndotm = normal_dot(geometry, m, Lmax, Nmax, alpha+1, sigma=-1, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
-    ndot0 = normal_dot(geometry, m, Lmax, Nmax, alpha+1, sigma=0,  dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
-    tdot =     tangent(geometry, m, Lmax, Nmax, alpha+1, sigma=0,  direction=direction, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    ndotp = normal_dot(geometry, m, Lmax,   Nmax,     alpha+1, sigma=+1, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    ndotm = normal_dot(geometry, m, Lmax,   Nmax,     alpha+1, sigma=-1, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    ndot0 = normal_dot(geometry, m, Lmax,   Nmax,     alpha+1, sigma=0,  dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    tdot =     tangent(geometry, m, Lmax+1, Nmax+2*d, alpha+1, sigma=0,  dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
     nD = sparse.block_diag([ndotp @ Dp, ndotm @ Dm, ndot0 @ D0])
     tnD = tdot @ nD
 
     # Tangential derivative of the normal part of the velocity
-    tdotp =     tangent(geometry, m, Lmax, Nmax, alpha+1, sigma=+1, direction=direction, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
-    tdotm =     tangent(geometry, m, Lmax, Nmax, alpha+1, sigma=-1, direction=direction, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
-    tdot0 =     tangent(geometry, m, Lmax, Nmax, alpha+1, sigma=0,  direction=direction, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
-    ndot  =  normal_dot(geometry, m, Lmax, Nmax, alpha+1, sigma=0,  dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    tdotp =     tangent(geometry, m, Lmax,    Nmax,    alpha+1, sigma=+1, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    tdotm =     tangent(geometry, m, Lmax,    Nmax,    alpha+1, sigma=-1, dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    tdot0 =     tangent(geometry, m, Lmax,    Nmax,    alpha+1, sigma=0,  dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
+    ndot  =  normal_dot(geometry, m, Lmax+dL, Nmax+dN, alpha+1, sigma=0,  dtype=internal, internal=internal, recurrence_kwargs=recurrence_kwargs)
     tD = sparse.block_diag([tdotp @ Dp, tdotm @ Dm, tdot0 @ D0])
     ntD = ndot @ tD
 
@@ -634,7 +631,7 @@ def tangential_stress(geometry, m, Lmax, Nmax, alpha, direction, dtype='float64'
     return S.astype(dtype).tocsr()
 
 
-def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
+def normal_component(geometry, m, Lmax, Nmax, alpha, surface, exact=True, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Construct the normal dot operator acting on a vector field.  For the basis functions to behave
     properly this multiplies by the non-normalized normal component at the specified surface.
@@ -843,7 +840,7 @@ def normal_dot(geometry, m, Lmax, Nmax, alpha, sigma=0, dtype='float64', interna
     return sparse.hstack([Opp, Opm, Opz]).tocsr()
 
 
-def s_dot(geometry, m, Lmax, Nmax, alpha, sigma=0, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
+def s_dot(geometry, m, Lmax, Nmax, alpha, sigma=0, exact=True, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Dot a vector field with the non-unit-normalized cylindrical s vector
 
@@ -882,7 +879,7 @@ def s_dot(geometry, m, Lmax, Nmax, alpha, sigma=0, exact=False, dtype='float64',
     return sparse.hstack([make_op(L, dsigma) for L, dsigma in [(Lp,+1),(Lm,-1),(Lz,0)]]).tocsr()
 
 
-def phi_dot(geometry, m, Lmax, Nmax, alpha, sigma=0, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
+def phi_dot(geometry, m, Lmax, Nmax, alpha, sigma=0, exact=True, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Dot a vector field with the non-unit-normalized cylindrical -i*s*e_{\Phi} vector
 
@@ -921,7 +918,7 @@ def phi_dot(geometry, m, Lmax, Nmax, alpha, sigma=0, exact=False, dtype='float64
     return sparse.hstack([make_op(L, dsigma) for L, dsigma in [(Lp,+1),(Lm,-1),(Lz,0)]]).tocsr()
 
 
-def z_dot(geometry, m, Lmax, Nmax, alpha, sigma=0, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
+def z_dot(geometry, m, Lmax, Nmax, alpha, sigma=0, exact=True, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Dot a vector field with the non-unit-normalized axial z vector
 
@@ -956,7 +953,7 @@ def z_dot(geometry, m, Lmax, Nmax, alpha, sigma=0, exact=False, dtype='float64',
     return sparse.hstack([zvec[i*n:(i+1)*n,:] for i in range(3)]).tocsr()
 
 
-def s_vector(geometry, m, Lmax, Nmax, alpha, sigma=0, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
+def s_vector(geometry, m, Lmax, Nmax, alpha, sigma=0, exact=True, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Multiply a scalar field by the non-unit-normalized cylindrical s vector
 
@@ -995,7 +992,7 @@ def s_vector(geometry, m, Lmax, Nmax, alpha, sigma=0, exact=False, dtype='float6
     return sparse.vstack([make_op(L) for L in [Lp,Lm,Lz]]).tocsr()
 
 
-def z_vector(geometry, m, Lmax, Nmax, alpha, sigma=0, exact=False, dtype='float64', internal='float128', recurrence_kwargs=None):
+def z_vector(geometry, m, Lmax, Nmax, alpha, sigma=0, exact=True, dtype='float64', internal='float128', recurrence_kwargs=None):
     """
     Multiply a scalar field by the non-unit-normalized axial z vector
 

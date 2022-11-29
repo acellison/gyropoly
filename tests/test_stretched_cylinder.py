@@ -624,6 +624,136 @@ def test_normal_dot(geometry, m, Lmax, Nmax, alpha, operators):
     check_close(nu, nugrid, 6e-13)
 
 
+def test_tangential_stress_s(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_tangential_stress_s...')
+    op = sc.tangential_stress(geometry, m, Lmax, Nmax, alpha, direction='s')
+
+    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
+    degree = geometry.degree
+
+    # Apply the operator in coefficient space
+    c = 2*np.random.rand(3*ncoeff) - 1
+    d = op @ c
+
+    # Create output basis
+    t = np.linspace(-1,1,100)
+    eta = np.linspace(-1,1,101)
+    scalar_basis = create_scalar_basis(geometry, m, Lmax+2, Nmax+4*degree, alpha+1, t, eta)
+
+    # Expand the coefficient-space operator into grid space
+    S = scalar_basis.expand(d)
+
+    # Expand the input vector in grid space
+    vector_basis = create_vector_basis(geometry, m, Lmax, Nmax, alpha, t, eta)
+    up, um, w = [vector_basis[key].expand(c[i*ncoeff:(i+1)*ncoeff]) for i,key in enumerate(['up','um','w'])]
+    u = 1/np.sqrt(2) * (up + um)
+
+    # Gradient operator acting on spin-0 fields
+    D = sc.gradient(geometry, m, Lmax+1, Nmax+2*degree, alpha)
+
+    # N.Grad(T.u)
+    T = sc.tangent_dot(geometry, m, Lmax, Nmax, alpha)
+    N = sc.normal_dot(geometry, m, Lmax+1, Nmax+2*degree, alpha+1)
+    NDT = sparse.hstack([N @ D @ T[:,i*ncoeff:(i+1)*ncoeff] for i in range(3)])
+
+    # T.Grad(N.u)
+    N = sc.normal_dot(geometry, m, Lmax, Nmax, alpha)
+    T = sc.tangent_dot(geometry, m, Lmax+1, Nmax+2*degree, alpha+1)
+    TDN = sparse.hstack([T @ D @ N[:,i*ncoeff:(i+1)*ncoeff] for i in range(3)])
+
+    # 1/2 * (N.Grad(T.u) + T.Grad(N.u))
+    S1 = 1/2 * (NDT + TDN) @ c
+    S1grid = scalar_basis.expand(S1)
+
+    # Compute derivatives of the height function
+    t, s, eta = t[np.newaxis,:], scalar_basis.s()[np.newaxis,:], eta[:,np.newaxis]
+    h, hp, hpp = [np.polyval(np.polyder(geometry.hcoeff, m), t) for m in [0,1,2]]
+
+    So = geometry.radius
+
+    rs, rh, hh = (1/2, np.sqrt(h), 1) if geometry.root_h else (1, h, h)
+
+    # Grad(T).N
+    DTNs = -rs*4/So**4*s*eta*rh*hp * (So**2*h + 4*s**2*hp)
+    if geometry.cylinder_type == 'half':
+        DTNz =    8/So**6*s**2*h*hp * (So**4 -    4*eta**2*h*(So**2*hp + 2*s**2*hpp) + 8*s**2*eta*hp**2)
+    else:
+        DTNz = rs*4/So**6*s**2*h*hp * (So**4 - rs*8*eta**2*hh*(So**2*hp + 2*s**2*hpp))
+
+    # Grad(N).T points in the S direction
+    if geometry.cylinder_type == 'half':
+        NDTs = -   4/So**4*s*eta*h  * (   8*(s*hp)**2 + h*(So**2*hp + 4*s**2*hpp)) + 16/So**4*s*h*(s*hp)**2
+    else:
+        NDTs = -rs*4/So**4*s*eta*rh * (rs*4*(s*hp)**2 + h*(So**2*hp + 4*s**2*hpp))
+    NDTz = 4/So**2*s**2*h*hp
+
+    # Remove the derivatives of the tangent and normal vectors via the product rule
+    Sgrid = S1grid - 1/2 * ((DTNs + NDTs)*u + (DTNz + NDTz)*w)
+
+    check_close(S, Sgrid, 1e-10)
+
+
+def test_tangential_stress_phi(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_tangential_stress_phi...')
+    op = sc.tangential_stress(geometry, m, Lmax, Nmax, alpha, direction='phi')
+
+    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
+    degree = geometry.degree
+
+    # Apply the operator in coefficient space
+    c = 2*np.random.rand(3*ncoeff) - 1
+    d = op @ c
+
+    # Create output basis
+    t = np.linspace(-1,1,100)
+    eta = np.linspace(-1,1,101)
+    scalar_basis = create_scalar_basis(geometry, m, Lmax+1, Nmax+2*degree+1, alpha+1, t, eta)
+
+    # Expand the coefficient-space operator into grid space
+    S = scalar_basis.expand(d)
+
+    # Expand the input vector in grid space
+    vector_basis = create_vector_basis(geometry, m, Lmax, Nmax, alpha, t, eta)
+    up, um, w = [vector_basis[key].expand(c[i*ncoeff:(i+1)*ncoeff]) for i,key in enumerate(['up','um','w'])]
+    v = -1j/np.sqrt(2) * (up - um)
+
+    # N.Grad(T.u)
+    T = sc.phi_dot(geometry, m, Lmax, Nmax, alpha)
+    D = sc.gradient(geometry, m, Lmax, Nmax+1, alpha)
+    N = sc.normal_dot(geometry, m, Lmax, Nmax+1, alpha+1)
+    NDT = sparse.hstack([N @ D @ T[:,i*ncoeff:(i+1)*ncoeff] for i in range(3)])
+
+    # T.Grad(N.u)
+    N = sc.normal_dot(geometry, m, Lmax, Nmax, alpha)
+    D = sc.gradient(geometry, m, Lmax+1, Nmax+2*degree, alpha)
+    T = sc.phi_dot(geometry, m, Lmax+1, Nmax+2*degree, alpha+1)
+    TDN = sparse.hstack([T @ D @ N[:,i*ncoeff:(i+1)*ncoeff] for i in range(3)])
+
+    # 1/2 * (N.Grad(T.u) + T.Grad(N.u))
+    S1 = 1/2 * (NDT + TDN) @ c
+    S1grid = scalar_basis.expand(S1)
+
+    # Compute derivatives of the height function
+    t, s, eta = t[np.newaxis,:], scalar_basis.s()[np.newaxis,:], eta[:,np.newaxis]
+    h, hp = [np.polyval(np.polyder(geometry.hcoeff, m), t) for m in [0,1]]
+
+    So = geometry.radius
+    rs, rh = (1/2, np.sqrt(h)) if geometry.root_h else (1, h)
+
+    # Remove the derivatives of the tangent and normal vectors via the product rule
+    Sgrid = S1grid + 1j*rs*4/So**2*s*eta*rh*hp * v
+
+    check_close(S, Sgrid, 1e-10)
+
+
+def test_tangential_stress(geometry, m, Lmax, Nmax, alpha, operators):
+    if geometry.sphere:
+        print('    Warning: skipping test_tangential_stress for sphere geometry')
+        return
+    test_tangential_stress_s(geometry, m, Lmax, Nmax, alpha, operators)
+    test_tangential_stress_phi(geometry, m, Lmax, Nmax, alpha, operators)
+
+
 def test_convert(geometry, m, Lmax, Nmax, alpha, operators):
     print('  test_convert...')
     op1 = operators('convert', sigma=0)
@@ -681,6 +811,59 @@ def test_convert_adjoint(geometry, m, Lmax, Nmax, alpha, operators):
 
     B = Bops('boundary', sigma=0, surface=geometry.bottom)
     check_close(B @ op, 0, 1e-14)
+
+
+def test_convert_beta(geometry, m, Lmax, Nmax, alpha, operators):
+    print('  test_convert_beta...')
+    if geometry.root_h:
+        print('    Warning: skipping test_convert_beta for root height geometry')
+        return
+    if geometry.sphere:
+        print('    Warning: skipping test_convert_beta for sphere geometry')
+        return
+    op = sc.convert_beta(geometry, m, Lmax, Nmax, alpha, sigma=0, beta=1, adjoint=True)
+
+    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
+    c = 2*np.random.rand(ncoeff) - 1
+    d = op @ c
+
+    t = np.linspace(-1,1,100)
+    eta = np.linspace(-1,1,101)
+    dl, dn = 1, 1 + geometry.degree
+    basis0 = create_scalar_basis(geometry, m, Lmax,    Nmax,    alpha, t, eta, beta=1)
+    basis1 = create_scalar_basis(geometry, m, Lmax+dl, Nmax+dn, alpha, t, eta, beta=0)
+
+    t, eta = t[np.newaxis,:], eta[:,np.newaxis]
+    ht = np.polyval(geometry.hcoeff, t)
+    f = (1+eta) * (1-t) * ht * basis0.expand(c)
+    g = basis1.expand(d)
+
+    check_close(f, g, 2e-13)
+
+    # Boundary evaluation of the conversion adjoint is identically zero
+    Bops = sc.operators(geometry, m=m, Lmax=Lmax+dl, Nmax=Nmax+dn, alpha=alpha)
+
+    B = Bops('boundary', sigma=0, surface=geometry.side)
+    check_close(B @ op, 0, 2e-14)
+
+    B = Bops('boundary', sigma=0, surface=geometry.bottom)
+    check_close(B @ op, 0, 2e-14)
+
+
+    # Test beta=0 -> beta=1 conversion
+    op = sc.convert_beta(geometry, m, Lmax, Nmax, alpha, sigma=0, beta=0, adjoint=False)
+    c = 2*np.random.rand(ncoeff) - 1
+    d = op @ c
+
+    t = np.linspace(-1,1,100)
+    eta = np.linspace(-1,1,101)
+    basis0 = create_scalar_basis(geometry, m, Lmax, Nmax, alpha, t, eta, beta=0)
+    basis1 = create_scalar_basis(geometry, m, Lmax, Nmax, alpha, t, eta, beta=1)
+
+    f = basis0.expand(c)
+    g = basis1.expand(d)
+
+    check_close(f, g, 4e-13)
 
 
 def rank_deficiency(mat):
@@ -781,11 +964,11 @@ def test_boundary(geometry, m, Lmax, Nmax, alpha, operators):
 def test_project(geometry, m, Lmax, Nmax, alpha, operators):
     print('  test_project...')
     if geometry.sphere:
-        print('  Warning: skipping project test for sphere geometry')
+        print('    Warning: skipping project test for sphere geometry')
         return
 
     if geometry.degree > 1:
-        print('  Warning: skipping project test for h polynomial with degree > 1')
+        print('    Warning: skipping project test for h polynomial with degree > 1')
         return
 
     def project(direction, shift, Lstop=0): 
@@ -803,63 +986,124 @@ def test_project(geometry, m, Lmax, Nmax, alpha, operators):
     check_close(n, target, 0)
 
 
-def test_convert_beta(geometry, m, Lmax, Nmax, alpha, operators):
-    print('  test_convert_beta...')
+def remove_linearly_dependent_rows(A, threshold=1e-10):
+    Q, R, P = sp.linalg.qr(A.T, mode='economic', pivoting=True)
+    Rrowsum = np.sum(np.abs(R), axis=1)
+    indices = sorted(P[np.where(Rrowsum >= threshold*Rrowsum[0])[0]])
+    return A[indices,:]
+
+
+def stress_free_boundary(domain, geometry, m, Lmax, Nmax, alpha, truncate=True, dtype='float64', internal='float128'):
+    d = geometry.degree
+    ncoeff = domain.total_num_coeffs(geometry, Lmax, Nmax)
+    Nout = Nmax if truncate else Nmax+1
+
+    boundary = lambda L, N, a: domain.boundary(geometry, m, Lmax=L, Nmax=N, alpha=a, sigma=0, surface='z=h', dtype=internal, internal=internal)
+    def operator(f, **kwargs):
+        return f(geometry, m, Lmax, Nmax, alpha, dtype=internal, internal=internal, **kwargs)
+
+    # Compute the normal and stress tensor components of the velocity
+    normal     = operator(domain.normal_dot)                          # (alpha,L,N) -> (alpha,  L+1, N+2*d)
+    stress_s   = operator(domain.tangential_stress, direction='s')    # (alpha,L,N) -> (alpha+1,L+2, N+4*d)
+    stress_phi = operator(domain.tangential_stress, direction='phi')  # (alpha,L,N) -> (alpha+1,L+1, N+2*d+1)
+
+    # Evaluate the normal component of the velocity on the boundary
+    B = boundary(Lmax+1, Nmax+2*d, alpha)
+    normal = sparse.hstack([B @ normal[:,i*ncoeff:(i+1)*ncoeff] for i in range(3)]).tocsr()
+    normal = normal[:Nout,:]
+
+    # Evaluate the s-normal component of the stress on the boundary
+    B = boundary(Lmax+2, Nmax+4*d, alpha+1)
+    stress_s = sparse.hstack([B @ stress_s[:,i*ncoeff:(i+1)*ncoeff] for i in range(3)]).tocsr()
+    stress_s = stress_s[:Nout,:]
+
+    # Evaluate the phi-normal component of the stress on the boundary
+    B = boundary(Lmax+1, Nmax+2*d+1, alpha+1)
+    stress_phi = sparse.hstack([B @ stress_phi[:,i*ncoeff:(i+1)*ncoeff] for i in range(3)]).tocsr()
+    stress_phi = stress_phi[:Nmax,:]
+
+    return sparse.vstack([normal, stress_s, stress_phi]).astype(dtype).tocsr()
+
+
+def test_stress_free_boundary(geometry, m, Lmax, Nmax, alpha, operators):
+    domain = sc
+
+    combined_full  = stress_free_boundary(domain, geometry, m, Lmax, Nmax, alpha, truncate=False).todense()
+    combined_trunc = stress_free_boundary(domain, geometry, m, Lmax, Nmax, alpha, truncate=True).todense()
+    combined_full_pruned = remove_linearly_dependent_rows(combined_full)
+
+    def test_nullspace(op, title):
+        nullspace = sp.linalg.null_space(op)
+
+        boundary_rows, num_coeffs = np.shape(op)
+        dim = np.shape(nullspace)[1]
+        deficit = rank_deficiency(op)
+        boundary_deficiency = dim - (num_coeffs-boundary_rows)
+
+        print(title)
+        print(f'  Boundary rows: {boundary_rows}')
+        print(f'  Nullspace dimension: {dim}')
+        print(f'  Rank deficiency: {deficit}')
+        print(f'  Boundary deficiency: {boundary_deficiency}')
+        return nullspace
+
+    nullspace_full   = test_nullspace(combined_full, 'full operator')
+    nullspace_pruned = test_nullspace(combined_full_pruned, 'full operator pruned')
+    nullspace_trunc  = test_nullspace(combined_trunc, 'combined, pre-truncated operator')
+
+    t, eta = np.linspace(-1,1,100), np.array([1.])
+    h = geometry.height(t)
+    hprime = np.polyval(np.polyder(geometry.hcoeff), t)
     if geometry.root_h:
-        print('  Warning: skipping convert beta test for root height geometry')
-        return
-    if geometry.sphere:
-        print('  Warning: skipping convert beta test for sphere-type geometry')
-        return
-    op = sc.convert_beta(geometry, m, Lmax, Nmax, alpha, sigma=0, beta=1, adjoint=True)
+        hprime /= (2*h)
+        h = h**2
 
-    ncoeff = sc.total_num_coeffs(geometry, Lmax, Nmax)
-    c = 2*np.random.rand(ncoeff) - 1
-    d = op @ c
+    ncoeff = domain.total_num_coeffs(geometry, Lmax, Nmax)
 
-    t = np.linspace(-1,1,100)
-    eta = np.linspace(-1,1,101)
-    dl, dn = 1, 1 + geometry.degree
-    basis0 = create_scalar_basis(geometry, m, Lmax,    Nmax,    alpha, t, eta, beta=1)
-    basis1 = create_scalar_basis(geometry, m, Lmax+dl, Nmax+dn, alpha, t, eta, beta=0)
+    # Create the vector basis
+    vector_basis = create_vector_basis(geometry, m, Lmax, Nmax, alpha, t, eta)
 
-    t, eta = t[np.newaxis,:], eta[:,np.newaxis]
-    ht = np.polyval(geometry.hcoeff, t)
-    f = (1+eta) * (1-t) * ht * basis0.expand(c)
-    g = basis1.expand(d)
+    # Create the scalar basis for the stress tensor contractions
+    d = geometry.degree
+    scalar_basis_sf_s   = create_scalar_basis(geometry, m, Lmax+2, Nmax+4*d,   alpha+1, t, eta)
+    scalar_basis_sf_phi = create_scalar_basis(geometry, m, Lmax+1, Nmax+2*d+1, alpha+1, t, eta)
 
-    check_close(f, g, 2e-13)
+    # Compute the tangential stress operators
+    SFs   = domain.tangential_stress(geometry, m, Lmax, Nmax, alpha, direction='s')
+    SFphi = domain.tangential_stress(geometry, m, Lmax, Nmax, alpha, direction='phi')
 
-    # Boundary evaluation of the conversion adjoint is identically zero
-    Bops = sc.operators(geometry, m=m, Lmax=Lmax+dl, Nmax=Nmax+dn, alpha=alpha)
+    nullspace = nullspace_full
+    dim = np.shape(nullspace)[1]
+    normal_errors, stress_s_errors, stress_phi_errors = np.zeros(dim), np.zeros(dim), np.zeros(dim)
+    for i in range(dim):
+        # Get the vector in the nullspace
+        c = nullspace[:,i]
 
-    B = Bops('boundary', sigma=0, surface=geometry.side)
-    check_close(B @ op, 0, 2e-14)
+        # Compute it in grid spice
+        up, um, w = [vector_basis[key].expand(c[i*ncoeff:(i+1)*ncoeff]) for i,key in enumerate(['up','um','w'])]
+        u =   1/np.sqrt(2) * (up + um)
+        v = -1j/np.sqrt(2) * (up - um)
 
-    B = Bops('boundary', sigma=0, surface=geometry.bottom)
-    check_close(B @ op, 0, 2e-14)
+        normal = h * ( -2*np.sqrt(2)/geometry.radius * np.sqrt(1+t) * hprime * eta * u + w )
+        normal_errors[i] = np.max(abs(normal))
 
+        stress_s   = scalar_basis_sf_s.expand(SFs @ c)
+        stress_phi = scalar_basis_sf_phi.expand(SFphi @ c)
 
-    # Test beta=0 -> beta=1 conversion
-    op = sc.convert_beta(geometry, m, Lmax, Nmax, alpha, sigma=0, beta=0, adjoint=False)
-    c = 2*np.random.rand(ncoeff) - 1
-    d = op @ c
+        stress_s_errors[i] = np.max(abs(stress_s))
+        stress_phi_errors[i] = np.max(abs(stress_phi))
 
-    t = np.linspace(-1,1,100)
-    eta = np.linspace(-1,1,101)
-    basis0 = create_scalar_basis(geometry, m, Lmax, Nmax, alpha, t, eta, beta=0)
-    basis1 = create_scalar_basis(geometry, m, Lmax, Nmax, alpha, t, eta, beta=1)
-
-    f = basis0.expand(c)
-    g = basis1.expand(d)
-
-    check_close(f, g, 4e-13)
+    print(np.max(abs(normal_errors)))
+    print(np.max(abs(stress_s_errors)))
+    print(np.max(abs(stress_phi_errors)))
+    exit()
 
 
 def main():
     Omega = 1.
     h = [Omega/(2+Omega), 1.]
     m, Lmax, Nmax = 3, 4, 10
+#    m, Lmax, Nmax = 3, 20, 30
 #    h = [1/3, 1/2, 1/3, 1/2]
 #    m, Lmax, Nmax = 3, 4, 12
     alpha = 1.
@@ -870,6 +1114,7 @@ def main():
             test_normal_component,
             test_tangent_dot, test_normal_dot,
             test_s_dot, test_phi_dot, test_z_dot,
+            test_tangential_stress,
             test_s_vector, test_z_vector,
             test_boundary, test_project
             ]
