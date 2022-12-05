@@ -227,7 +227,6 @@ def test_scalar_laplacian(geometry, m, Lmax, Nmax, alpha, operators):
     check_close(Op, L, 1e-12)
 
 
-
 def test_vector_laplacian(geometry, m, Lmax, Nmax, alpha, operators):
     print('  test_vector_laplacian')
     Op = operators('vector_laplacian')
@@ -669,9 +668,8 @@ def test_tangential_stress_s(geometry, m, Lmax, Nmax, alpha, operators):
     t, s, eta = t[np.newaxis,:], scalar_basis.s()[np.newaxis,:], eta[:,np.newaxis]
     h, hp, hpp = [np.polyval(np.polyder(geometry.hcoeff, m), t) for m in [0,1,2]]
 
-    So = geometry.radius
-
     rs, rh, hh = (1/2, np.sqrt(h), 1) if geometry.root_h else (1, h, h)
+    So = geometry.radius
 
     # Grad(T).N
     DTNs = -rs*4/So**4*s*eta*rh*hp * (So**2*h + 4*s**2*hp)
@@ -737,8 +735,8 @@ def test_tangential_stress_phi(geometry, m, Lmax, Nmax, alpha, operators):
     t, s, eta = t[np.newaxis,:], scalar_basis.s()[np.newaxis,:], eta[:,np.newaxis]
     h, hp = [np.polyval(np.polyder(geometry.hcoeff, m), t) for m in [0,1]]
 
-    So = geometry.radius
     rs, rh = (1/2, np.sqrt(h)) if geometry.root_h else (1, h)
+    So = geometry.radius
 
     # Remove the derivatives of the tangent and normal vectors via the product rule
     Sgrid = S1grid + 1j*rs*4/So**2*s*eta*rh*hp * v

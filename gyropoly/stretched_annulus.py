@@ -595,11 +595,11 @@ def tangential_stress(geometry, m, Lmax, Nmax, alpha, direction='s', dtype='floa
     dtype : data-type, optional
         Desired data-type for the output
     internal : data-type, optional
-        Internal data-type for compuatations
+        Internal data-type for computations
 
     Returns
     -------
-    Sparse matrix with Laplacian operator coefficients
+    Sparse matrix with stress projection operator coefficients
 
     """
     # Compute the gradient operator of each velocity component
