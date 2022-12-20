@@ -67,7 +67,7 @@ class AnnulusGeometry(GeometryBase):
                          root_h=root_h, sphere_inner=sphere_inner, sphere_outer=sphere_outer)
 
     def __repr__(self):
-        radius = f'-radii={float(self.radii[0])}_{float(self.radii[1])}'
+        radius = f'-radii={float(self.radii[0]):.2f}_{float(self.radii[1]):.2f}'
         root_h = f'-root_h={self.root_h}'
         sphere_inner = f'-sphere_inner={self.sphere_inner}'
         sphere_outer = f'-sphere_outer={self.sphere_outer}'
@@ -1444,11 +1444,13 @@ def plotfield(s, z, f, fig, ax, colorbar=True, title=None, cmap='RdBu_r'):
     lw, eps = 0.8, .012
     ax.plot(s, z[ 0,:]*(1+eps), 'k', linewidth=lw)
     ax.plot(s, z[-1,:]*(1+eps), 'k', linewidth=lw)
+    ax.plot([(1-eps)*s[0], (1-eps)*s[0]], [(1+eps)*z[0,0], (1+eps)*z[-1,0]],  'k', linewidth=lw)
+    ax.plot([s[-1],s[-1]],[(1+eps)*z[0,-1],(1+eps)*z[-1,-1]], 'k', linewidth=lw)
 
     im = ax.pcolormesh(s, z, f, shading='gouraud', cmap=cmap)
     ax.set_aspect('equal')
-    ax.set_xlabel('s')
-    ax.set_ylabel('z')
+    ax.set_xlabel('$s$')
+    ax.set_ylabel('$z$')
     if colorbar:
         fig.colorbar(im, ax=ax)
     if title is not None:

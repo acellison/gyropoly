@@ -72,7 +72,7 @@ class CylinderGeometry(GeometryBase):
         return 's=S'
 
     def __repr__(self):
-        radius = f'-radius={float(self.radius)}'
+        radius = f'-radius={float(self.radius):.2f}'
         root_h = f'-root_h={self.root_h}'
         sphere = f'-sphere={self.sphere}'
         return f'cylinder-cylinder_type={self.cylinder_type}{radius}{root_h}{sphere}'
@@ -1454,8 +1454,8 @@ def plotfield(s, z, f, fig, ax, colorbar=True, title=None, cmap='RdBu_r'):
 
     im = ax.pcolormesh(s, z, f, shading='gouraud', cmap=cmap)
     ax.set_aspect('equal')
-    ax.set_xlabel('s')
-    ax.set_ylabel('z')
+    ax.set_xlabel('$s$')
+    ax.set_ylabel('$z$')
     if colorbar:
         fig.colorbar(im, ax=ax)
     if title is not None:
