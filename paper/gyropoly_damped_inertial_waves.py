@@ -270,7 +270,7 @@ def solve_eigenproblem(domain, geometry, m, Lmax, Nmax, boundary_condition, omeg
     return esolve_data
 
 
-def expand_evector(evector, bases, names='all', verbose=True): 
+def expand_evector(evector, bases, names='all', verbose=True, eq=False):
     lengths = [bases[key].num_coeffs for key in ['up', 'um', 'w', 'p']]
     offsets = np.append(0, np.cumsum(lengths))
 
@@ -278,7 +278,10 @@ def expand_evector(evector, bases, names='all', verbose=True):
     tau = evector[offsets[4]:]
     print(f'  Tau norm: {np.linalg.norm(tau)}')
 
-    larger = lambda f: f.real if np.max(abs(f.real)) >= np.max(abs(f.imag)) else f.imag
+    if eq:
+        larger = lambda f: f
+    else:
+        larger = lambda f: f.real if np.max(abs(f.real)) >= np.max(abs(f.imag)) else f.imag
 
     u, v, w, p = (None,)*4
     if names == 'all' or 'u' in names or 'v' in names:
@@ -305,7 +308,7 @@ def expand_evector(evector, bases, names='all', verbose=True):
     return fields
 
 
-def plot_spectrum_callback(domain, index, evalues, evectors, bases):
+def plot_spectrum_callback(domain, index, evalues, evectors, bases, bases_eq=None):
     fieldnames = ['p','u','v','w']
     fields = expand_evector(evectors[:,index], bases, names=fieldnames)
 
@@ -321,6 +324,19 @@ def plot_spectrum_callback(domain, index, evalues, evectors, bases):
         domain.plotfield(s, z, fields[fieldname], fig, plot_axes[i], colorbar=False)
     fig.set_tight_layout(True)
     fig.show()
+
+    if bases_eq is not None:
+        phi = np.linspace(-np.pi,np.pi,512)[:,np.newaxis]
+        s = bases_eq['p'].s().ravel()[np.newaxis,:]
+        x, y = s*np.cos(phi), s*np.sin(phi)
+        mode = np.exp(1j*bases['p'].m*phi)
+        fields = expand_evector(evectors[:,index], bases_eq, names=fieldnames, eq=True)
+
+        fig_eq, plot_axes_eq = plt.subplots(1,nplots,figsize=plt.figaspect(scale*zmax/smax/nplots))
+        for i, fieldname in enumerate(fieldnames):
+            im = plot_axes_eq[i].pcolormesh(x, y, (mode*fields[fieldname]).real, cmap='RdBu_r')
+        fig_eq.show()
+
     return fig, plot_axes
 
 
@@ -348,9 +364,10 @@ def plot_solution(data, plot_fields=True):
         t = np.linspace(-1,1,400)
         eta = np.linspace(-1.,1.,301)
         bases = create_bases(domain, geometry, m, Lmax, Nmax, alpha, t, eta, boundary_condition)
+        bases_eq = create_bases(domain, geometry, m, Lmax, Nmax, alpha, t, np.array([1.0]), boundary_condition)
 
         def onpick(index):
-            return plot_spectrum_callback(domain, index, evalues, evectors, bases)
+            return plot_spectrum_callback(domain, index, evalues, evectors, bases, bases_eq)
     else:
         onpick = None
 
@@ -454,8 +471,7 @@ def track_critical_eigenvalue_radius(sphere):
     else:
         cylinder_type = 'half'
         rpm = 45
-#    radius_ratios = np.arange(0,1.0,.05)
-    radius_ratios = np.arange(0,0.8,.05)
+    radius_ratios = np.arange(0,.8,.05)
     if False:
         # Would be beautiful to fill in 0.1s all the way!
         radius_ratios = np.append(radius_ratios, [.56,.57,.58,.59,.61,.62,.63,.64])
@@ -467,13 +483,14 @@ def track_critical_eigenvalue_radius(sphere):
     eta = np.linspace(-1.,1.,301)
 
     plot_radii = [0,.25,0.5,0.75]
-    fieldnames = ['p']
-    nplots = len(plot_radii*len(fieldnames))
+    fieldname = 'p'
+    nplots = len(plot_radii)
     if sphere:
         zmax, smax = 1.1, 1
     else:
         zmax, smax = 0.8, 1
     fig, plot_axes = plt.subplots(1,nplots,figsize=plt.figaspect(zmax/smax/nplots))
+    fig_eq, plot_axes_eq = plt.subplots(1,nplots,figsize=plt.figaspect(1/nplots))
     if nplots == 1:
         plot_axes = [plot_axes]
     plot_indices = [np.argmin(np.abs(radius_ratios - rad)) for rad in plot_radii]
@@ -511,45 +528,74 @@ def track_critical_eigenvalue_radius(sphere):
         domain = sc if radius_ratio == 0 else sa
         bases = create_bases(domain, data['geometry'], data['m'], data['Lmax'], data['Nmax'], data['alpha'], t, eta, boundary_condition)
         evectors = data['evectors']
-        fields = expand_evector(evectors[:,index], bases, names=fieldnames)
+        fields = expand_evector(evectors[:,index], bases, names=[fieldname])
 
         # Get the physical domain
         basis = bases['p']
         s, z = basis.s(), basis.z()
 
         # Plot the field
-        for fieldname in fieldnames:
-            ax = plot_axes[plot_index]
-            field = fields[fieldname]
-            if sphere:
-                # These are symmetrical enough that we have to manually select the ones to flip
-                sign = -1 if plot_index in [2,3] else 1
-            else:
-                sign = 1 if np.max(field) > -np.min(field) else -1
-            field *= sign
-            domain.plotfield(s, z, field, fig, ax, colorbar=False)
-            if sphere:
-                sign = 1 if data['m']%2 == 0 else -1
-                domain.plotfield(-s[::-1], z[:,::-1], sign*field[:,::-1], fig, ax, colorbar=False)
-                ax.set_xlabel('$x$', fontsize=g_fontsize)
-                ax.set_ylabel('$z$', fontsize=g_fontsize)
-                ax.set_aspect('auto')
-                ax.set_xlim([-1.1,1.1*smax])
-                ax.set_ylim([-zmax,zmax])
-            else:
-                ax.set_xlabel('$s$', fontsize=g_fontsize)
-                ax.set_ylabel('$z$', fontsize=g_fontsize)
-                ax.set_aspect('auto')
-                ax.set_xlim([0,1.1*smax])
-                ax.set_ylim([0,zmax])
-            ax.set_axisbelow(True)  # Get the grid behind the pcolormesh
-            ax.grid(True)
-            ax.set_title(f'$S_i$ = {plot_radii[plot_index]:.2f}')
-            if plot_index > 0:
-                ax.set_yticklabels([])
-                ax.set_ylabel(None)
+        ax = plot_axes[plot_index]
+        field = fields[fieldname]
+        if sphere:
+            # These are symmetrical enough that we have to manually select the ones to flip
+            sign = -1 if plot_index in [2,3] else 1
+        else:
+            sign = 1 if np.max(field) > -np.min(field) else -1
+        field *= sign
+        domain.plotfield(s, z, field, fig, ax, colorbar=False)
+        if sphere:
+            sign = 1 if data['m']%2 == 0 else -1
+            domain.plotfield(-s[::-1], z[:,::-1], sign*field[:,::-1], fig, ax, colorbar=False)
+            ax.set_xlabel('$x$', fontsize=g_fontsize)
+            ax.set_ylabel('$z$', fontsize=g_fontsize)
+            ax.set_aspect('auto')
+            ax.set_xlim([-1.1,1.1*smax])
+            ax.set_ylim([-zmax,zmax])
+        else:
+            ax.set_xlabel('$s$', fontsize=g_fontsize)
+            ax.set_ylabel('$z$', fontsize=g_fontsize)
+            ax.set_aspect('auto')
+            ax.set_xlim([0,1.1*smax])
+            ax.set_ylim([0,zmax])
+        ax.set_axisbelow(True)  # Get the grid behind the pcolormesh
+        ax.grid(True)
+        title = f'$S_i$ = {plot_radii[plot_index]:.2f}'
+        ax.set_title(title)
+        if plot_index > 0:
+            ax.set_yticklabels([])
+            ax.set_ylabel(None)
 
-            plot_index += 1
+        teq, etaeq = np.linspace(-1,1,256), np.array([1.0])
+        bases = create_bases(domain, data['geometry'], data['m'], data['Lmax'], data['Nmax'], data['alpha'], teq, etaeq, boundary_condition)
+        fields = expand_evector(evectors[:,index], bases, names=[fieldname], eq=True)
+
+        basis = bases['p']
+        s, z = basis.s(), basis.z()
+        s = s.ravel()[np.newaxis,:]
+        phi = np.linspace(-np.pi,np.pi,512)[:,np.newaxis]
+        expphi = np.exp(1j*data['m']*phi)
+        x, y = s*np.cos(phi), s*np.sin(phi)
+
+        field = fields[fieldname]
+        field *= sign
+
+        field = expphi * field.ravel()[np.newaxis,:]
+        ax = plot_axes_eq[plot_index]
+        ax.pcolormesh(x, y, field.real, shading='gouraud', cmap='RdBu_r')
+        ax.set_title(title)
+        ax.set_xlabel('$x$')
+        ax.set_ylabel('$y$')
+        ax.set_xticks(np.linspace(-1,1,5))
+        ax.set_yticks(np.linspace(-1,1,5))
+        ax.set_aspect('equal')
+        ax.set_axisbelow(True)  # Get the grid behind the pcolormesh
+        ax.grid(True)
+        if plot_index > 0:
+            ax.set_yticklabels([])
+            ax.set_ylabel(None)
+
+        plot_index += 1
 
     # Set up paths
     directory = _get_directory('figures')
@@ -561,6 +607,10 @@ def track_critical_eigenvalue_radius(sphere):
     fig.set_tight_layout(True)
     filename = prefix + '-critical_mode_vs_inner_radius_p.png'
     save_figure(filename, fig)
+
+    fig_eq.set_tight_layout(True)
+    filename = prefix + '-critical_mode_vs_inner_radius_p_equatorial.png'
+    save_figure(filename, fig_eq)
 
     # Color scatterplot for the complex mode
     fig, ax = plt.subplots()
@@ -607,9 +657,10 @@ def track_critical_eigenvalue_rpm(sphere):
         evalue_target = 0.
 
     # Set up the field plot
-    fieldnames = ['p']
-    nplots = len(plot_rpms*len(fieldnames))
+    fieldname = 'p'
+    nplots = len(plot_rpms)
     fig, plot_axes = plt.subplots(1,nplots,figsize=plt.figaspect(zmax/smax/nplots))
+    fig_eq, plot_axes_eq = plt.subplots(1,nplots,figsize=plt.figaspect(1/nplots))
     if nplots == 1:
         plot_axes = [plot_axes]
     plot_indices = [np.argmin(np.abs(rpms - rpm)) for rpm in plot_rpms]
@@ -680,51 +731,80 @@ def track_critical_eigenvalue_rpm(sphere):
         if i not in plot_indices:
             continue
 
-        bases = create_bases(domain, data['geometry'], data['m'], data['Lmax'], data['Nmax'], data['alpha'], t, eta, boundary_condition)
         evectors = data['evectors']
+        bases = create_bases(domain, data['geometry'], data['m'], data['Lmax'], data['Nmax'], data['alpha'], t, eta, boundary_condition)
 
-        fields = expand_evector(evectors[:,index], bases, names=fieldnames)
+        fields = expand_evector(evectors[:,index], bases, names=[fieldname])
 
         basis = bases['p']
         s, z = basis.s(), basis.z()
 
-        for fieldname in fieldnames:
-            ax = plot_axes[plot_index]
-            field = fields[fieldname]
-            if sphere:
-                # These are symmetrical enough that we have to manually select the ones to flip
-                sign = -1 if plot_index > 0 else 1
-            else:
-                sign = 1 if np.max(field) > -np.min(field) else -1
-            field *= sign
-            domain.plotfield(s, z, field, fig, ax, colorbar=False)
-            if sphere:
-                sign = 1 if data['m']%2 == 0 else -1
-                domain.plotfield(-s[::-1], z[:,::-1], sign*field[:,::-1], fig, ax, colorbar=False)
-                ax.set_xlabel('$x$', fontsize=g_fontsize)
-                ax.set_ylabel('$z$', fontsize=g_fontsize)
-                ax.set_xticks(np.linspace(-1,1,5))
-                ax.set_yticks(np.linspace(-2,2,9))
-                ax.set_xticklabels([-1.,None,0.,None,1.])
-                ax.set_yticklabels([-2.,None,-1.,None,0.,None,1.,None,2.])
-                ax.set_aspect('equal')
-                ax.set_ylim([-zmax,zmax])
-                ax.set_xlim([-1.05*smax,1.05*smax])
-                ax.set_title(r'$H$' f' = {plot_rpms[plot_index]}')
-            else:
-                ax.set_xlabel('$s$', fontsize=g_fontsize)
-                ax.set_ylabel('$z$', fontsize=g_fontsize)
-                ax.set_aspect('auto')
-                ax.set_ylim([0,zmax])
-                ax.set_title(f'RPM = {plot_rpms[plot_index]}')
-                ax.set_xlim([0,1.1*smax])
-            ax.set_axisbelow(True)  # Get the grid behind the pcolormesh
-            ax.grid(True)
-            if plot_index > 0:
-                ax.set_yticklabels([])
-                ax.set_ylabel(None)
+        ax = plot_axes[plot_index]
+        field = fields[fieldname]
+        if sphere:
+            # These are symmetrical enough that we have to manually select the ones to flip
+            sign = -1 if plot_index > 0 else 1
+        else:
+            sign = 1 if np.max(field) > -np.min(field) else -1
+        field *= sign
+        domain.plotfield(s, z, field, fig, ax, colorbar=False)
+        if sphere:
+            sign = 1 if data['m']%2 == 0 else -1
+            domain.plotfield(-s[::-1], z[:,::-1], sign*field[:,::-1], fig, ax, colorbar=False)
+            ax.set_xlabel('$x$', fontsize=g_fontsize)
+            ax.set_ylabel('$z$', fontsize=g_fontsize)
+            ax.set_xticks(np.linspace(-1,1,5))
+            ax.set_yticks(np.linspace(-2,2,9))
+            ax.set_xticklabels([-1.,None,0.,None,1.])
+            ax.set_yticklabels([-2.,None,-1.,None,0.,None,1.,None,2.])
+            ax.set_aspect('equal')
+            ax.set_ylim([-zmax,zmax])
+            ax.set_xlim([-1.05*smax,1.05*smax])
+            title =  r'$H$' f' = {plot_rpms[plot_index]}'
+        else:
+            ax.set_xlabel('$s$', fontsize=g_fontsize)
+            ax.set_ylabel('$z$', fontsize=g_fontsize)
+            ax.set_aspect('auto')
+            ax.set_ylim([0,zmax])
+            ax.set_xlim([0,1.1*smax])
+            title = f'RPM = {plot_rpms[plot_index]}'
+        ax.set_title(title)
+        ax.set_axisbelow(True)  # Get the grid behind the pcolormesh
+        ax.grid(True)
+        if plot_index > 0:
+            ax.set_yticklabels([])
+            ax.set_ylabel(None)
 
-            plot_index += 1
+        teq, etaeq = np.linspace(-1,1,256), np.array([1.0])
+        bases = create_bases(domain, data['geometry'], data['m'], data['Lmax'], data['Nmax'], data['alpha'], teq, etaeq, boundary_condition)
+        fields = expand_evector(evectors[:,index], bases, names=[fieldname], eq=True)
+
+        basis = bases['p']
+        s, z = basis.s(), basis.z()
+        s = s.ravel()[np.newaxis,:]
+        phi = np.linspace(-np.pi,np.pi,512)[:,np.newaxis]
+        expphi = np.exp(1j*data['m']*phi)
+        x, y = s*np.cos(phi), s*np.sin(phi)
+
+        field = fields[fieldname]
+        field *= sign
+
+        field = expphi * field.ravel()[np.newaxis,:]
+        ax = plot_axes_eq[plot_index]
+        ax.pcolormesh(x, y, field.real, shading='gouraud', cmap='RdBu_r')
+        ax.set_title(title)
+        ax.set_xlabel('$x$')
+        ax.set_ylabel('$y$')
+        ax.set_xticks(np.linspace(-1,1,5))
+        ax.set_yticks(np.linspace(-1,1,5))
+        ax.set_aspect('equal')
+        ax.set_axisbelow(True)  # Get the grid behind the pcolormesh
+        ax.grid(True)
+        if plot_index > 0:
+            ax.set_yticklabels([])
+            ax.set_ylabel(None)
+
+        plot_index += 1
 
     # Set up paths
     directory = _get_directory('figures')
@@ -736,6 +816,11 @@ def track_critical_eigenvalue_rpm(sphere):
     fig.set_tight_layout(True)
     filename = prefix + '-critical_mode_vs_rpm_p.png'
     save_figure(filename, fig)
+
+    # Finish up the mode plot
+    fig_eq.set_tight_layout(True)
+    filename = prefix + '-critical_mode_vs_rpm_p_equatorial.png'
+    save_figure(filename, fig_eq)
 
     # Color scatterplot for the complex mode
     fig, ax = plt.subplots()
@@ -758,10 +843,10 @@ def track_critical_eigenvalue_rpm(sphere):
 
 
 def track_critical_eigenvalue():
-#    track_critical_eigenvalue_radius(sphere=False)
+    track_critical_eigenvalue_radius(sphere=False)
 #    track_critical_eigenvalue_radius(sphere=True)
 #    track_critical_eigenvalue_rpm(sphere=False)
-    track_critical_eigenvalue_rpm(sphere=True)
+#    track_critical_eigenvalue_rpm(sphere=True)
 
 
 def main():
