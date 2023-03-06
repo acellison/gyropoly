@@ -53,11 +53,15 @@ def combined_projection(domain, geometry, m, Lmax, Nmax, alpha, sigma, boundary_
         return domain.project(geometry, m, Lmax, Nmax, alpha, sigma=sigma, direction=direction, shift=shift, Lstop=Lstop)
 
     top_shifts = [1,0]
-    Lstop = -2
+    Lstop = -len(top_shifts)
     if geometry.sphere_outer or geometry.degree == 0:
         side_shifts = [1,0] if domain == sa else [0]
     else:
         side_shifts = [3,2,1,0] if domain == sa else [2,1,0]
+
+    if geometry.degree > 1:
+        n1 = 3 if domain == sa else 2
+        side_shifts = list(range(n1+geometry.degree))[::-1]
 
     opt = [make_op(direction='z', shift=shift) for shift in top_shifts]
     ops = [make_op(direction='s', shift=shift, Lstop=Lstop) for shift in side_shifts]
@@ -270,7 +274,7 @@ def solve_eigenproblem(domain, geometry, m, Lmax, Nmax, boundary_condition, omeg
     return esolve_data
 
 
-def expand_evector(evector, bases, names='all', verbose=True, eq=False):
+def expand_evector(evector, bases, names='all', verbose=True, return_complex=False):
     lengths = [bases[key].num_coeffs for key in ['up', 'um', 'w', 'p']]
     offsets = np.append(0, np.cumsum(lengths))
 
@@ -278,7 +282,7 @@ def expand_evector(evector, bases, names='all', verbose=True, eq=False):
     tau = evector[offsets[4]:]
     print(f'  Tau norm: {np.linalg.norm(tau)}')
 
-    if eq:
+    if return_complex:
         larger = lambda f: f
     else:
         larger = lambda f: f.real if np.max(abs(f.real)) >= np.max(abs(f.imag)) else f.imag
@@ -330,7 +334,7 @@ def plot_spectrum_callback(domain, index, evalues, evectors, bases, bases_eq=Non
         s = bases_eq['p'].s().ravel()[np.newaxis,:]
         x, y = s*np.cos(phi), s*np.sin(phi)
         mode = np.exp(1j*bases['p'].m*phi)
-        fields = expand_evector(evectors[:,index], bases_eq, names=fieldnames, eq=True)
+        fields = expand_evector(evectors[:,index], bases_eq, names=fieldnames, return_complex=True)
 
         fig_eq, plot_axes_eq = plt.subplots(1,nplots,figsize=plt.figaspect(scale*zmax/smax/nplots))
         for i, fieldname in enumerate(fieldnames):
@@ -416,7 +420,7 @@ def make_coreaboloid_domain(domain, standard_domain=False, radius_ratio=0.1):
     return radii, make_height_coeffs
 
 
-def run_config(domain, rpm, cylinder_type='half', sphere=False, force=False, radius_ratio=0.1, nev=500, evalue_target=0., outer_radius=1):
+def run_config(domain, rpm, cylinder_type='half', sphere=False, force=False, radius_ratio=0.1, nev=500, evalue_target=0., outer_radius=1, height_coeffs=None):
     if radius_ratio == 0:
         domain = 'cylinder'
     # Coreaboloid Domain
@@ -440,7 +444,10 @@ def run_config(domain, rpm, cylinder_type='half', sphere=False, force=False, rad
         radii, height_coeffs_for_rpm = make_coreaboloid_domain(domain, radius_ratio=radius_ratio)
         hs = height_coeffs_for_rpm(omega)
 
-    ht = domain.scoeff_to_tcoeff(radii, hs)
+    if height_coeffs is None:
+        ht = domain.scoeff_to_tcoeff(radii, hs)
+    else:
+        ht = height_coeffs
 
     if domain == sa:
         geometry = sa.AnnulusGeometry(cylinder_type=cylinder_type, hcoeff=ht, radii=radii, sphere_inner=config['sphere_inner'], sphere_outer=config['sphere_outer'])
@@ -470,8 +477,9 @@ def track_critical_eigenvalue_radius(sphere):
         rpm = 1  # Sphere of unit height
     else:
         cylinder_type = 'half'
-        rpm = 45
-    radius_ratios = np.arange(0,.8,.05)
+        rpm = 64
+#    radius_ratios = np.arange(0,.8,.05)
+    radius_ratios = np.arange(0,.8,.25)
     if False:
         # Would be beautiful to fill in 0.1s all the way!
         radius_ratios = np.append(radius_ratios, [.56,.57,.58,.59,.61,.62,.63,.64])
@@ -488,7 +496,7 @@ def track_critical_eigenvalue_radius(sphere):
     if sphere:
         zmax, smax = 1.1, 1
     else:
-        zmax, smax = 0.8, 1
+        zmax, smax = 1.0, 1
     fig, plot_axes = plt.subplots(1,nplots,figsize=plt.figaspect(zmax/smax/nplots))
     fig_eq, plot_axes_eq = plt.subplots(1,nplots,figsize=plt.figaspect(1/nplots))
     if nplots == 1:
@@ -496,11 +504,17 @@ def track_critical_eigenvalue_radius(sphere):
     plot_indices = [np.argmin(np.abs(radius_ratios - rad)) for rad in plot_radii]
     plot_index = 0
 
+#    evalue_targets = [
+#        -0.03334188211857889-0.12916549543774986j,
+#        -0.033341882158576065-0.12916549537716032j,
+#        -0.03334952422109774-0.12916712895418134j,
+#        -0.044963012881186926-0.47832212803176183j,
+#    ]
     evalue_targets = [
-        -0.03334188211857889-0.12916549543774986j,
-        -0.033341882158576065-0.12916549537716032j,
-        -0.03334952422109774-0.12916712895418134j,
-        -0.044963012881186926-0.47832212803176183j,
+        -0.03685968372783443+0.18971355027022116j,
+        -0.03715610750699653+0.18971245487182178j,
+        -0.022578116913495552+0.17919503692761996j,
+        -0.019859346374362565+0.1221831875663389j,
     ]
 
     critical_evalues = np.zeros(len(radius_ratios), dtype='complex128')
@@ -511,9 +525,16 @@ def track_critical_eigenvalue_radius(sphere):
         if sphere:
             index = -1
         else:
-            n, evalue_target = 3, -.02+.15j
-            potential_evalues = evalues[-n:]
-            index = len(evalues)-n + np.argmin(np.abs(potential_evalues - evalue_target))
+            if i in plot_indices:
+                target = evalue_targets[plot_index]
+                index = np.argmin(np.abs(evalues - target))
+                if abs(evalues[index] - target) > 1e-3:
+                    print("Couldn't find target eigenvalue.  Defaulting to largest real part")
+                    index = -1
+            else:
+                n, evalue_target = 3, -.02+.15j
+                potential_evalues = evalues[-n:]
+                index = len(evalues)-n + np.argmin(np.abs(potential_evalues - evalue_target))
         critical_evalues[i] = evalues[index]
 
         # Plot the solution to generate the spectrum
@@ -568,7 +589,7 @@ def track_critical_eigenvalue_radius(sphere):
 
         teq, etaeq = np.linspace(-1,1,256), np.array([1.0])
         bases = create_bases(domain, data['geometry'], data['m'], data['Lmax'], data['Nmax'], data['alpha'], teq, etaeq, boundary_condition)
-        fields = expand_evector(evectors[:,index], bases, names=[fieldname], eq=True)
+        fields = expand_evector(evectors[:,index], bases, names=[fieldname], return_complex=True)
 
         basis = bases['p']
         s, z = basis.s(), basis.z()
@@ -583,6 +604,15 @@ def track_critical_eigenvalue_radius(sphere):
         field = expphi * field.ravel()[np.newaxis,:]
         ax = plot_axes_eq[plot_index]
         ax.pcolormesh(x, y, field.real, shading='gouraud', cmap='RdBu_r')
+
+        lw, eps = 0.4, .006
+        Si, So = data['geometry'].radii
+        outer_x, outer_y = (1+eps)*So*np.cos(phi), (1+eps)*So*np.sin(phi)
+        ax.plot(outer_x, outer_y, 'k', linewidth=lw)
+        if Si > 0:
+            inner_x, inner_y = (1-eps)*Si*np.cos(phi), (1-eps)*Si*np.sin(phi)
+            ax.plot(inner_x, inner_y, 'k', linewidth=lw)
+
         ax.set_title(title)
         ax.set_xlabel('$x$')
         ax.set_ylabel('$y$')
@@ -774,10 +804,21 @@ def track_critical_eigenvalue_rpm(sphere):
         if plot_index > 0:
             ax.set_yticklabels([])
             ax.set_ylabel(None)
+        if not sphere:
+            HNR = 17.08/37.25
+            ax.plot([0,ax.get_xlim()[1]],[HNR,HNR], '--k', linewidth=0.8, label=None, zorder=1)
+            text = ax.text(0.04, HNR+.045, '$H_{NR}/S_{o}$', fontsize=18)
+            text.set_bbox(dict(facecolor='white', alpha=1.0, linewidth=0))
+            rate = [r'\frac{4 \pi}{3}', r'\frac{26 \pi}{15}', r'\frac{32 \pi}{15}'][plot_index]
+            Fr = [0.67, 1.13, 1.71][plot_index]
+            text = ax.text(0.04, 0.88, r'$\Omega = ' + rate + ' \, $s$^{-1}$', fontsize=18)
+            text.set_bbox(dict(facecolor='white', alpha=1.0, linewidth=0))
+            text = ax.text(0.04, 0.68, r'Fr$_{\Omega} = ' + f'{Fr}' + '$', fontsize=18)
+            text.set_bbox(dict(facecolor='white', alpha=1.0, linewidth=0))
 
         teq, etaeq = np.linspace(-1,1,256), np.array([1.0])
         bases = create_bases(domain, data['geometry'], data['m'], data['Lmax'], data['Nmax'], data['alpha'], teq, etaeq, boundary_condition)
-        fields = expand_evector(evectors[:,index], bases, names=[fieldname], eq=True)
+        fields = expand_evector(evectors[:,index], bases, names=[fieldname], return_complex=True)
 
         basis = bases['p']
         s, z = basis.s(), basis.z()
@@ -792,6 +833,15 @@ def track_critical_eigenvalue_rpm(sphere):
         field = expphi * field.ravel()[np.newaxis,:]
         ax = plot_axes_eq[plot_index]
         ax.pcolormesh(x, y, field.real, shading='gouraud', cmap='RdBu_r')
+
+        lw, eps = 0.4, .006
+        Si, So = data['geometry'].radii
+        outer_x, outer_y = (1+eps)*So*np.cos(phi), (1+eps)*So*np.sin(phi)
+        ax.plot(outer_x, outer_y, 'k', linewidth=lw)
+        if Si > 0:
+            inner_x, inner_y = (1-eps)*Si*np.cos(phi), (1-eps)*Si*np.sin(phi)
+            ax.plot(inner_x, inner_y, 'k', linewidth=lw)
+
         ax.set_title(title)
         ax.set_xlabel('$x$')
         ax.set_ylabel('$y$')
@@ -843,9 +893,9 @@ def track_critical_eigenvalue_rpm(sphere):
 
 
 def track_critical_eigenvalue():
-    track_critical_eigenvalue_radius(sphere=False)
+#    track_critical_eigenvalue_radius(sphere=False)
 #    track_critical_eigenvalue_radius(sphere=True)
-#    track_critical_eigenvalue_rpm(sphere=False)
+    track_critical_eigenvalue_rpm(sphere=False)
 #    track_critical_eigenvalue_rpm(sphere=True)
 
 
