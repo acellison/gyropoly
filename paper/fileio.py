@@ -19,9 +19,10 @@ def save_data(filename, data):
         pickle.dump(data, f)
 
 
-def save_figure(filename, fig, *args, **kwargs):
+def save_figure(filename, fig, tight=True, *args, **kwargs):
     checkdir(filename)
-    fig.set_tight_layout(True)
+    if tight:
+        fig.set_tight_layout(True)
     fig.savefig(filename, *args, **kwargs)
     
 
