@@ -1441,7 +1441,7 @@ def plotfield(s, z, f, fig, ax, colorbar=True, title=None, cmap='RdBu_r'):
         Colormap specifier
         
     """
-    lw, eps = 0.8, .012
+    lw, eps = 0.8, .006
     ax.plot(s, z[ 0,:]*(1+eps), 'k', linewidth=lw)
     ax.plot(s, z[-1,:]*(1+eps), 'k', linewidth=lw)
     ax.plot([(1-eps)*s[0], (1-eps)*s[0]], [(1+eps)*z[0,0], (1+eps)*z[-1,0]],  'k', linewidth=lw)
