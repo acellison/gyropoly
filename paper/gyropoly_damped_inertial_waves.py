@@ -165,13 +165,6 @@ def build_matrices_galerkin(domain, geometry, m, Lmax, Nmax, Ekman, alpha, bound
     M = -sparse.block_diag([Ap, Am, Az, Z])
 
     if boundary_condition == 'stress_free':
-#        # Compute the stress free boundary condition
-#        row = stress_free_boundary(domain, geometry, m, Lmax+dL, Nmax+dN, alpha)
-#
-#        # Truncate the vertical velocity domain then zero pad for the pressure
-#        if Lshift(0) == 1:
-#            row = row[:,:-lengths[-1]]
-
         row = no_slip_boundary(domain, geometry, m, Lmax+dL, Nmax+dN, alpha)
         row = sparse.hstack([row, sparse.lil_matrix((np.shape(row)[0], ncoeffp))])
 
@@ -251,7 +244,6 @@ def solve_eigenproblem(domain, geometry, m, Lmax, Nmax, boundary_condition, omeg
         if nev == 'all':
             evalues, evectors = eigsort(L.todense(), M.todense(), profile=True)
         else:
-#            matsolver = 'UmfpackFactorized64'
             matsolver = 'SuperluColamdFactorized'
             evalues, evectors = scipy_sparse_eigs(L, M, N=nev, target=evalue_target, matsolver=matsolver, profile=True)
 
@@ -375,12 +367,18 @@ def plot_solution(data, plot_fields=True):
     else:
         onpick = None
 
-    fig, ax = plot_spectrum(evalues, onpick=onpick)
-    ax.set_title(f"RPM = {data['omega']:.1f}, $S_i$ = {geometry.radii[0]:.2f}")
-#    ax.set_xlim([-0.4633,-.0040])
-#    ax.set_ylim([-0.458,.448])
+    fig, plot_axes = plt.subplots(1,2, figsize=plt.figaspect(1/2))
+    ax = plot_axes[0]
+    plot_spectrum(evalues, figax=(fig, ax), onpick=onpick)
+    ax.set_title(f"RPM = {data['omega']:.1f}")
     ax.set_xlim([-0.6,-.0040])
     ax.set_ylim([-0.6,.6])
+
+    ax = plot_axes[1]
+    geometry.plot_height(fig=fig, ax=ax)
+    ax.set_xlim([0.0, 1.05])
+    ax.set_ylim([-.05, 1.0])
+
     fig.set_tight_layout(True)
 
     # Construct the data filename
@@ -391,7 +389,7 @@ def plot_solution(data, plot_fields=True):
     prefix = os.path.join(directory, f'{g_file_prefix}-{geometry}-omega={float(omega):.2f}-m={m}-Ekman={Ekman}-Lmax={Lmax}-Nmax={Nmax}{alphastr}-{boundary_condition}')
     filename = prefix + '-evalues.png'
 
-    save_figure(filename, fig)
+    save_figure(filename, fig, tight=False)
 
 
 def make_coreaboloid_domain(domain, standard_domain=False, radius_ratio=0.1):
@@ -478,7 +476,6 @@ def track_critical_eigenvalue_radius(sphere):
     else:
         cylinder_type = 'half'
         rpm = 64
-#    radius_ratios = np.arange(0,.8,.05)
     radius_ratios = np.arange(0,.8,.25)
     if False:
         # Would be beautiful to fill in 0.1s all the way!
@@ -504,12 +501,6 @@ def track_critical_eigenvalue_radius(sphere):
     plot_indices = [np.argmin(np.abs(radius_ratios - rad)) for rad in plot_radii]
     plot_index = 0
 
-#    evalue_targets = [
-#        -0.03334188211857889-0.12916549543774986j,
-#        -0.033341882158576065-0.12916549537716032j,
-#        -0.03334952422109774-0.12916712895418134j,
-#        -0.044963012881186926-0.47832212803176183j,
-#    ]
     evalue_targets = [
         -0.03685968372783443+0.18971355027022116j,
         -0.03715610750699653+0.18971245487182178j,
@@ -537,13 +528,8 @@ def track_critical_eigenvalue_radius(sphere):
                 index = len(evalues)-n + np.argmin(np.abs(potential_evalues - evalue_target))
         critical_evalues[i] = evalues[index]
 
-        # Plot the solution to generate the spectrum
-#        plot_solution(data, plot_fields=False)
-
         if i not in plot_indices:
             continue
-
-#        plot_solution(data, plot_fields=True)
 
         # Expand the eigenvector
         domain = sc if radius_ratio == 0 else sa
@@ -755,9 +741,6 @@ def track_critical_eigenvalue_rpm(sphere):
             target, index = 0., -1
         critical_evalues[i] = evalues[index]
 
-        # Plot the solution to generate the spectrum
-#        plot_solution(data, plot_fields=False)
-
         if i not in plot_indices:
             continue
 
@@ -893,26 +876,25 @@ def track_critical_eigenvalue_rpm(sphere):
 
 
 def track_critical_eigenvalue():
-#    track_critical_eigenvalue_radius(sphere=False)
-#    track_critical_eigenvalue_radius(sphere=True)
+    track_critical_eigenvalue_radius(sphere=False)
+    track_critical_eigenvalue_radius(sphere=True)
     track_critical_eigenvalue_rpm(sphere=False)
-#    track_critical_eigenvalue_rpm(sphere=True)
+    track_critical_eigenvalue_rpm(sphere=True)
 
 
 def main():
     domain = 'annulus'
     cylinder_type = 'half'
-    rpms = [45]
-#    rpms = np.arange(50,55)
+    rpms = np.append(np.arange(40,60), np.arange(60,65,0.5))
     force = False
     sphere = False
 
     for rpm in rpms:
-        data = run_config(domain, rpm, cylinder_type=cylinder_type, sphere=sphere, force=force)
-        plot_solution(data)
+        data = run_config(domain, rpm, cylinder_type=cylinder_type, sphere=sphere, force=force, radius_ratio=10.2/37.25)
+        plot_solution(data, plot_fields=False)
 
 if __name__=='__main__':
-    track_critical_eigenvalue()
-#    main()
+#    track_critical_eigenvalue()
+    main()
     plt.show()
 
