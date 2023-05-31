@@ -205,6 +205,66 @@ def differential_operators():
     save_figure(filename, fig)
 
 
+def combined_differential_operators():
+    # Differential operators
+    filename = output_filename('figures', ext='', prefix='differential_ops_combined')
+
+    rpm = 50
+    codomain = [(Lmax,Nmax,alpha+1)]*3
+    figsize = (25,4)
+
+    height = 4
+
+    # Sphere
+    radius, height_coeffs_s2 = 1., np.array([1])/np.sqrt(2)
+    hcoeff = sc.scoeff_to_tcoeff(radius, height_coeffs_s2)
+
+    # Full Cylinder
+
+    geometry = sc.CylinderGeometry('full', hcoeff, radius=radius, sphere=True)
+    Op = sc.operators(geometry, m, Lmax, Nmax, alpha)('gradient')
+    n = sc.total_num_coeffs(geometry, Lmax, Nmax)
+    Op = [Op[i*n:(i+1)*n] for i in range(3)]
+
+    fig, ax = plt.subplots(figsize=(height,height))
+    plot_splatter(sc, geometry, 'Spherinder', Op, codomain, ax=ax)
+    ax.set_aspect('equal')
+    fig.set_tight_layout(True)
+    save_figure(filename + '_0.png', fig)
+
+    # Cylinder
+    radius, height_coeffs_s2 = make_coreaboloid_domain(annulus=False)
+    hcoeff = sc.scoeff_to_tcoeff(radius, height_coeffs_s2(rpm))
+
+    # Full Cylinder
+    geometry = sc.CylinderGeometry('full', hcoeff, radius=radius)
+    Op = sc.operators(geometry, m, Lmax, Nmax, alpha)('gradient')
+    n = sc.total_num_coeffs(geometry, Lmax, Nmax)
+    Op = [Op[i*n:(i+1)*n] for i in range(3)]
+
+    fig, ax = plt.subplots(figsize=(6/3*height,height))
+    plot_splatter(sc, geometry, 'Paraboloid', Op, codomain, ax=ax)
+    ax.set_aspect('equal')
+    fig.set_tight_layout(True)
+    save_figure(filename + '_1.png', fig)
+
+    # Annulus
+    radii, height_coeffs_s2 = make_coreaboloid_domain(annulus=True)
+    hcoeff = sa.scoeff_to_tcoeff(radii, height_coeffs_s2(rpm))
+
+    # Full Annulus
+    geometry = sa.AnnulusGeometry('full', hcoeff, radii=radii)
+    Op = sa.operators(geometry, m, Lmax, Nmax, alpha)('gradient')
+    n = sa.total_num_coeffs(geometry, Lmax, Nmax)
+    Op = [Op[i*n:(i+1)*n] for i in range(3)]
+
+    fig, ax = plt.subplots(figsize=(7/3*height,height))
+    plot_splatter(sa, geometry, 'Coreaboloid', Op, codomain, ax=ax)
+    ax.set_aspect('equal')
+    fig.set_tight_layout(True)
+    save_figure(filename + '_2.png', fig)
+
+
 def plot_coeff_magnitude(fig, ax, mat, tol):
     mat = mat.astype(np.float64).todense()
     mat[abs(mat)<tol] = 0
@@ -332,7 +392,6 @@ def conversion_operators():
     save_figure(filename, fig)
 
 
-
 def boundary_operator():
     rpm = 50
     Lmax, Nmax = 6, 12
@@ -366,12 +425,40 @@ def boundary_operator():
     save_figure(filename, fig)
 
 
+def make_legend():
+    fig, ax = plt.subplots(figsize=plt.figaspect(2.))
+    y = 0.65
+    ms = 4000
+    fs = 64
+    dy = y/5
+    ax.scatter([0],[2*y], marker='s', color='tab:purple', s=ms)
+    ax.scatter([0],[ y], **markerdict['+'], s=ms)
+    ax.scatter([0],[ 0], **markerdict['0'], s=ms)
+    ax.scatter([0],[-y], **markerdict['-'], s=ms)
+    ax.text(.5,  2*y-dy, r'$\Psi$', fontsize=fs)
+    ax.text(.5,  y-dy, r'$\mathcal{D}^{+}$', fontsize=fs)
+    ax.text(.5,  0-dy, r'$\mathcal{D}^{0}$', fontsize=fs)
+    ax.text(.5, -y-dy, r'$\mathcal{D}^{-}$', fontsize=fs)
+    ax.set_xlim([-.25,2.*y])
+    ax.set_xticks([])
+    ax.set_xticklabels([])
+    ax.set_yticks([])
+    ax.set_yticklabels([])
+    ax.set_frame_on(False)
+    fig.set_tight_layout(True)
+
+    filename = output_filename('figures', ext='.png', prefix='legend')
+    save_figure(filename, fig)
+
+
 def main():
     differential_operators()
     vector_operators()
     conversion_operators()
     boundary_operator()
     vector_laplacian_operator()
+    combined_differential_operators()
+    make_legend()
     plt.show()
 
 if __name__=='__main__':
