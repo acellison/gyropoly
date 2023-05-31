@@ -119,7 +119,7 @@ class GeometryBase():
         fig.set_tight_layout(True)
         return fig, ax
 
-    def plot_volume(self, aspect='equal'):
+    def plot_volume(self, aspect='equal', fig=None, ax=None):
         # Create the domain
         ns, nphi = 64, 32
         t, phi = np.linspace(-1,1,ns), np.linspace(-np.pi,np.pi,nphi)
@@ -133,8 +133,9 @@ class GeometryBase():
         s = -1 if self.cylinder_type == 'full' else 0
 
         # Plot the wireframe
-        fig = plt.figure()
-        ax = plt.axes(projection='3d')
+        if fig is None or ax is None:
+            fig = plt.figure()
+            ax = plt.axes(projection='3d')
         ax.plot_wireframe(X, Y,   Z, rstride=1, cstride=1, linewidth=0.2)
         ax.plot_wireframe(X, Y, s*Z, rstride=1, cstride=1, linewidth=0.2)
 
