@@ -11,6 +11,8 @@ from gyropoly import stretched_annulus as sa
 from gyropoly import augmented_jacobi as ajacobi
 from fileio import save_figure
 
+from dedalus_sphere import jacobi
+
 
 g_file_prefix = 'genjacobi_sparsity'
 
@@ -231,10 +233,61 @@ def annulus():
     save_figure(filename, fig)
 
 
+def plot_coeff_magnitude(fig, ax, mat, tol=0., cmap=None, colorbar=True):
+    mat = mat.astype(np.float64).todense()
+    mat[abs(mat)<tol] = 0
+
+    sh = np.shape(mat)
+    with np.errstate(divide='ignore'):
+        data = np.log10(np.abs(mat))
+    im = ax.imshow(data, cmap=cmap)
+    ax.set_aspect('auto')
+    if colorbar:
+        fig.colorbar(im, ax=ax)
+    return im
+
+
+def augmented_chebyshev():
+    # Augmented Chebyshev polynomials
+    a, b, c = -1/2, -1/2, 1
+    rho = [1,0,1]
+    n = 10
+    operators = ajacobi.operators((rho,))
+
+    colorbar = False
+    fig, plot_axes = plt.subplots(1,2, figsize=plt.figaspect(1/2))
+
+    # Classical Jacobi
+    ax = plot_axes[0]
+    D = jacobi.operator('D')(+1)(n, a, b)
+    plot_coeff_magnitude(fig, ax, D, tol=1e-15, cmap='Spectral', colorbar=colorbar)
+    ax.set_xticks(np.arange(0,n))
+    ax.set_yticks(np.arange(0,n+1))
+    ax.set_xlim(np.array([0,n])-1/2)
+    ax.set_ylim(np.array([n,0])-1/2)
+    ax.set_aspect('equal')
+    ax.set_title(r'$w(z) = \left(1-z^2\right)^{-1/2}$', fontsize=18)
+
+    # Generalized Jacobi
+    ax = plot_axes[1]
+    D = operators('Di')((+1,+1,(+1,)))(n, a, b, (c,))
+    im = plot_coeff_magnitude(fig, ax, D, tol=1e-15, cmap='Spectral', colorbar=colorbar)
+    ax.set_xticks(np.arange(0,n))
+    ax.set_yticks(np.arange(0,n+1))
+    ax.set_xlim(np.array([0,n])-1/2)
+    ax.set_ylim(np.array([n,0])-1/2)
+    ax.set_aspect('equal')
+    ax.set_title(r'$w(z) = \left(1-z^2\right)^{-1/2} \, \left( 1 + z^2\right)^c$', fontsize=18)
+
+    fig.set_tight_layout(True)
+    filename = output_filename('figures', ext='.png', prefix='dz')
+    save_figure(filename, fig, dpi=200)
+
 
 def main():
     cylinder()
     annulus()
+    augmented_chebyshev()
     plt.show()
 
 if __name__=='__main__':
