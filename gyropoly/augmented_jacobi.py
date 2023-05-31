@@ -497,7 +497,7 @@ def polynomials(system, n, z, init=None, return_derivatives=False, dtype='float6
     the degree k polynomial is accessed via P[k-1]
 
     """
-    if system.is_unweighted:
+    if system.is_unweighted and not return_derivatives:
         return jacobi.polynomials(n, system.a, system.b, z, dtype=dtype, internal=internal)
 
     Z, mass = recurrence(system, n, return_mass=True, dtype=internal, **recurrence_kwargs)
@@ -973,7 +973,8 @@ def general_differential_operator(da, db, dc, system, n, dtype='float64', intern
     operator codomain n increment
 
     """
-    if len(dc) != system.num_augmented_factors:
+    nc = system.num_augmented_factors
+    if len(dc) != nc:
         raise ValueError('Must have one delta per Augmented Jacobi index')
 
     which = np.where(np.asarray(dc) == -1)[0]
