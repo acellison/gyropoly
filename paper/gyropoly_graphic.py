@@ -43,7 +43,7 @@ def plot_solution_annulus(data):
     index = -1
     evector = evectors[:,index]
 
-    nt, neta, nphi = 256, 256, 512
+    nt, neta, nphi = 512, 256, 1024
     t, eta = np.linspace(-1,1,nt), np.linspace(-1,1,neta)
     phi = np.linspace(-np.pi,np.pi,nphi)[:,np.newaxis]
 
@@ -88,7 +88,7 @@ def plot_solution_annulus(data):
         ax.set_zlabel(zlabel, fontsize=fontsize, rotation=rotation)
         ax.set_xticks(ticks)
         ax.set_yticks(ticks)
-        if 'z' in zlabel:
+        if zlabel == '$z$':
             ax.set_zticks(np.linspace(0,1,3))
         else:
             ax.set_zticks(ticks)
@@ -164,14 +164,15 @@ def plot_solution_annulus(data):
     fcolors = to_fcolors(pbot)
     plot_surface(ax2, x, y, z, facecolors=cmap(fcolors), alpha=1.)
 
-    prepare_axes(ax2, r'$\eta$', rotation=0)
+    label = r'$\zeta$' if geometry.cylinder_type == 'half' else r'$\eta$'
+    prepare_axes(ax2, r'$\zeta$', rotation=0)
 
     fig.set_tight_layout(True)
 
     directory = _get_directory('figures')
     filename = os.path.join(directory, f'{g_file_prefix}-annulus.png')
 
-    save_figure(filename, fig, tight=False, dpi=200)
+    save_figure(filename, fig, tight=False, dpi=300)
 
 
 def plot_solution_cylinder(data):
@@ -184,7 +185,7 @@ def plot_solution_cylinder(data):
     index = -1
     evector = evectors[:,index]
 
-    nt, neta, nphi = 256, 256, 512
+    nt, neta, nphi = 512, 256, 1024
     t, eta = np.linspace(-1,1,nt), np.linspace(-1,1,neta)
     phi = np.linspace(-np.pi,np.pi,nphi)[:,np.newaxis]
 
@@ -297,12 +298,12 @@ def plot_solution_cylinder(data):
     directory = _get_directory('figures')
     filename = os.path.join(directory, f'{g_file_prefix}-cylinder.png')
 
-    save_figure(filename, fig, tight=False, dpi=200)
+    save_figure(filename, fig, tight=False, dpi=300)
 
 
 def main():
-    domain_name, cylinder_type = 'annulus', 'half'
-#    domain_name, cylinder_type = 'cylinder', 'full'
+#    domain_name, cylinder_type = 'annulus', 'half'
+    domain_name, cylinder_type = 'cylinder', 'full'
     sphere = False
     force = False
 
