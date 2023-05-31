@@ -32,6 +32,13 @@ def check_close(a, b, tol, verbose=False):
         assert error <= tol
 
 
+def check_orthogonal(n, w, P, tol, verbose=False):
+    for i in range(n):
+        check_close(np.sum(w*P[i]*P[i]), 1, tol)
+        if i < n-1:
+            check_close([np.sum(w*P[i]*P[j]) for j in range(i+1,n)], 0, tol, verbose=verbose)
+
+
 def check_raises(f, e=ValueError):
     try:
         f()
@@ -169,12 +176,6 @@ def test_recurrence():
 
 def test_polynomials():
     print('test_polynomials')
-    def check_orthogonal(n, w, P, tol):
-        for i in range(n):
-            check_close(np.sum(w*P[i]*P[i]), 1, tol)
-            if i < n-1:
-                check_close([np.sum(w*P[i]*P[j]) for j in range(i+1,n)], 0, tol)
-
     # Test 1
     n, a, b, rho, c = 10, 1, 1, [1,0,0,3], 2
     system = make_system(a,b,[(rho,c)])
